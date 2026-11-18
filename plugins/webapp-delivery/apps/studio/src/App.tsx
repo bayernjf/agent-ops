@@ -1,10 +1,11 @@
 import { Fragment, Suspense, lazy, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Activity, ArrowLeft, ArrowRight, CheckCircle2, CircleDot, FolderKanban, Gauge, KeyRound, Moon, PlugZap, RefreshCw, ShieldCheck, Sparkles, Sun,
+import { Activity, ArrowLeft, ArrowRight, CheckCircle2, CircleDot, FolderKanban, Gauge, KeyRound, ListTodo, Moon, PlugZap, RefreshCw, ShieldCheck, Sparkles, Sun,
 } from 'lucide-react';
 import { useI18n, type KeyPath } from './i18n/i18n';
 import { useDomainText } from './lib/domain-text';
 import { apiFetch } from './lib/api';
 import { Dashboard } from './views/Dashboard';
+import { TasksView } from './views/TasksView';
 import { useTheme } from './theme/theme';
 import { baselineProvidersFor, getBlueprintDecisions, isRuntimeProviderId, type BaselinePlan, type BlueprintAnswers, type DryRunPlan } from '@agent-ops/blueprint/client';
 // Import CONFIRMATIONS from the sub-path: the policy package's top-level entry re-exports
@@ -1823,6 +1824,7 @@ export function App() {
         </button>
         <nav aria-label={t('nav.studioNavigation')}>
           <button className={`nav-item ${view.kind === 'dashboard' || view.kind === 'project' ? 'active' : ''}`} type="button" onClick={() => setView({ kind: 'dashboard' })}><FolderKanban size={18} aria-hidden="true" />{t('nav.projects')}</button>
+          <button className={`nav-item ${view.kind === 'tasks' ? 'active' : ''}`} type="button" onClick={() => setView({ kind: 'tasks' })}><ListTodo size={18} aria-hidden="true" />{t('nav.tasks')}</button>
           <button className={`nav-item ${view.kind === 'credentials' ? 'active' : ''}`} type="button" onClick={() => setView({ kind: 'credentials' })}><KeyRound size={18} aria-hidden="true" />{t('nav.credentials')}</button>
           <button className={`nav-item ${view.kind === 'agents' ? 'active' : ''}`} type="button" onClick={() => setView({ kind: 'agents' })}><CircleDot size={18} aria-hidden="true" />{t('nav.agents')}</button>
           <button className={`nav-item ${view.kind === 'activity' ? 'active' : ''}`} type="button" onClick={() => setView({ kind: 'activity' })}><Activity size={18} aria-hidden="true" />{t('nav.activity')}</button>
@@ -1853,6 +1855,8 @@ export function App() {
               <div><p className="eyebrow">{t('agents.eyebrow')}</p><h1>{t('agents.title')}</h1></div>
             ) : view.kind === 'activity' ? (
               <div><p className="eyebrow">{t('activity.eyebrow')}</p><h1>{t('activity.panelTitle')}</h1></div>
+            ) : view.kind === 'tasks' ? (
+              <div><p className="eyebrow">{t('tasks.eyebrow')}</p><h1>{t('tasks.title')}</h1></div>
             ) : view.kind === 'dashboard' ? (
               <div><p className="eyebrow">{t('hero.eyebrow')}</p><h1>{t('hero.title')}</h1></div>
             ) : null}
@@ -2183,6 +2187,12 @@ export function App() {
         {view.kind === 'activity' && (
           <div className="standalone-view">
             {activityPanel}
+          </div>
+        )}
+
+        {view.kind === 'tasks' && (
+          <div className="standalone-view">
+            <TasksView />
           </div>
         )}
       </section>

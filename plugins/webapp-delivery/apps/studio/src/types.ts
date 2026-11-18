@@ -351,11 +351,40 @@ export type View =
   | { kind: 'project'; projectId: string; tab: ProjectTab }
   | { kind: 'credentials' }
   | { kind: 'agents' }
-  | { kind: 'activity' };
+  | { kind: 'activity' }
+  | { kind: 'tasks' };
 
 export type ProjectTab =
   | 'blueprint'
   | 'delivery'
   | 'iteration'
   | 'release';
+
+// The kernel Task/Run control plane (server-core). Studio only renders these records; it never
+// derives state from them, so the shapes mirror `TaskRecord`/`RunRecord` from @agent-ops/storage-core
+// without pulling that package into the webapp plugin.
+export type KernelTaskState = 'queued' | 'running' | 'review' | 'done' | 'failed';
+
+export type KernelTask = {
+  id: string;
+  repo: string;
+  baseRef: string;
+  worktreePath: string;
+  recipe: string;
+  title: string;
+  objective: string;
+  status: KernelTaskState;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type KernelRun = {
+  id: string;
+  taskId: string;
+  agentId: string;
+  status: KernelTaskState;
+  diffStat: string;
+  createdAt: string;
+  updatedAt: string;
+};
 

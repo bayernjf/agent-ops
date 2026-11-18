@@ -1761,3 +1761,105 @@ select option {
   font-size: 0.75rem;
   margin-top: 4px;
 }
+
+/* Kernel Task/Run board. It reuses the table chrome from the project list but keeps its own
+   column widths and a nested run list that mirrors the task-run lifecycle. */
+.tasks-view .error { margin: 16px 0 0; }
+
+.task-table { margin-top: 20px; border-top: 1px solid var(--line); }
+
+.task-head,
+.task-row {
+  display: grid;
+  grid-template-columns: 22px 1.5fr 1fr 0.9fr;
+  gap: 16px;
+  align-items: center;
+}
+
+.task-head {
+  padding: 11px 12px;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--line);
+}
+
+.task-row {
+  width: 100%;
+  text-align: left;
+  padding: 15px 12px;
+  background: var(--surface);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-1);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.task-row:hover,
+.task-row.expanded { background: var(--surface-muted); }
+
+.task-row strong { font-size: 14px; }
+
+.task-caret { color: var(--text-3); display: inline-flex; }
+
+.task-repo { color: var(--text-2); }
+.task-repo small { color: var(--text-3); margin-left: 4px; }
+
+.run-list {
+  border-left: 2px solid var(--line);
+  margin-left: 26px;
+  background: var(--surface);
+}
+
+.run-empty {
+  margin: 0;
+  padding: 18px 12px;
+  color: var(--text-3);
+  font-size: 13px;
+  border-bottom: 1px solid var(--line);
+}
+
+.run-head,
+.run-row {
+  display: grid;
+  grid-template-columns: 1fr 0.9fr 1.2fr auto;
+  gap: 16px;
+  align-items: center;
+}
+
+.run-head {
+  padding: 9px 12px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--line);
+}
+
+.run-row {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.run-row:last-child { border-bottom: 0; }
+
+.run-agent { color: var(--text-1); }
+
+.run-diff {
+  color: var(--text-2);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.run-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* Task-run state colors: override the single `.state` run color for each lifecycle stage. */
+.state.queued { color: var(--status-pending) !important; background: color-mix(in srgb, var(--status-pending) 14%, var(--surface)); }
+.state.running { color: var(--status-run) !important; background: color-mix(in srgb, var(--status-run) 14%, var(--surface)); }
+.state.review { color: var(--accent-3) !important; background: color-mix(in srgb, var(--accent-3) 14%, var(--surface)); }
+.state.done { color: var(--status-ok) !important; background: color-mix(in srgb, var(--status-ok) 14%, var(--surface)); }
+.state.failed { color: var(--status-fail) !important; background: color-mix(in srgb, var(--status-fail) 14%, var(--surface)); }
