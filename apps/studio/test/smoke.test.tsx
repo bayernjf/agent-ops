@@ -39,7 +39,7 @@ describe('Studio smoke render', () => {
   it('mounts the dashboard shell with the brand and project surface', async () => {
     const html = await renderStudioApp();
     // Brand is always rendered in the header.
-    expect(html).toContain('Agent-Dev');
+    expect(html).toContain('Agent Ops');
     // Dashboard is the initial view: the projects section heading renders.
     expect(html).toContain('Projects');
     // The initial mount is in the loading state before the project list arrives.
