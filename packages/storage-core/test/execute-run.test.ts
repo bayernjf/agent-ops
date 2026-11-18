@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
-import { AgentDevStore } from '../src/index.js';
+import { KernelStore } from '../src/index.js';
 import type { CodexProcessRunner } from '@agent-ops/agent-runtime';
 
 const execFileAsync = promisify(execFile);
@@ -28,17 +28,17 @@ const fakeRunner = (exitCode: number): CodexProcessRunner => async () => ({
   completedAt: new Date().toISOString(),
 });
 
-async function provisionedTask(store: AgentDevStore, repo: string) {
+async function provisionedTask(store: KernelStore, repo: string) {
   const task = await store.createTask({ repo, baseRef: 'main', title: 'Rename bin', objective: 'Rename the CLI bin.' });
   return store.provisionTask(task.id);
 }
 
-describe('AgentDevStore executeRun', () => {
+describe('KernelStore executeRun', () => {
   it('runs a task in its worktree and records the diff for review', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
     try {
       const repo = await initRepo(join(directory, 'repo'));
-      const store = await AgentDevStore.open(join(directory, 'agent-ops.sqlite'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
       const task = await provisionedTask(store, repo);
       const run = await store.createRun(task.id, 'codex');
 
@@ -61,7 +61,7 @@ describe('AgentDevStore executeRun', () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
     try {
       const repo = await initRepo(join(directory, 'repo'));
-      const store = await AgentDevStore.open(join(directory, 'agent-ops.sqlite'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
       const task = await provisionedTask(store, repo);
       const run = await store.createRun(task.id, 'codex');
 
@@ -78,7 +78,7 @@ describe('AgentDevStore executeRun', () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
     try {
       const repo = await initRepo(join(directory, 'repo'));
-      const store = await AgentDevStore.open(join(directory, 'agent-ops.sqlite'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
       const task = await store.createTask({ repo, baseRef: 'main', title: 'T' });
       const run = await store.createRun(task.id, 'codex');
       await expect(store.executeRun(run.id, fakeRunner(0))).rejects.toThrow('Provision it before executing');
@@ -92,7 +92,7 @@ describe('AgentDevStore executeRun', () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
     try {
       const repo = await initRepo(join(directory, 'repo'));
-      const store = await AgentDevStore.open(join(directory, 'agent-ops.sqlite'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
       const task = await provisionedTask(store, repo);
       const run = await store.createRun(task.id, 'codex');
       await writeFile(join(task.worktreePath, 'NEW.md'), '# new\n', 'utf8');
@@ -111,7 +111,7 @@ describe('AgentDevStore executeRun', () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
     try {
       const repo = await initRepo(join(directory, 'repo'));
-      const store = await AgentDevStore.open(join(directory, 'agent-ops.sqlite'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
       const task = await provisionedTask(store, repo);
       const run = await store.createRun(task.id, 'codex');
       await writeFile(join(task.worktreePath, 'NEW.md'), '# new\n', 'utf8');
@@ -132,7 +132,7 @@ describe('AgentDevStore executeRun', () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
     try {
       const repo = await initRepo(join(directory, 'repo'));
-      const store = await AgentDevStore.open(join(directory, 'agent-ops.sqlite'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
       const task = await provisionedTask(store, repo);
       const run = await store.createRun(task.id, 'codex');
       await writeFile(join(task.worktreePath, 'NEW.md'), '# new\n', 'utf8');
@@ -155,7 +155,7 @@ describe('AgentDevStore executeRun', () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
     try {
       const repo = await initRepo(join(directory, 'repo'));
-      const store = await AgentDevStore.open(join(directory, 'agent-ops.sqlite'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
       const task = await provisionedTask(store, repo);
       const run = await store.createRun(task.id, 'codex');
 

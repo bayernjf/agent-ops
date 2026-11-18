@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
-import { AgentDevStore } from '../src/index.js';
+import { KernelStore } from '../src/index.js';
 import { addWorktree, removeWorktree } from '../src/worktree.js';
 
 const execFileAsync = promisify(execFile);
@@ -47,12 +47,12 @@ describe('worktree', () => {
   });
 });
 
-describe('AgentDevStore task provisioning', () => {
+describe('KernelStore task provisioning', () => {
   it('provisions a task worktree and releases it', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-provision-'));
     try {
       const repo = await initRepo(join(directory, 'repo'));
-      const store = await AgentDevStore.open(join(directory, 'agent-ops.sqlite'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
       const task = await store.createTask({ repo, baseRef: 'main', title: 'Rename bin' });
 
       const provisioned = await store.provisionTask(task.id);
