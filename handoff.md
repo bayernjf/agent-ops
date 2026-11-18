@@ -20,8 +20,8 @@
   - [x] ③c doctor + runtime/probe/catalog/profiles 内核能力路由回归 server-core（commit `99cc3f5`）；credentials/connectors 因依赖 provider-cli（云链路）明确留在 webapp
 - [x] ② blueprint 收敛 preset（commit `5f479e8`）：对外收敛为 `webapp-golden-path` + `storefront` 两个 preset，6 类 generator 实现保留（方案 B），`task.recipe` 可写 preset id 或具体 productType
 
-## 收尾 — 待做
+## 收尾 — 已完成
 
-- [ ] dogfood：用 agent-ops 在真实仓库跑通一条 Task/Run（diff 可审阅、可接受/打回）
-- [ ] 确认 daemon / studio / cli 独立启动，不读任何 `~/.agent-dev` 路径
-- [ ] 删除本地 `/Users/jiangfeng/000mycodes/agent-dev` + `~/.agent-dev`（前置：裁剪 + dogfood 完成；删前备份到 `~/000mycodes-backups/agent-dev`）
+- [x] dogfood：用 agent-ops 在真实仓库跑通一条 Task/Run（codex 真实执行创建 `DOGFOOD2.md`，`queued→running→review→done` 闭环）；发现并修复 diffStat 漏统计 untracked 文件（commit `9013f81`）
+- [x] 确认 daemon / studio / cli 独立启动，不读任何 `~/.agent-dev` 路径（grep 无残留 + daemon smoke + cli doctor + studio build 1652 modules）
+- [x] 删除本地 `/Users/jiangfeng/000mycodes/agent-dev` + `~/.agent-dev`（删前备份到 `~/000mycodes-backups/agent-dev`，32M）
