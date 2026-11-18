@@ -10,6 +10,7 @@ import { baselineProvidersFor, blueprintAnswersSchema, createBaselinePlan, creat
 import { verifyWorkspaceArtifacts } from '@agent-ops/blueprint/workspace';
 import { CONFIRMATIONS, runAccountDiscovery, runConnectorPreflight, type AccountDiscoveryReport, type ConnectorPreflightReport } from '@agent-ops/policy';
 import { AgentOpsStore, type ReleaseStep } from '@agent-ops/storage-webapp';
+import { createKernelApp } from '@agent-ops/server-core';
 import { FakeProviderRegistry } from '@agent-ops/provider-core';
 import { AGENT_NOT_DETECTED_CODE, AGENT_NOT_EXECUTABLE_CODE, buildAgentExecutionPlan, describeRuntimeExecutorRejection, discoverAgentRuntimes, getAgentAdapterStatus, isAgentExecutable, probeCodexRuntime, probeAgentCapabilities, resolveRuntimeExecutor, runDoctor, type CustomAgentInput, type AgentDescriptor, type RuntimeExecutor, agentProfileCreateSchema, agentProfileUpdateSchema } from '@agent-ops/agent-runtime';
 import { GitHubAdapter, RealProviderRegistry, defaultRunner, generateEnvFile, getCredentialBackendInfo, getCredentialMeta, loadCredentials, loadProjectResources, saveCredentials, verifyCredentials } from '@agent-ops/provider-cli';
@@ -1507,6 +1508,13 @@ export function createDaemonApp(store: AgentOpsStore, events = new DaemonEventBu
       await new Promise<void>(resolve => stream.onAbort(resolve));
     }),
   );
+
+  // The kernel Task/Run control plane is the base surface; the webapp vertical
+  // above is the optional extension. Mount the kernel routes so a webapp-enabled
+  // daemon serves both, with the outer auth middleware (line above the routes)
+  // already covering every /api/* path. Duplicate health/doctor/runtime routes on
+  // this app keep their existing webapp behaviour and shadow the kernel copies.
+  app.route('/', createKernelApp(store, { dataDirectory }));
 
   return { app, events };
 }

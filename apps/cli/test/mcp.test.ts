@@ -120,10 +120,14 @@ describe('agent-ops MCP bridge', () => {
     const { tools } = await client.listTools();
     const names = tools.map(tool => tool.name).sort();
     expect(names).toEqual([
+      'agent_ops_accept_run',
       'agent_ops_create_feature_task',
       'agent_ops_create_project',
+      'agent_ops_create_run',
+      'agent_ops_create_task',
       'agent_ops_doctor',
       'agent_ops_dry_run',
+      'agent_ops_execute_run',
       'agent_ops_get_acceptance',
       'agent_ops_get_apply',
       'agent_ops_get_baseline_plan',
@@ -135,8 +139,15 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_get_quality_gate',
       'agent_ops_get_release',
       'agent_ops_get_release_plan',
+      'agent_ops_get_run',
       'agent_ops_get_runtime',
+      'agent_ops_get_task',
       'agent_ops_list_projects',
+      'agent_ops_list_runs',
+      'agent_ops_list_tasks',
+      'agent_ops_provision_task',
+      'agent_ops_reject_run',
+      'agent_ops_release_task',
       'agent_ops_request_release',
       'agent_ops_revise_blueprint',
       'agent_ops_submit_acceptance',
@@ -350,5 +361,47 @@ describe('agent-ops MCP bridge', () => {
     const missing = await client.callTool({ name: 'agent_ops_revise_blueprint', arguments: { projectId: 'missing', answers: { mode: 'professional' } } });
     expect(missing.isError).toBe(true);
     expect(textOf(missing)).toContain('HTTP 404');
+  });
+
+  it('creates and lists kernel tasks and runs through the daemon', async () => {
+    const client = await startBridge();
+    const created = await client.callTool({
+      name: 'agent_ops_create_task',
+      arguments: { repo: '/Users/jiangfeng/000mycodes/agent-ops', baseRef: 'dev', title: 'MCP kernel probe', objective: 'Verify the task/run tools reach the daemon.', recipe: 'storefront' },
+    });
+    expect(created.isError).toBeUndefined();
+    const task = JSON.parse(textOf(created)) as { id: string; title: string; repo: string; baseRef: string; recipe: string; status: string };
+    expect(task.id).toBeTruthy();
+    expect(task.title).toBe('MCP kernel probe');
+    expect(task.status).toBe('queued');
+    expect(task.recipe).toBe('storefront');
+
+    const listed = await client.callTool({ name: 'agent_ops_list_tasks', arguments: {} });
+    const tasks = JSON.parse(textOf(listed)) as { id: string }[];
+    expect(Array.isArray(tasks)).toBe(true);
+    expect(tasks.some(candidate => candidate.id === task.id)).toBe(true);
+
+    const single = await client.callTool({ name: 'agent_ops_get_task', arguments: { taskId: task.id } });
+    expect((JSON.parse(textOf(single)) as { title: string }).title).toBe('MCP kernel probe');
+
+    const runCreated = await client.callTool({ name: 'agent_ops_create_run', arguments: { taskId: task.id, agentId: 'codex' } });
+    expect(runCreated.isError).toBeUndefined();
+    const run = JSON.parse(textOf(runCreated)) as { id: string; agentId: string; status: string };
+    expect(run.id).toBeTruthy();
+    expect(run.agentId).toBe('codex');
+    expect(run.status).toBe('queued');
+
+    const runs = await client.callTool({ name: 'agent_ops_list_runs', arguments: { taskId: task.id } });
+    const runList = JSON.parse(textOf(runs)) as { id: string }[];
+    expect(Array.isArray(runList)).toBe(true);
+    expect(runList.some(candidate => candidate.id === run.id)).toBe(true);
+
+    const runSingle = await client.callTool({ name: 'agent_ops_get_run', arguments: { runId: run.id } });
+    expect((JSON.parse(textOf(runSingle)) as { agentId: string }).agentId).toBe('codex');
+
+    // A task that does not exist is a 404, never silently ignored.
+    const missingTask = await client.callTool({ name: 'agent_ops_get_task', arguments: { taskId: 'missing' } });
+    expect(missingTask.isError).toBe(true);
+    expect(textOf(missingTask)).toContain('HTTP 404');
   });
 });
