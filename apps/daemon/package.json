@@ -11,6 +11,9 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@agent-ops/delivery-server": "*"
+    "@agent-ops/delivery-server": "*",
+    "@agent-ops/server-core": "*",
+    "@agent-ops/storage-core": "*",
+    "@hono/node-server": "^2.1.6"
   }
 }

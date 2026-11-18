@@ -4,6 +4,8 @@ import type { KernelStore } from '@agent-ops/storage-core';
 import type { CodexProcessRunner } from '@agent-ops/agent-runtime';
 import { createTokenAuthMiddleware } from './auth.js';
 
+export { daemonTokenPath, loadOrCreateDaemonToken, createTokenAuthMiddleware } from './auth.js';
+
 // The kernel HTTP control plane: the Task/Run API that turns KernelStore (the core data
 // layer) into a callable service. It has zero dependency on the webapp-delivery plugin,
 // so a daemon can serve this surface without mounting Project/Blueprint/Apply/Release.
