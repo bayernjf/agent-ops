@@ -273,8 +273,14 @@ export class KernelStore {
   }
 
   private async taskDiffStat(task: TaskRecord): Promise<string> {
-    const { stdout } = await execFileAsync('git', ['diff', '--stat', task.baseRef], { cwd: task.worktreePath });
-    return stdout.trim();
+    const { stdout: tracked } = await execFileAsync('git', ['diff', '--stat', task.baseRef], { cwd: task.worktreePath });
+    // `git diff --stat` ignores files the agent created but never staged, which is the
+    // common case for a non-interactive run. List those explicitly so the review surface
+    // reflects every change, not just the tracked ones.
+    const { stdout: untrackedList } = await execFileAsync('git', ['ls-files', '--others', '--exclude-standard'], { cwd: task.worktreePath });
+    const untrackedStat = untrackedList.trim().split('\n').filter(Boolean)
+      .map(name => ` ${name} | untracked`).join('\n');
+    return [tracked.trim(), untrackedStat].filter(Boolean).join('\n');
   }
 
   async close(): Promise<void> {

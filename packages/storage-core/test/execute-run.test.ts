@@ -57,6 +57,27 @@ describe('KernelStore executeRun', () => {
     }
   });
 
+  it('includes untracked files the agent created without committing', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const run = await store.createRun(task.id, 'codex');
+
+      // Agent writes a file but never stages or commits it.
+      await writeFile(join(task.worktreePath, 'UNTRACKED.md'), '# untracked\n', 'utf8');
+
+      const executed = await store.executeRun(run.id, fakeRunner(0));
+      expect(executed.status).toBe('review');
+      expect(executed.diffStat).toContain('UNTRACKED.md');
+      expect(executed.diffStat).toContain('untracked');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   it('marks a run and task failed when the agent exits non-zero', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
     try {
