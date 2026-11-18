@@ -54,7 +54,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
 
   const store = await KernelStore.open(databasePath);
   const authToken = loadOrCreateDaemonToken();
-  const app = createKernelApp(store, { authToken });
+  const app = createKernelApp(store, { authToken, dataDirectory: dirname(databasePath) });
   // Loopback only, on purpose: the API is unauthenticated beyond the bearer token.
   const server = serve({ fetch: app.fetch, port, hostname: '127.0.0.1' });
   await new Promise<void>((resolve, reject) => {
