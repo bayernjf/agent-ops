@@ -19,12 +19,12 @@ describe('task-run workflow', () => {
     actor.stop();
   });
 
-  it('rejects a review back to running for another pass', () => {
+  it('rejects a review back to queued for another pass', () => {
     const actor = createTaskRunActor('task-1');
     actor.send({ type: 'START' });
     actor.send({ type: 'REQUEST_REVIEW' });
     actor.send({ type: 'REJECT' });
-    expect(actor.getSnapshot().value).toBe('running');
+    expect(actor.getSnapshot().value).toBe('queued');
     actor.stop();
   });
 

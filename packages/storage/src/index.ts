@@ -9,7 +9,7 @@ import { drizzle } from 'drizzle-orm/sql-js';
 import initSqlJs, { type Database } from 'sql.js';
 import type { ProductBlueprint } from '@agent-ops/blueprint';
 import { createBaselinePlan, createDryRunPlan, productBlueprintSchema } from '@agent-ops/blueprint';
-import { buildAgentExecutionPlan, describeRuntimeExecutorRejection, executeCodexPlan, isAgentExecutable, resolveRuntimeExecutor, type CodexExecutionPlan, type CodexExecutionResult, type CodexProcessRunner, resolvePipelinePrompt, getNextPipelineStep, isPipelineComplete, type FeatureTaskPipeline, type PipelineStep, type PipelineStepResult } from '@agent-ops/agent-runtime';
+import { buildAgentExecutionPlan, describeRuntimeExecutorRejection, executeCodexPlan, isAgentExecutable, resolveRuntimeExecutor, type ApprovedTask, type CodexExecutionPlan, type CodexExecutionResult, type CodexProcessRunner, resolvePipelinePrompt, getNextPipelineStep, isPipelineComplete, type FeatureTaskPipeline, type PipelineStep, type PipelineStepResult } from '@agent-ops/agent-runtime';
 import { createNeedsInputRun, restoreDeliveryActor, isEventReplay, type DeliveryEvent, type DeliverySnapshot, type DeliveryState, type TaskRunState } from '@agent-ops/workflow';
 import { applyRuns, baselineApprovals, blueprintRevisions, deliveryRuns, projects, releaseRuns, tasks, runs } from './schema.js';
 import { migrations } from './migrations.js';
@@ -492,6 +492,69 @@ export class AgentDevStore {
     }).where(eq(runs.id, id)).run();
     await this.persist();
     return { ...existing, status, updatedAt: now, ...(diffStat !== undefined ? { diffStat } : {}) };
+  }
+
+  async executeRun(id: string, runner?: CodexProcessRunner): Promise<RunRecord> {
+    const run = this.getRun(id);
+    if (!run) throw new Error(`Run ${id} was not found.`);
+    const task = this.getTask(run.taskId);
+    if (!task) throw new Error(`Task ${run.taskId} was not found.`);
+    if (!task.worktreePath) throw new Error(`Task ${run.taskId} has no worktree. Provision it before executing a run.`);
+    if (run.status !== 'queued' && run.status !== 'failed') {
+      throw new Error(`Run ${id} cannot be executed from status ${run.status}.`);
+    }
+
+    const resolved = await resolveRuntimeExecutor(run.agentId, profileId => this.profiles.getProfile(profileId));
+    if (!resolved.ok) throw new Error(describeRuntimeExecutorRejection(resolved));
+
+    const approvedTask: ApprovedTask = { id: task.id, title: task.title, objective: task.objective, acceptanceCriteria: [] };
+    const plan = buildAgentExecutionPlan(approvedTask, task.worktreePath, resolved.agentId, { execute: true, profile: resolved.profile });
+
+    await this.updateTaskStatus(task.id, 'running');
+    await this.updateRunStatus(id, 'running');
+
+    let result: CodexExecutionResult;
+    try {
+      result = await executeCodexPlan(plan, runner);
+    } catch (error) {
+      result = {
+        exitCode: null,
+        signal: null,
+        timedOut: false,
+        output: error instanceof Error ? error.message : String(error),
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+      };
+    }
+
+    if (result.exitCode === 0 && !result.timedOut) {
+      const diffStat = await this.taskDiffStat(task);
+      await this.updateTaskStatus(task.id, 'review');
+      return this.updateRunStatus(id, 'review', diffStat);
+    }
+    await this.updateTaskStatus(task.id, 'failed');
+    return this.updateRunStatus(id, 'failed');
+  }
+
+  async acceptRun(id: string): Promise<RunRecord> {
+    const run = this.getRun(id);
+    if (!run) throw new Error(`Run ${id} was not found.`);
+    if (run.status !== 'review') throw new Error(`Run ${id} cannot be accepted from status ${run.status}.`);
+    await this.updateTaskStatus(run.taskId, 'done');
+    return this.updateRunStatus(id, 'done');
+  }
+
+  async rejectRun(id: string): Promise<RunRecord> {
+    const run = this.getRun(id);
+    if (!run) throw new Error(`Run ${id} was not found.`);
+    if (run.status !== 'review') throw new Error(`Run ${id} cannot be rejected from status ${run.status}.`);
+    await this.updateTaskStatus(run.taskId, 'queued');
+    return this.updateRunStatus(id, 'queued');
+  }
+
+  private async taskDiffStat(task: TaskRecord): Promise<string> {
+    const { stdout } = await execFileAsync('git', ['diff', '--stat', task.baseRef], { cwd: task.worktreePath });
+    return stdout.trim();
   }
 
   async createProject(input: CreateProjectInput): Promise<StoredProject> {
