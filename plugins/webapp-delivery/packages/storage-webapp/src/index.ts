@@ -9,7 +9,7 @@ import type { Database } from 'sql.js';
 import type { ProductBlueprint } from '@agent-ops/blueprint';
 import { createBaselinePlan, createDryRunPlan, productBlueprintSchema } from '@agent-ops/blueprint';
 import { buildAgentExecutionPlan, describeRuntimeExecutorRejection, executeCodexPlan, isAgentExecutable, resolveRuntimeExecutor, type CodexExecutionPlan, type CodexExecutionResult, type CodexProcessRunner, resolvePipelinePrompt, getNextPipelineStep, isPipelineComplete, type FeatureTaskPipeline, type PipelineStep, type PipelineStepResult } from '@agent-ops/agent-runtime';
-import { createNeedsInputRun, restoreDeliveryActor, isEventReplay, type DeliveryEvent, type DeliverySnapshot, type DeliveryState } from '@agent-ops/workflow';
+import { createNeedsInputRun, restoreDeliveryActor, isEventReplay, type DeliveryEvent, type DeliverySnapshot, type DeliveryState } from '@agent-ops/delivery-workflow';
 import { applyRuns, baselineApprovals, blueprintRevisions, deliveryRuns, projects, releaseRuns } from './schema.js';
 import { migrations as webappMigrations } from './migrations.js';
 import { KernelStore, kernelMigrations, loadDatabase, type Migration } from '@agent-ops/storage-core';

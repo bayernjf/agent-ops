@@ -1,4 +1,4 @@
-import type { DeliveryState } from '@agent-ops/workflow';
+import type { DeliveryState } from '@agent-ops/delivery-workflow';
 import type { NonInteractiveVerdict } from '../../lib/capability-verdict';
 import type { AcceptanceRecord, AgentCapabilityProbe, ApplyRun, PreviewDeploymentResult, RuntimeRun } from '../../types';
 
