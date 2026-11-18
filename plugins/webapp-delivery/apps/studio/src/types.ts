@@ -1,5 +1,5 @@
 import type { ProductBlueprint } from '@agent-ops/blueprint';
-import type { DeliveryState } from '@agent-ops/workflow';
+import type { DeliveryState } from '@agent-ops/delivery-workflow';
 
 export type Project = {
   id: string;

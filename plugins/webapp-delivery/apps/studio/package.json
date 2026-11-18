@@ -13,7 +13,7 @@
     "@agent-ops/agent-runtime": "*",
     "@agent-ops/blueprint": "*",
     "@agent-ops/policy": "*",
-    "@agent-ops/workflow": "*",
+    "@agent-ops/delivery-workflow": "*",
     "lucide-react": "^0.511.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
