@@ -15,6 +15,7 @@
     "@agent-ops/provider-core": "*",
     "@agent-ops/provider-cli": "*",
     "@agent-ops/policy": "*",
+    "@agent-ops/server-core": "*",
     "@agent-ops/storage-webapp": "*",
     "@hono/node-server": "^2.1.6",
     "hono": "^4.7.7",

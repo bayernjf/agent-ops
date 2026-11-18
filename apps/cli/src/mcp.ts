@@ -329,6 +329,108 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: ADDITIVE,
   }, args => callDaemon('POST', `/api/projects/${encodeURIComponent(args.projectId)}/release/request`, REQUEST_RELEASE_BODY).then(toResult));
 
+  // --- Kernel task/run control plane (server-core) ---
+  // These tools sit alongside the webapp-delivery tools above; the kernel daemon serves both when
+  // the webapp vertical is enabled, and serves only the task/run surface when it is not.
+
+  const taskIdSchema = {
+    taskId: z.string().min(1).describe('Task id as listed by agent_ops_list_tasks.'),
+  };
+  const runIdSchema = {
+    runId: z.string().min(1).describe('Run id as listed by agent_ops_list_runs.'),
+  };
+
+  server.registerTool('agent_ops_list_tasks', {
+    title: 'List tasks',
+    description: 'List all kernel tasks (repo work items) with their status.',
+    annotations: READ_ONLY,
+  }, () => callDaemon('GET', '/api/tasks').then(toResult));
+
+  server.registerTool('agent_ops_get_task', {
+    title: 'Get task',
+    description: 'Get one kernel task: repo, base ref, worktree path and status.',
+    inputSchema: taskIdSchema,
+    annotations: READ_ONLY,
+  }, args => callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}`).then(toResult));
+
+  server.registerTool('agent_ops_create_task', {
+    title: 'Create task',
+    description: 'Create a kernel task against a local repo and base ref. Provision it before creating a run.',
+    inputSchema: {
+      repo: z.string().trim().min(1).describe('Absolute path to a local git repository.'),
+      baseRef: z.string().trim().min(1).describe('Git ref to base the worktree on, e.g. "dev".'),
+      title: z.string().trim().min(1).describe('Short task title.'),
+      objective: z.string().trim().max(2000).optional().describe('What the task should achieve.'),
+      recipe: z.string().trim().max(500).optional().describe('Optional preset or product type, e.g. "webapp-golden-path".'),
+    },
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', '/api/tasks', {
+    repo: args.repo,
+    baseRef: args.baseRef,
+    title: args.title,
+    ...(args.objective ? { objective: args.objective } : {}),
+    ...(args.recipe ? { recipe: args.recipe } : {}),
+  }).then(toResult));
+
+  server.registerTool('agent_ops_provision_task', {
+    title: 'Provision task',
+    description: 'Create an isolated git worktree for a task so an agent can work in it.',
+    inputSchema: taskIdSchema,
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/provision`).then(toResult));
+
+  server.registerTool('agent_ops_release_task', {
+    title: 'Release task',
+    description: 'Remove the isolated worktree for a task, discarding any uncommitted changes it holds.',
+    inputSchema: taskIdSchema,
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/release`).then(toResult));
+
+  server.registerTool('agent_ops_list_runs', {
+    title: 'List runs',
+    description: 'List all runs of a task with their agent and review status.',
+    inputSchema: taskIdSchema,
+    annotations: READ_ONLY,
+  }, args => callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}/runs`).then(toResult));
+
+  server.registerTool('agent_ops_create_run', {
+    title: 'Create run',
+    description: 'Create a run for a task with a chosen agent (e.g. codex). The task must be provisioned first.',
+    inputSchema: {
+      ...taskIdSchema,
+      agentId: z.string().trim().min(1).describe('Agent id, e.g. "codex" or "claude-code"; see agent_ops_get_runtime.'),
+    },
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/runs`, { agentId: args.agentId }).then(toResult));
+
+  server.registerTool('agent_ops_get_run', {
+    title: 'Get run',
+    description: 'Get one run: agent, status and diff stat.',
+    inputSchema: runIdSchema,
+    annotations: READ_ONLY,
+  }, args => callDaemon('GET', `/api/runs/${encodeURIComponent(args.runId)}`).then(toResult));
+
+  server.registerTool('agent_ops_execute_run', {
+    title: 'Execute run',
+    description: 'Execute a queued run: the agent works in the task worktree. Synchronous and may take minutes; if the client times out, poll with agent_ops_get_run.',
+    inputSchema: runIdSchema,
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', `/api/runs/${encodeURIComponent(args.runId)}/execute`).then(toResult));
+
+  server.registerTool('agent_ops_accept_run', {
+    title: 'Accept run',
+    description: 'Accept a reviewed run, marking the task done.',
+    inputSchema: runIdSchema,
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', `/api/runs/${encodeURIComponent(args.runId)}/accept`).then(toResult));
+
+  server.registerTool('agent_ops_reject_run', {
+    title: 'Reject run',
+    description: 'Reject a reviewed run back to queued so it can be executed again.',
+    inputSchema: runIdSchema,
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', `/api/runs/${encodeURIComponent(args.runId)}/reject`).then(toResult));
+
   return server;
 }
 
