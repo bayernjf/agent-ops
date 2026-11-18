@@ -1,6 +1,6 @@
 # Agent Ops — handoff
 
-> 本仓库从 agent-dev 迁移而来（move 阶段已闭环），当前处于**功能裁剪**阶段。
+> 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环），当前处于**内核产品面补充**阶段。
 > 迁移方案与执行记录见 `bayjf/docs/tier0/Tier0-agent-dev并入AgentOps-迁移方案-2026-11-18.md`。
 
 ## 迁移（move 阶段）— 已完成
@@ -25,3 +25,9 @@
 - [x] dogfood：用 agent-ops 在真实仓库跑通一条 Task/Run（codex 真实执行创建 `DOGFOOD2.md`，`queued→running→review→done` 闭环）；发现并修复 diffStat 漏统计 untracked 文件（commit `9013f81`）
 - [x] 确认 daemon / studio / cli 独立启动，不读任何 `~/.agent-dev` 路径（grep 无残留 + daemon smoke + cli doctor + studio build 1652 modules）
 - [x] 删除本地 `/Users/jiangfeng/000mycodes/agent-dev` + `~/.agent-dev`（删前备份到 `~/000mycodes-backups/agent-dev`，32M）
+
+## 内核产品面补充 — 已完成
+
+- [x] cli 的 MCP server 补 11 个内核 task/run 工具（`list/get/create/provision/release` task，`list/create/get/execute/accept/reject` run），对应 server-core `/api/tasks`、`/api/runs`；与 webapp 面工具并行、不替换
+- [x] delivery-server 组合内核路由：`createDaemonApp` 挂载 `createKernelApp`，webapp 模式 daemon 也暴露内核 task/run 控制面（外层 auth 中间件统一鉴权；health/doctor/runtime 重复路由保留 webapp 现有行为、遮蔽内核副本，去重列为后续技术债）
+- [x] mcp.test.ts 补内核 task/run 端到端测试（create_task→list/get→create_run→list/get→404），全量 44 文件 / 601 tests 绿
