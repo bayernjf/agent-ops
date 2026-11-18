@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { serve } from '@hono/node-server';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { AgentDevStore } from '@agent-ops/storage';
+import { AgentDevStore } from '@agent-ops/storage-webapp';
 import { createDaemonApp } from '@agent-ops/daemon';
 import { afterEach, describe, expect, it } from 'vitest';
 import packageJson from '../package.json';

@@ -18,11 +18,12 @@
 - `packages/agent-runtime`：Agent 发现、能力探测、Profile、串行 Pipeline、失败分类。
 - `packages/workflow`：状态机引擎（xstate）。
 - `packages/policy`：账号发现、连接器、确认策略。
-- `packages/storage`：SQLite Ledger，evidence、质量门、git 证据。
+- `packages/storage-core`：SQLite Ledger 内核，task/run/profile/worktree 数据层。
 
 ### webapp-delivery 插件
 
 - `plugins/webapp-delivery/packages/blueprint`：产品规范 schema 与计划生成。
+- `plugins/webapp-delivery/packages/storage-webapp`：SQLite Ledger 的 webapp 交付部分（project/blueprint/apply/release）。
 - `plugins/webapp-delivery/packages/provider-core` / `provider-cli` / `deployment-composer`：webapp 交付与部署垂直链路。
 
 ## 命令

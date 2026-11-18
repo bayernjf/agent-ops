@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AgentDevStore } from '@agent-ops/storage';
+import { AgentDevStore } from '@agent-ops/storage-webapp';
 import { getAgentAdapterStatus, type CodexProcessRunner } from '@agent-ops/agent-runtime';
 import type { DaemonDependencies } from '../src/app.js';
 import type { AccountDiscoveryReport, ConnectorPreflightReport } from '@agent-ops/policy';

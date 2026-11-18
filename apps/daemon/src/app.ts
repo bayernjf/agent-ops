@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { baselineProvidersFor, blueprintAnswersSchema, createBaselinePlan, createBlueprint, createDryRunPlan, getBlueprintDecisions, type ProductBlueprint } from '@agent-ops/blueprint';
 import { verifyWorkspaceArtifacts } from '@agent-ops/blueprint/workspace';
 import { CONFIRMATIONS, runAccountDiscovery, runConnectorPreflight, type AccountDiscoveryReport, type ConnectorPreflightReport } from '@agent-ops/policy';
-import { AgentDevStore, type ReleaseStep } from '@agent-ops/storage';
+import { AgentDevStore, type ReleaseStep } from '@agent-ops/storage-webapp';
 import { FakeProviderRegistry } from '@agent-ops/provider-core';
 import { AGENT_NOT_DETECTED_CODE, AGENT_NOT_EXECUTABLE_CODE, buildAgentExecutionPlan, describeRuntimeExecutorRejection, discoverAgentRuntimes, getAgentAdapterStatus, isAgentExecutable, probeCodexRuntime, probeAgentCapabilities, resolveRuntimeExecutor, runDoctor, type CustomAgentInput, type AgentDescriptor, type RuntimeExecutor, agentProfileCreateSchema, agentProfileUpdateSchema } from '@agent-ops/agent-runtime';
 import { GitHubAdapter, RealProviderRegistry, defaultRunner, generateEnvFile, getCredentialBackendInfo, getCredentialMeta, loadCredentials, loadProjectResources, saveCredentials, verifyCredentials } from '@agent-ops/provider-cli';

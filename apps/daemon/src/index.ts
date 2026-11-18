@@ -1,7 +1,7 @@
 import { serve } from '@hono/node-server';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname, parse } from 'node:path';
-import { AgentDevStore } from '@agent-ops/storage';
+import { AgentDevStore } from '@agent-ops/storage-webapp';
 import { refreshCredentialCache } from '@agent-ops/provider-cli';
 import { createDaemonApp } from './app.js';
 import { loadOrCreateDaemonToken } from './auth.js';
