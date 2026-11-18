@@ -14,6 +14,7 @@ import { createNeedsInputRun, restoreDeliveryActor, isEventReplay, type Delivery
 import { applyRuns, baselineApprovals, blueprintRevisions, deliveryRuns, projects, releaseRuns, tasks, runs } from './schema.js';
 import { migrations } from './migrations.js';
 import { ProfileStore, type CreateProfileInput, type UpdateProfileInput, type ProfileValidationResult } from './profiles-store.js';
+import { addWorktree, removeWorktree } from './worktree.js';
 
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
@@ -430,6 +431,29 @@ export class AgentDevStore {
     this.orm.update(tasks).set({ status, updatedAt: now }).where(eq(tasks.id, id)).run();
     await this.persist();
     return { ...existing, status, updatedAt: now };
+  }
+
+  async provisionTask(id: string): Promise<TaskRecord> {
+    const existing = this.getTask(id);
+    if (!existing) throw new Error(`Task ${id} was not found.`);
+    if (existing.worktreePath) return existing;
+    const path = join(this.dataDirectory, 'tasks', id, 'work');
+    await addWorktree(existing.repo, existing.baseRef, path);
+    const now = new Date().toISOString();
+    this.orm.update(tasks).set({ worktreePath: path, updatedAt: now }).where(eq(tasks.id, id)).run();
+    await this.persist();
+    return { ...existing, worktreePath: path, updatedAt: now };
+  }
+
+  async releaseTask(id: string): Promise<TaskRecord> {
+    const existing = this.getTask(id);
+    if (!existing) throw new Error(`Task ${id} was not found.`);
+    if (!existing.worktreePath) return existing;
+    await removeWorktree(existing.repo, existing.worktreePath);
+    const now = new Date().toISOString();
+    this.orm.update(tasks).set({ worktreePath: '', updatedAt: now }).where(eq(tasks.id, id)).run();
+    await this.persist();
+    return { ...existing, worktreePath: '', updatedAt: now };
   }
 
   async createRun(taskId: string, agentId: string): Promise<RunRecord> {
