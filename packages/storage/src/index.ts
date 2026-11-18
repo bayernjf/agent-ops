@@ -1,22 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createRequire } from 'node:module';
-import { lstat, readlink, access, mkdir, readFile, rename, writeFile, rm } from 'node:fs/promises';
+import { lstat, readlink, access, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { desc, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/sql-js';
-import initSqlJs, { type Database } from 'sql.js';
+import type { Database } from 'sql.js';
 import type { ProductBlueprint } from '@agent-ops/blueprint';
 import { createBaselinePlan, createDryRunPlan, productBlueprintSchema } from '@agent-ops/blueprint';
-import { buildAgentExecutionPlan, describeRuntimeExecutorRejection, executeCodexPlan, isAgentExecutable, resolveRuntimeExecutor, type ApprovedTask, type CodexExecutionPlan, type CodexExecutionResult, type CodexProcessRunner, resolvePipelinePrompt, getNextPipelineStep, isPipelineComplete, type FeatureTaskPipeline, type PipelineStep, type PipelineStepResult } from '@agent-ops/agent-runtime';
-import { createNeedsInputRun, restoreDeliveryActor, isEventReplay, type DeliveryEvent, type DeliverySnapshot, type DeliveryState, type TaskRunState } from '@agent-ops/workflow';
-import { applyRuns, baselineApprovals, blueprintRevisions, deliveryRuns, projects, releaseRuns, tasks, runs } from './schema.js';
-import { migrations } from './migrations.js';
-import { ProfileStore, type CreateProfileInput, type UpdateProfileInput, type ProfileValidationResult } from './profiles-store.js';
-import { addWorktree, removeWorktree } from './worktree.js';
+import { buildAgentExecutionPlan, describeRuntimeExecutorRejection, executeCodexPlan, isAgentExecutable, resolveRuntimeExecutor, type CodexExecutionPlan, type CodexExecutionResult, type CodexProcessRunner, resolvePipelinePrompt, getNextPipelineStep, isPipelineComplete, type FeatureTaskPipeline, type PipelineStep, type PipelineStepResult } from '@agent-ops/agent-runtime';
+import { createNeedsInputRun, restoreDeliveryActor, isEventReplay, type DeliveryEvent, type DeliverySnapshot, type DeliveryState } from '@agent-ops/workflow';
+import { applyRuns, baselineApprovals, blueprintRevisions, deliveryRuns, projects, releaseRuns } from './schema.js';
+import { migrations as webappMigrations } from './migrations.js';
+import { KernelStore, kernelMigrations, loadDatabase, type Migration } from '@agent-ops/storage-core';
 
-const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
 
 // On Windows, npm/npx are .cmd shims and Node (since the CVE-2024-27980 fix) refuses to spawn
@@ -24,44 +21,12 @@ const execFileAsync = promisify(execFile);
 const npmSpawnOptions = process.platform === 'win32' ? { shell: true } : {};
 
 function createOrm(database: Database) {
-  return drizzle(database, { schema: { applyRuns, baselineApprovals, projects, blueprintRevisions, deliveryRuns, releaseRuns, tasks, runs } });
+  return drizzle(database, { schema: { applyRuns, baselineApprovals, projects, blueprintRevisions, deliveryRuns, releaseRuns } });
 }
 
 export type CreateProjectInput = {
   name: string;
   blueprint: ProductBlueprint;
-};
-
-export type CreateTaskInput = {
-  repo: string;
-  baseRef: string;
-  title: string;
-  objective?: string;
-  recipe?: string;
-  worktreePath?: string;
-};
-
-export type TaskRecord = {
-  id: string;
-  repo: string;
-  baseRef: string;
-  worktreePath: string;
-  recipe: string;
-  title: string;
-  objective: string;
-  status: TaskRunState;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type RunRecord = {
-  id: string;
-  taskId: string;
-  agentId: string;
-  status: TaskRunState;
-  diffStat: string;
-  createdAt: string;
-  updatedAt: string;
 };
 
 export type ProjectSummary = {
@@ -363,198 +328,20 @@ export type AcceptanceRecord = {
   approvedAt?: string;
 };
 
-export class AgentDevStore {
+export class AgentDevStore extends KernelStore {
   private readonly orm: ReturnType<typeof createOrm>;
-  readonly profiles: ProfileStore;
+  protected override migrations: readonly Migration[] = [...webappMigrations, ...kernelMigrations];
 
-  private constructor(
-    private readonly sqlite: Database,
-    private readonly databasePath: string,
-  ) {
+  private constructor(sqlite: Database, databasePath: string) {
+    super(sqlite, databasePath);
     this.orm = createOrm(sqlite);
-    this.profiles = new ProfileStore(dirname(databasePath));
   }
 
-  /** Where the platform keeps its own state and the workspaces it creates. */
-  get dataDirectory(): string {
-    return dirname(this.databasePath);
-  }
-
-  static async open(databasePath: string) {    const SQL = await initSqlJs({
-      locateFile: () => require.resolve('sql.js/dist/sql-wasm.wasm'),
-    });
-    let data: Uint8Array | undefined;
-    try {
-      data = new Uint8Array(await readFile(databasePath));
-    } catch (error) {
-      if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
-    }
-
-    const store = new AgentDevStore(new SQL.Database(data), databasePath);
-    store.sqlite.run('PRAGMA foreign_keys = ON;');
-    store.runMigrations();
-    await store.persist();
+  static async open(databasePath: string): Promise<AgentDevStore> {
+    const sqlite = await loadDatabase(databasePath);
+    const store = new AgentDevStore(sqlite, databasePath);
+    await store.initialize();
     return store;
-  }
-
-  async createTask(input: CreateTaskInput): Promise<TaskRecord> {
-    const now = new Date().toISOString();
-    const record: TaskRecord = {
-      id: randomUUID(),
-      repo: input.repo,
-      baseRef: input.baseRef,
-      worktreePath: input.worktreePath ?? '',
-      recipe: input.recipe ?? '',
-      title: input.title,
-      objective: input.objective ?? '',
-      status: 'queued',
-      createdAt: now,
-      updatedAt: now,
-    };
-    this.orm.insert(tasks).values(record).run();
-    await this.persist();
-    return record;
-  }
-
-  getTask(id: string): TaskRecord | undefined {
-    return this.orm.select().from(tasks).where(eq(tasks.id, id)).get() as TaskRecord | undefined;
-  }
-
-  listTasks(): TaskRecord[] {
-    return this.orm.select().from(tasks).all() as TaskRecord[];
-  }
-
-  async updateTaskStatus(id: string, status: TaskRunState): Promise<TaskRecord> {
-    const existing = this.getTask(id);
-    if (!existing) throw new Error(`Task ${id} was not found.`);
-    const now = new Date().toISOString();
-    this.orm.update(tasks).set({ status, updatedAt: now }).where(eq(tasks.id, id)).run();
-    await this.persist();
-    return { ...existing, status, updatedAt: now };
-  }
-
-  async provisionTask(id: string): Promise<TaskRecord> {
-    const existing = this.getTask(id);
-    if (!existing) throw new Error(`Task ${id} was not found.`);
-    if (existing.worktreePath) return existing;
-    const path = join(this.dataDirectory, 'tasks', id, 'work');
-    await addWorktree(existing.repo, existing.baseRef, path);
-    const now = new Date().toISOString();
-    this.orm.update(tasks).set({ worktreePath: path, updatedAt: now }).where(eq(tasks.id, id)).run();
-    await this.persist();
-    return { ...existing, worktreePath: path, updatedAt: now };
-  }
-
-  async releaseTask(id: string): Promise<TaskRecord> {
-    const existing = this.getTask(id);
-    if (!existing) throw new Error(`Task ${id} was not found.`);
-    if (!existing.worktreePath) return existing;
-    await removeWorktree(existing.repo, existing.worktreePath);
-    const now = new Date().toISOString();
-    this.orm.update(tasks).set({ worktreePath: '', updatedAt: now }).where(eq(tasks.id, id)).run();
-    await this.persist();
-    return { ...existing, worktreePath: '', updatedAt: now };
-  }
-
-  async createRun(taskId: string, agentId: string): Promise<RunRecord> {
-    if (!this.getTask(taskId)) throw new Error(`Task ${taskId} was not found.`);
-    const now = new Date().toISOString();
-    const record: RunRecord = {
-      id: randomUUID(),
-      taskId,
-      agentId,
-      status: 'queued',
-      diffStat: '',
-      createdAt: now,
-      updatedAt: now,
-    };
-    this.orm.insert(runs).values(record).run();
-    await this.persist();
-    return record;
-  }
-
-  getRun(id: string): RunRecord | undefined {
-    return this.orm.select().from(runs).where(eq(runs.id, id)).get() as RunRecord | undefined;
-  }
-
-  listRuns(taskId: string): RunRecord[] {
-    return this.orm.select().from(runs).where(eq(runs.taskId, taskId)).all() as RunRecord[];
-  }
-
-  async updateRunStatus(id: string, status: TaskRunState, diffStat?: string): Promise<RunRecord> {
-    const existing = this.getRun(id);
-    if (!existing) throw new Error(`Run ${id} was not found.`);
-    const now = new Date().toISOString();
-    this.orm.update(runs).set({
-      status,
-      updatedAt: now,
-      ...(diffStat !== undefined ? { diffStat } : {}),
-    }).where(eq(runs.id, id)).run();
-    await this.persist();
-    return { ...existing, status, updatedAt: now, ...(diffStat !== undefined ? { diffStat } : {}) };
-  }
-
-  async executeRun(id: string, runner?: CodexProcessRunner): Promise<RunRecord> {
-    const run = this.getRun(id);
-    if (!run) throw new Error(`Run ${id} was not found.`);
-    const task = this.getTask(run.taskId);
-    if (!task) throw new Error(`Task ${run.taskId} was not found.`);
-    if (!task.worktreePath) throw new Error(`Task ${run.taskId} has no worktree. Provision it before executing a run.`);
-    if (run.status !== 'queued' && run.status !== 'failed') {
-      throw new Error(`Run ${id} cannot be executed from status ${run.status}.`);
-    }
-
-    const resolved = await resolveRuntimeExecutor(run.agentId, profileId => this.profiles.getProfile(profileId));
-    if (!resolved.ok) throw new Error(describeRuntimeExecutorRejection(resolved));
-
-    const approvedTask: ApprovedTask = { id: task.id, title: task.title, objective: task.objective, acceptanceCriteria: [] };
-    const plan = buildAgentExecutionPlan(approvedTask, task.worktreePath, resolved.agentId, { execute: true, profile: resolved.profile });
-
-    await this.updateTaskStatus(task.id, 'running');
-    await this.updateRunStatus(id, 'running');
-
-    let result: CodexExecutionResult;
-    try {
-      result = await executeCodexPlan(plan, runner);
-    } catch (error) {
-      result = {
-        exitCode: null,
-        signal: null,
-        timedOut: false,
-        output: error instanceof Error ? error.message : String(error),
-        startedAt: new Date().toISOString(),
-        completedAt: new Date().toISOString(),
-      };
-    }
-
-    if (result.exitCode === 0 && !result.timedOut) {
-      const diffStat = await this.taskDiffStat(task);
-      await this.updateTaskStatus(task.id, 'review');
-      return this.updateRunStatus(id, 'review', diffStat);
-    }
-    await this.updateTaskStatus(task.id, 'failed');
-    return this.updateRunStatus(id, 'failed');
-  }
-
-  async acceptRun(id: string): Promise<RunRecord> {
-    const run = this.getRun(id);
-    if (!run) throw new Error(`Run ${id} was not found.`);
-    if (run.status !== 'review') throw new Error(`Run ${id} cannot be accepted from status ${run.status}.`);
-    await this.updateTaskStatus(run.taskId, 'done');
-    return this.updateRunStatus(id, 'done');
-  }
-
-  async rejectRun(id: string): Promise<RunRecord> {
-    const run = this.getRun(id);
-    if (!run) throw new Error(`Run ${id} was not found.`);
-    if (run.status !== 'review') throw new Error(`Run ${id} cannot be rejected from status ${run.status}.`);
-    await this.updateTaskStatus(run.taskId, 'queued');
-    return this.updateRunStatus(id, 'queued');
-  }
-
-  private async taskDiffStat(task: TaskRecord): Promise<string> {
-    const { stdout } = await execFileAsync('git', ['diff', '--stat', task.baseRef], { cwd: task.worktreePath });
-    return stdout.trim();
   }
 
   async createProject(input: CreateProjectInput): Promise<StoredProject> {
@@ -1928,11 +1715,6 @@ export class AgentDevStore {
     };
   }
 
-  async close() {
-    await this.persist();
-    this.sqlite.close();
-  }
-
   async advanceDelivery(projectId: string, events: DeliveryEvent[]): Promise<StoredProject> {
     const project = this.getProject(projectId);
     if (!project) throw new Error(`Project ${projectId} was not found.`);
@@ -1978,24 +1760,6 @@ export class AgentDevStore {
     const updated = this.getProject(projectId);
     if (!updated) throw new Error(`Project ${projectId} was not found after state transition.`);
     return updated;
-  }
-
-  private runMigrations() {
-    this.sqlite.run('CREATE TABLE IF NOT EXISTS __agent_dev_migrations (id TEXT PRIMARY KEY NOT NULL);');
-    const result = this.sqlite.exec('SELECT id FROM __agent_dev_migrations;');
-    const applied = new Set((result[0]?.values ?? []).map(row => String(row[0])));
-    for (const migration of migrations) {
-      if (applied.has(migration.id)) continue;
-      this.sqlite.run('BEGIN IMMEDIATE;');
-      try {
-        this.sqlite.exec(migration.sql);
-        this.sqlite.run('INSERT INTO __agent_dev_migrations (id) VALUES (?);', [migration.id]);
-        this.sqlite.run('COMMIT;');
-      } catch (error) {
-        this.sqlite.run('ROLLBACK;');
-        throw error;
-      }
-    }
   }
 
   private parseApplyRun(row: typeof applyRuns.$inferSelect): ApplyRun {
@@ -2098,17 +1862,7 @@ export class AgentDevStore {
     return `Eval evidence: \`${evalReport.command}\` — score ${evalReport.score}, ${passed} (eval-report.json)`;
   }
 
-  private async persist() {
-    await mkdir(dirname(this.databasePath), { recursive: true });
-    // Atomic replace (2026-11-02 review P2-1): the daemon lives for days and a
-    // single agent run can take 15 minutes, so an in-place write killed mid-way
-    // truncated agent-dev.sqlite and the store could never open again. Write to
-    // a temp file and rename over the database instead — a rename either
-    // happens fully or not at all, so the live file is never half-written.
-    const tmpPath = `${this.databasePath}.tmp-${process.pid}`;
-    await writeFile(tmpPath, this.sqlite.export());
-    await rename(tmpPath, this.databasePath);
-  }
 }
 
-export { ProfileStore, type CreateProfileInput, type UpdateProfileInput, type ProfileValidationResult };
+export { ProfileStore, type CreateProfileInput, type UpdateProfileInput, type ProfileValidationResult } from '@agent-ops/storage-core';
+export type { CreateTaskInput, TaskRecord, RunRecord } from '@agent-ops/storage-core';
