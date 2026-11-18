@@ -54,7 +54,7 @@ describe('ReleaseComposer', () => {
   let checkoutDir: string;
 
   beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'agent-dev-release-'));
+    tempDir = await mkdtemp(join(tmpdir(), 'agent-ops-release-'));
     checkoutDir = join(tempDir, 'release-checkout');
     // The runner is stubbed, so nothing clones: stand in for what the checkout step would produce.
     await mkdir(join(checkoutDir, '.git'), { recursive: true });
@@ -204,7 +204,7 @@ describe('ReleaseComposer', () => {
     const result = await new ReleaseComposer({ workspacePath: tempDir, projectName: PROJECT, source: source(checkoutDir) }, successRunner()).execute();
     expect(result.status).toBe('completed');
 
-    const evidence = JSON.parse(await readFile(join(tempDir, '.agent-dev/releases/receipt-desk-production.json'), 'utf8'));
+    const evidence = JSON.parse(await readFile(join(tempDir, '.agent-ops/releases/receipt-desk-production.json'), 'utf8'));
     expect(evidence.observations).toEqual({
       source: { repository: REPOSITORY, branch: 'main', commit: RELEASED_COMMIT, acceptedCommit: ACCEPTED_COMMIT },
       releaseQuality: { command: 'npm run quality', exitCode: 0 },
@@ -233,7 +233,7 @@ describe('ReleaseComposer', () => {
     expect(result.steps.slice(result.steps.indexOf(gate!) + 1).every(step => step.status === 'pending')).toBe(true);
     expect(calls.some(call => call.includes('vercel deploy'))).toBe(false);
     expect(result.observations).toBeUndefined();
-    await expect(readFile(join(tempDir, '.agent-dev/releases/receipt-desk-production.json'), 'utf8')).rejects.toThrow();
+    await expect(readFile(join(tempDir, '.agent-ops/releases/receipt-desk-production.json'), 'utf8')).rejects.toThrow();
   });
 
   it('fails the release when production CORS does not match the production origin', async () => {

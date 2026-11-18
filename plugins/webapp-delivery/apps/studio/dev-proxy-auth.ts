@@ -9,7 +9,7 @@ import { join } from 'node:path';
 //
 // 1. Cold start. A value injected through vite `define` is captured once when the config is
 //    loaded, but `npm run dev` starts the daemon concurrently and the daemon only creates
-//    ~/.agent-dev/daemon-token on its first start. The browser then keeps an empty token for the
+//    ~/.agent-ops/daemon-token on its first start. The browser then keeps an empty token for the
 //    whole session and every /api/* call answers 401. Reading per request converges as soon as the
 //    daemon is up, with no restart and no ordering requirement on the user.
 // 2. Exposure. Vite serves dev modules with inline source maps on an unauthenticated port, so a
@@ -17,7 +17,7 @@ import { join } from 'node:path';
 //    Keeping it server-side removes both surfaces.
 
 export function daemonTokenPath(): string {
-  return process.env.AGENT_DEV_DAEMON_TOKEN_PATH ?? join(homedir(), '.agent-dev', 'daemon-token');
+  return process.env.AGENT_OPS_DAEMON_TOKEN_PATH ?? join(homedir(), '.agent-ops', 'daemon-token');
 }
 
 /** Reads the current token, or an empty string when the daemon has not created it yet. */

@@ -3,7 +3,7 @@ import type { CredentialBackendInfo } from '../types';
 
 // Displayed in the local-file note; the daemon owns the real path, this is the human-facing
 // location users are told to guard.
-const LOCAL_CREDENTIALS_PATH = '~/.agent-dev/credentials.txt';
+const LOCAL_CREDENTIALS_PATH = '~/.agent-ops/credentials.txt';
 
 /**
  * Backend status line plus the storage note of the credentials panel.

@@ -367,7 +367,7 @@ export class ReleaseComposer {
       'wrangler', 'pages', 'deploy', this.frontendDistPath,
       '--project-name', this.cloudflareProjectName,
       '--branch', 'main',
-      '--commit-message', `agent-dev release: ${this.projectName}`,
+      '--commit-message', `agent-ops release: ${this.projectName}`,
     ], { cwd: this.source.checkoutPath, timeout: 300_000, env });
     if (!deployResult.success) {
       throw new Error(`Cloudflare Pages production deployment failed: ${deployResult.stderr || deployResult.stdout}`);
@@ -419,7 +419,7 @@ export class ReleaseComposer {
       completedAt: new Date().toISOString(),
     };
 
-    const outputDir = join(this.workspacePath, '.agent-dev', 'releases');
+    const outputDir = join(this.workspacePath, '.agent-ops', 'releases');
     await mkdir(outputDir, { recursive: true });
     const evidencePath = join(outputDir, `${this.projectName}-production.json`);
     await writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');

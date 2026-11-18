@@ -214,7 +214,7 @@ export const zh = {
     agentAiderDesc: 'Aider AI 结对编程。Git 原生，支持多种模型。适合增量修改。',
     agentAiderInstall: 'pip install aider-chat',
     agentPiDesc: '只读代码分析 Agent。不修改文件。适合代码审查和理解。',
-    // No install command is offered: `@agent-dev/pi` was never published, and guessing a new package
+    // No install command is offered: the Pi agent has no published package, and guessing a new
     // name would tell the user to run something unverifiable.
     customImplementationNote: '自定义实现说明',
     customInstructionsPlaceholder: '给 Agent 的任何特殊说明...',
@@ -622,7 +622,7 @@ export const zh = {
     builtIn: '内置',
     custom: '自定义',
     eyebrow: 'Local runtime',
-    formNote: '检测到的 Agent 可以在这里检查。只有经过验证的执行适配器才能运行任务。自定义 Agent 保存在 .agent-dev/agents.conf 中。',
+    formNote: '检测到的 Agent 可以在这里检查。只有经过验证的执行适配器才能运行任务。自定义 Agent 保存在 .agent-ops/agents.conf 中。',
     detecting: '正在检测本地 Agents...',
     notFound: '未找到任何 Agents。',
     runningProbe: '正在运行只读能力探测...',
@@ -831,7 +831,7 @@ export const zh = {
   confirmations: {
     releaseToProduction: '以 {approvedBy} 的身份将 {name} Release 到生产环境？',
     approveBaseline: '以 {approvedBy} 的身份记录此 Baseline 的批准？不会创建任何远程资源。',
-    runApplySimulator: '运行本地 Apply Simulator？它只在 .agent-dev 目录内写入，不会进行外部更改。',
+    runApplySimulator: '运行本地 Apply Simulator？它只在 .agent-ops 目录内写入，不会进行外部更改。',
     runNpmInstall: '在隔离的 Agent Ops 工作区中运行 npm install？这可能会访问 npm registry，且只写入该工作区。',
     deletePreviewProjects: '删除 Vercel 和 Cloudflare 上的 Preview 项目？',
     // Dry-run 什么也不跑，所以这道闸门不提执行者；原先的文案在承诺「不会启动 Codex 进程」，
@@ -850,7 +850,7 @@ export const zh = {
     whoApproves: '谁批准此 Baseline？',
     recordingApproval: '正在记录批准...',
     approvePlan: '批准 Baseline 计划',
-    runSimulator: '运行本地 Simulator，在被忽略的 `.agent-dev` 工作区中创建交付包。',
+    runSimulator: '运行本地 Simulator，在被忽略的 `.agent-ops` 工作区中创建交付包。',
     importRepoLabel: '导入现有仓库（可选）',
     importRepoPlaceholder: 'https://github.com/owner/repo',
     importRepoHint: '将该仓库克隆到工作区，而不是生成脚手架。你的文件不会被覆盖；冲突会记录在 apply manifest 中。',

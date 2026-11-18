@@ -158,7 +158,7 @@ const AGENT_ADAPTERS: Record<string, AgentAdapter> = {
   // and the deprecated/rate-limited free models (`hy3-free`, `big-pickle`, `ling-3.0-flash-free`).
   // Execution contract exercised locally: the driver wrote a file, ran `ls`, and exited 0.
   opencode: { status: 'verified', buildCommand: (prompt, cwd) => {
-    const promptDir = join(tmpdir(), 'agent-dev-opencode');
+    const promptDir = join(tmpdir(), 'agent-ops-opencode');
     mkdirSync(promptDir, { recursive: true });
     const promptFile = join(promptDir, `${randomUUID()}.md`);
     writeFileSync(promptFile, prompt);

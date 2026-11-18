@@ -16,7 +16,7 @@ describe('agent runtime catalog', () => {
   // the rest of this file. Every later case here probes a custom fixture command instead, which is
   // what makes that safe; a case that expects a real built-in to be detected must not be added below.
   it('returns only the built-in runtimes this machine has', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-catalog-built-in-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-catalog-built-in-'));
     try {
       await writeFile(join(directory, 'opencode'), '#!/bin/sh\necho fixture\n', 'utf8');
       await chmod(join(directory, 'opencode'), 0o755);
@@ -52,18 +52,18 @@ describe('agent runtime catalog', () => {
   // ambient Node and prints its version requirement as the first line, another dies inside a bundled
   // stack trace. Both used to appear in Studio with that sentence in place of a version number.
   it('does not read an error line as a version number', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-catalog-error-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-catalog-error-'));
     try {
       await writeFile(
-        join(directory, 'agent-dev-error-first-line'),
+        join(directory, 'agent-ops-error-first-line'),
         '#!/bin/sh\necho "Example: Node.js >=22 is required (current: v20.20.2)." >&2\nexit 1\n',
         'utf8',
       );
-      await chmod(join(directory, 'agent-dev-error-first-line'), 0o755);
+      await chmod(join(directory, 'agent-ops-error-first-line'), 0o755);
       const originalPath = process.env.PATH;
       process.env.PATH = directory;
       try {
-        const agents = await discoverAgentRuntimes([{ name: 'Error Agent', launchCommand: 'agent-dev-error-first-line' }]);
+        const agents = await discoverAgentRuntimes([{ name: 'Error Agent', launchCommand: 'agent-ops-error-first-line' }]);
         expect(agents.at(-1)?.detected).toBe(true);
         if (process.platform !== 'win32') {
           expect(agents.at(-1)?.version).toBeNull();
@@ -82,27 +82,27 @@ describe('agent runtime catalog', () => {
   // Together those made a Windows machine report every npm-installed Agent as absent or broken, so
   // this fixture is placed on PATH by hand and both halves are asserted.
   it('detects an installed Agent through PATH and PATHEXT without an external lookup binary', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-catalog-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-catalog-'));
     try {
       // An npm install leaves both shapes beside each other on Windows.
-      await writeFile(join(directory, 'agent-dev-fixture-cli'), '#!/bin/sh\necho fixture\n', 'utf8');
-      await writeFile(join(directory, 'agent-dev-fixture-cli.cmd'), '@echo off\r\necho fixture\r\n', 'utf8');
+      await writeFile(join(directory, 'agent-ops-fixture-cli'), '#!/bin/sh\necho fixture\n', 'utf8');
+      await writeFile(join(directory, 'agent-ops-fixture-cli.cmd'), '@echo off\r\necho fixture\r\n', 'utf8');
       const originalPath = process.env.PATH;
       process.env.PATH = directory;
       try {
-        const resolved = resolveExecutablePath('agent-dev-fixture-cli');
+        const resolved = resolveExecutablePath('agent-ops-fixture-cli');
         expect(resolved).not.toBeNull();
         // Handing cmd.exe the extensionless POSIX script is what made a probe hang until its
         // timeout, so the shim with a Windows extension has to win there. Comparison ignores case
         // on Windows because the candidate is spelled with the upper-case extension PATHEXT carries.
         const expected = process.platform === 'win32'
-          ? join(directory, 'agent-dev-fixture-cli.cmd')
-          : join(directory, 'agent-dev-fixture-cli');
+          ? join(directory, 'agent-ops-fixture-cli.cmd')
+          : join(directory, 'agent-ops-fixture-cli');
         expect(process.platform === 'win32' ? resolved?.toLowerCase() : resolved).toBe(
           process.platform === 'win32' ? expected.toLowerCase() : expected,
         );
 
-        const agent = (await discoverAgentRuntimes([{ name: 'Fixture', launchCommand: 'agent-dev-fixture-cli' }])).at(-1);
+        const agent = (await discoverAgentRuntimes([{ name: 'Fixture', launchCommand: 'agent-ops-fixture-cli' }])).at(-1);
         expect(agent?.detected).toBe(true);
       } finally {
         process.env.PATH = originalPath;
@@ -119,7 +119,7 @@ describe('agent runtime catalog', () => {
       expect(resolveExecutablePath('node')).toBeNull();
       // Absence is now a completed fact rather than a retryable unknown, so the wording has to
       // stay distinguishable from a probe that ran and merely failed.
-      const absent = (await discoverAgentRuntimes([{ name: 'Off Path', launchCommand: 'agent-dev-off-path-fixture' }])).at(-1);
+      const absent = (await discoverAgentRuntimes([{ name: 'Off Path', launchCommand: 'agent-ops-off-path-fixture' }])).at(-1);
       expect(absent?.detected).toBe(false);
       expect(absent?.detail).toBe('Command not found on local PATH.');
     } finally {
@@ -128,7 +128,7 @@ describe('agent runtime catalog', () => {
   });
 
   it('resolves an explicit path and answers null when it does not exist', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-catalog-path-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-catalog-path-'));
     try {
       const target = join(directory, 'explicit-cli');
       await writeFile(target, '#!/bin/sh\necho fixture\n', 'utf8');
@@ -167,7 +167,7 @@ describe('agent runtime catalog', () => {
 // executable instead.
 describe('probe executable resolution (P2-3)', () => {
   it('spawns the resolved executable and drops any shell tail in the configured command', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-probe-target-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-probe-target-'));
     try {
       await writeFile(join(directory, 'probe-target-p2'), '#!/bin/sh\necho 9.9.9\n', 'utf8');
       await chmod(join(directory, 'probe-target-p2'), 0o755);
@@ -197,7 +197,7 @@ describe('probe executable resolution (P2-3)', () => {
   });
 
   it('rejects a resolved path containing cmd.exe metacharacters on win32 only', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-probe-meta-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-probe-meta-'));
     try {
       await writeFile(join(directory, 'evil&tool-p2'), '#!/bin/sh\necho x\n', 'utf8');
       await chmod(join(directory, 'evil&tool-p2'), 0o755);

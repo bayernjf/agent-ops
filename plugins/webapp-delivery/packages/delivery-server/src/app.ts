@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { baselineProvidersFor, blueprintAnswersSchema, createBaselinePlan, createBlueprint, createDryRunPlan, getBlueprintDecisions, type ProductBlueprint } from '@agent-ops/blueprint';
 import { verifyWorkspaceArtifacts } from '@agent-ops/blueprint/workspace';
 import { CONFIRMATIONS, runAccountDiscovery, runConnectorPreflight, type AccountDiscoveryReport, type ConnectorPreflightReport } from '@agent-ops/policy';
-import { AgentDevStore, type ReleaseStep } from '@agent-ops/storage-webapp';
+import { AgentOpsStore, type ReleaseStep } from '@agent-ops/storage-webapp';
 import { FakeProviderRegistry } from '@agent-ops/provider-core';
 import { AGENT_NOT_DETECTED_CODE, AGENT_NOT_EXECUTABLE_CODE, buildAgentExecutionPlan, describeRuntimeExecutorRejection, discoverAgentRuntimes, getAgentAdapterStatus, isAgentExecutable, probeCodexRuntime, probeAgentCapabilities, resolveRuntimeExecutor, runDoctor, type CustomAgentInput, type AgentDescriptor, type RuntimeExecutor, agentProfileCreateSchema, agentProfileUpdateSchema } from '@agent-ops/agent-runtime';
 import { GitHubAdapter, RealProviderRegistry, defaultRunner, generateEnvFile, getCredentialBackendInfo, getCredentialMeta, loadCredentials, loadProjectResources, saveCredentials, verifyCredentials } from '@agent-ops/provider-cli';
@@ -265,7 +265,7 @@ export type DaemonAppOptions = {
   authToken?: string;
 };
 
-export function createDaemonApp(store: AgentDevStore, events = new DaemonEventBus(), dependencies: DaemonDependencies = {}, dataDirectory?: string, options: DaemonAppOptions = {}) {
+export function createDaemonApp(store: AgentOpsStore, events = new DaemonEventBus(), dependencies: DaemonDependencies = {}, dataDirectory?: string, options: DaemonAppOptions = {}) {
   const app = new Hono();
   const customAgents: CustomAgentInput[] = dataDirectory ? loadCustomAgents(dataDirectory) : [];
   // The catalog only carries what was found on PATH, so asking it is how the route learns the
@@ -319,7 +319,7 @@ export function createDaemonApp(store: AgentDevStore, events = new DaemonEventBu
   });
 
   app.get('/api/health', context =>
-    context.json({ service: 'agent-dev-daemon', status: 'ok', version: daemonVersion }),
+    context.json({ service: 'agent-ops-daemon', status: 'ok', version: daemonVersion }),
   );
 
   app.get('/api/doctor', async context => {
@@ -349,7 +349,7 @@ export function createDaemonApp(store: AgentDevStore, events = new DaemonEventBu
     const project = store.getProject(context.req.param('projectId'));
     if (!project) return context.json({ error: 'Project not found.' }, 404);
     return context.json({
-      format: 'agent-dev-blueprint',
+      format: 'agent-ops-blueprint',
       version: 1,
       exportedAt: new Date().toISOString(),
       project: { name: project.name, productType: project.productType },
@@ -413,11 +413,11 @@ export function createDaemonApp(store: AgentDevStore, events = new DaemonEventBu
   app.post('/api/projects/:projectId/blueprint/import', async context => {
     const projectId = context.req.param('projectId');
     const parsed = z.object({
-      format: z.literal('agent-dev-blueprint'),
+      format: z.literal('agent-ops-blueprint'),
       version: z.literal(1),
       blueprint: z.record(z.unknown()),
     }).safeParse(await context.req.json().catch(() => null));
-    if (!parsed.success) return context.json({ error: 'Invalid blueprint import format. Expected { format: "agent-dev-blueprint", version: 1, blueprint: {...} }.' }, 400);
+    if (!parsed.success) return context.json({ error: 'Invalid blueprint import format. Expected { format: "agent-ops-blueprint", version: 1, blueprint: {...} }.' }, 400);
     const project = store.getProject(projectId);
     if (!project) return context.json({ error: 'Project not found.' }, 404);
     try {
@@ -569,7 +569,7 @@ export function createDaemonApp(store: AgentDevStore, events = new DaemonEventBu
         }
         // Record import metadata so executeApplyRun knows this is an imported repository
         // and should not wipe-and-reclone (which would lose the imported history).
-        await writeFile(join(queued.workspacePath, '.agent-dev-import'), JSON.stringify({
+        await writeFile(join(queued.workspacePath, '.agent-ops-import'), JSON.stringify({
           sourceUrl: parsed.data.importRepositoryUrl,
           importedAt: new Date().toISOString(),
           originalBranch: (await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: queued.workspacePath })).stdout.trim(),
@@ -588,7 +588,7 @@ export function createDaemonApp(store: AgentDevStore, events = new DaemonEventBu
       // carries absolute paths and possibly credentialed remote URLs: log it
       // server-side only and answer with a generic ProblemDetails body
       // (Tier0 review 2026-10-30 H2).
-      console.error(`[agent-dev] local Apply failed for project ${projectId}:`, error);
+      console.error(`[agent-ops] local Apply failed for project ${projectId}:`, error);
       return context.json(problemDetails(context, 409, 'Unable to run local Apply.'), 409);
     }
   });

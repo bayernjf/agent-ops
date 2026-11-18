@@ -328,7 +328,7 @@ export type AcceptanceRecord = {
   approvedAt?: string;
 };
 
-export class AgentDevStore extends KernelStore {
+export class AgentOpsStore extends KernelStore {
   private readonly orm: ReturnType<typeof createOrm>;
   protected override migrations: readonly Migration[] = [...webappMigrations, ...kernelMigrations];
 
@@ -337,9 +337,9 @@ export class AgentDevStore extends KernelStore {
     this.orm = createOrm(sqlite);
   }
 
-  static async open(databasePath: string): Promise<AgentDevStore> {
+  static async open(databasePath: string): Promise<AgentOpsStore> {
     const sqlite = await loadDatabase(databasePath);
-    const store = new AgentDevStore(sqlite, databasePath);
+    const store = new AgentOpsStore(sqlite, databasePath);
     await store.initialize();
     return store;
   }
@@ -665,7 +665,7 @@ export class AgentDevStore extends KernelStore {
       await this.executePendingStep(run, steps[1], attempts, options, async () => { await mkdir(run.workspacePath, { recursive: true }); });
       // If the workspace already contains a .git directory (e.g. imported from an
       // existing repository), treat it like a remote base: do not overwrite user files.
-      // Imported repositories are marked with .agent-dev-import to distinguish from
+      // Imported repositories are marked with .agent-ops-import to distinguish from
       // remote dev branch clones (which should be re-cloned on retry).
       let isImportedRepository = false;
       if (!useRemoteBase) {
@@ -673,7 +673,7 @@ export class AgentDevStore extends KernelStore {
           await access(join(run.workspacePath, '.git'));
           useRemoteBase = true;
           try {
-            await access(join(run.workspacePath, '.agent-dev-import'));
+            await access(join(run.workspacePath, '.agent-ops-import'));
             isImportedRepository = true;
           } catch {
             // Not an imported repo — will be re-cloned from remote dev branch.
@@ -726,7 +726,7 @@ export class AgentDevStore extends KernelStore {
           // Read import metadata
           let importMeta: Record<string, unknown> = {};
           try {
-            importMeta = JSON.parse(await readFile(join(run.workspacePath, '.agent-dev-import'), 'utf8'));
+            importMeta = JSON.parse(await readFile(join(run.workspacePath, '.agent-ops-import'), 'utf8'));
           } catch {
             // Ignore missing import metadata
           }
@@ -771,12 +771,12 @@ export class AgentDevStore extends KernelStore {
           // the integration branch is checked out and create a baseline commit if needed.
           const integrationBranch = project.blueprint.spec.sourceControl?.integrationBranch ?? 'dev';
           await execFileAsync('git', ['switch', integrationBranch], { cwd: run.workspacePath });
-          // Stage any agent-dev files (apply-manifest.json was written in step 3)
+          // Stage any agent-ops files (apply-manifest.json was written in step 3)
           await execFileAsync('git', ['add', '-A'], { cwd: run.workspacePath });
           try {
             await execFileAsync('git', ['diff', '--cached', '--quiet'], { cwd: run.workspacePath });
           } catch {
-            await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '-qm', `chore: record apply manifest for imported repository (revision ${run.blueprintRevision})`], { cwd: run.workspacePath });
+            await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '-qm', `chore: record apply manifest for imported repository (revision ${run.blueprintRevision})`], { cwd: run.workspacePath });
           }
           return;
         }
@@ -785,11 +785,11 @@ export class AgentDevStore extends KernelStore {
         try {
           await execFileAsync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: run.workspacePath });
         } catch {
-          await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '-qm', `chore: establish ${project.blueprint.metadata.name} baseline`], { cwd: run.workspacePath });
+          await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '-qm', `chore: establish ${project.blueprint.metadata.name} baseline`], { cwd: run.workspacePath });
         }
       });
       await this.executePendingStep(run, steps[5], attempts, options, async () => {
-        const featureBranch = `feature/agent-dev/revision-${run.blueprintRevision}`;
+        const featureBranch = `feature/agent-ops/revision-${run.blueprintRevision}`;
         const branches = await execFileAsync('git', ['branch', '--list', featureBranch], { cwd: run.workspacePath });
         if (branches.stdout.trim()) await execFileAsync('git', ['switch', featureBranch], { cwd: run.workspacePath });
         else await execFileAsync('git', ['switch', '-c', featureBranch], { cwd: run.workspacePath });
@@ -801,18 +801,18 @@ export class AgentDevStore extends KernelStore {
         await execFileAsync('git', ['add', 'apply-manifest.json'], { cwd: run.workspacePath });
         if (useRemoteBase) {
           // On a remote base, HEAD is the upstream `dev` tip and must not be amended.
-          await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '-qm', `chore: record apply manifest for revision ${run.blueprintRevision}`], { cwd: run.workspacePath });
+          await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '-qm', `chore: record apply manifest for revision ${run.blueprintRevision}`], { cwd: run.workspacePath });
         } else {
-          await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '--amend', '--no-edit', '-q'], { cwd: run.workspacePath });
+          await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '--amend', '--no-edit', '-q'], { cwd: run.workspacePath });
         }
       });
       await this.executePendingStep(run, steps[6], attempts, options, async () => {
         await writeFile(join(run.workspacePath, 'DELIVERY_REPORT.md'), this.buildDeliveryReport(run, project.blueprint.metadata.name, steps, 'completed'), 'utf8');
         await execFileAsync('git', ['add', 'DELIVERY_REPORT.md'], { cwd: run.workspacePath });
         if (useRemoteBase) {
-          await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '-qm', 'chore: record delivery report'], { cwd: run.workspacePath });
+          await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '-qm', 'chore: record delivery report'], { cwd: run.workspacePath });
         } else {
-          await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '--amend', '--no-edit', '-q'], { cwd: run.workspacePath });
+          await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '--amend', '--no-edit', '-q'], { cwd: run.workspacePath });
         }
       });
       const completed = await this.updateApplyRun(run, 'completed', steps, attempts);
@@ -876,7 +876,7 @@ export class AgentDevStore extends KernelStore {
     }
     try {
       await execFileAsync('git', ['add', 'quality-gate.json', 'QUALITY_REPORT.md', ...(evalReport ? ['eval-report.json'] : [])], { cwd: run.workspacePath });
-      await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '-qm', `chore: record quality gate ${status}`], { cwd: run.workspacePath });
+      await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '-qm', `chore: record quality gate ${status}`], { cwd: run.workspacePath });
     } catch {
       // The report remains available even if the local Git evidence commit cannot be created.
     }
@@ -974,7 +974,7 @@ export class AgentDevStore extends KernelStore {
     await writeFile(join(run.workspacePath, 'DEPENDENCY_INSTALL_REPORT.md'), this.buildDependencyInstallReport(result), 'utf8');
     try {
       await execFileAsync('git', ['add', 'dependency-install.json', 'DEPENDENCY_INSTALL_REPORT.md', 'package-lock.json'], { cwd: run.workspacePath });
-      await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '-qm', `chore: ${status === 'installed' ? 'record dependency installation' : 'record dependency installation failure'}`], { cwd: run.workspacePath });
+      await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '-qm', `chore: ${status === 'installed' ? 'record dependency installation' : 'record dependency installation failure'}`], { cwd: run.workspacePath });
     } catch {
       // Installation evidence remains available even when the local evidence commit fails.
     }
@@ -999,7 +999,7 @@ export class AgentDevStore extends KernelStore {
     await writeFile(join(run.workspacePath, 'feature-task.json'), JSON.stringify(task, null, 2) + '\n', 'utf8');
     await writeFile(join(run.workspacePath, 'FEATURE_TASK.md'), this.buildFeatureTask(task), 'utf8');
     await execFileAsync('git', ['add', 'feature-task.json', 'FEATURE_TASK.md'], { cwd: run.workspacePath });
-    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '-qm', `task: define ${task.title}`], { cwd: run.workspacePath });
+    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '-qm', `task: define ${task.title}`], { cwd: run.workspacePath });
     return task;
   }
 
@@ -1023,7 +1023,7 @@ export class AgentDevStore extends KernelStore {
     await writeFile(join(task.workspacePath, 'FEATURE_TASK.md'), this.buildFeatureTask(approved), 'utf8');
     await writeFile(join(task.workspacePath, 'TASK_APPROVAL.md'), `# Feature Task Approval\n\n- Task: ${approved.title}\n- Approved by: ${approved.approvedBy}\n- Approved at: ${approved.approvedAt}\n- Blueprint revision: ${approved.blueprintRevision}\n\nThe acceptance criteria in FEATURE_TASK.md are the governing human approval boundary for this task.\n`, 'utf8');
     await execFileAsync('git', ['add', 'feature-task.json', 'FEATURE_TASK.md', 'TASK_APPROVAL.md'], { cwd: task.workspacePath });
-    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '-qm', `task: approve ${approved.title}`], { cwd: task.workspacePath });
+    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '-qm', `task: approve ${approved.title}`], { cwd: task.workspacePath });
     // The approval is already persisted and committed. A project that has
     // already reached its terminal delivery state has no START_IMPLEMENTATION
     // transition, but that must not turn a successful approval into an HTTP
@@ -1081,7 +1081,7 @@ export class AgentDevStore extends KernelStore {
     await writeFile(join(task.workspacePath, 'runtime-run.json'), JSON.stringify(run, null, 2) + '\n', 'utf8');
     await writeFile(join(task.workspacePath, 'RUNTIME_RUN_REPORT.md'), this.buildRuntimeRunReport(run, await this.getGitEvidence(projectId, blueprintRevision)), 'utf8');
     await execFileAsync('git', ['add', 'runtime-run.json', 'RUNTIME_RUN_REPORT.md'], { cwd: task.workspacePath });
-    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '-qm', `runtime: prepare ${task.title}`], { cwd: task.workspacePath });
+    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '-qm', `runtime: prepare ${task.title}`], { cwd: task.workspacePath });
     return run;
   }
 
@@ -1382,7 +1382,7 @@ export class AgentDevStore extends KernelStore {
       await execFileAsync('git', ['reset', '-q'], { cwd: task.workspacePath });
       return `Agent changes were not committed: ${externalLinks.join(', ')} ${externalLinks.length === 1 ? 'is a symbolic link' : 'are symbolic links'} outside the workspace and would enter the product repository as dead paths. Remove the link${externalLinks.length === 1 ? '' : 's'} in the workspace, then retry the run.`;
     }
-    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '-qm', `feat: ${task.title}`], { cwd: task.workspacePath });
+    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '-qm', `feat: ${task.title}`], { cwd: task.workspacePath });
     return null;
   }
 
@@ -1408,7 +1408,7 @@ export class AgentDevStore extends KernelStore {
     await writeFile(join(run.plan.workspacePath, 'runtime-run.json'), JSON.stringify(cancelled, null, 2) + '\n', 'utf8');
     await writeFile(join(run.plan.workspacePath, 'RUNTIME_RUN_REPORT.md'), this.buildRuntimeRunReport(cancelled, await this.getGitEvidence(projectId, blueprintRevision)), 'utf8');
     await execFileAsync('git', ['add', 'runtime-run.json', 'RUNTIME_RUN_REPORT.md'], { cwd: run.plan.workspacePath });
-    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '-qm', 'runtime: cancel dry-run'], { cwd: run.plan.workspacePath });
+    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '-qm', 'runtime: cancel dry-run'], { cwd: run.plan.workspacePath });
     return cancelled;
   }
 
@@ -1470,7 +1470,7 @@ export class AgentDevStore extends KernelStore {
     await writeFile(join(run.workspacePath, 'acceptance.json'), JSON.stringify(record, null, 2) + '\n', 'utf8');
     await writeFile(join(run.workspacePath, 'ACCEPTANCE_REPORT.md'), this.buildAcceptanceReport(record, evalReport), 'utf8');
     await execFileAsync('git', ['add', 'acceptance.json', 'ACCEPTANCE_REPORT.md'], { cwd: run.workspacePath });
-    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '-qm', `acceptance: ${status}`], { cwd: run.workspacePath });
+    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '-qm', `acceptance: ${status}`], { cwd: run.workspacePath });
     return record;
   }
 
@@ -1496,7 +1496,7 @@ export class AgentDevStore extends KernelStore {
     await writeFile(join(run.workspacePath, 'acceptance.json'), JSON.stringify(record, null, 2) + '\n', 'utf8');
     await writeFile(join(run.workspacePath, 'ACCEPTANCE_REPORT.md'), this.buildAcceptanceReport(record, await this.getEvalReport(projectId, blueprintRevision)), 'utf8');
     await execFileAsync('git', ['add', 'acceptance.json', 'ACCEPTANCE_REPORT.md'], { cwd: run.workspacePath });
-    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '-qm', `acceptance: approve delivery`], { cwd: run.workspacePath });
+    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '-qm', `acceptance: approve delivery`], { cwd: run.workspacePath });
     // Local approval closes implementation and local verification only. A real
     // PR, Preview, and production release remain provider-evidenced steps.
     await this.advanceDelivery(projectId, [{ type: 'IMPLEMENTATION_COMPLETE' }, { type: 'VERIFY_COMPLETE' }]);
@@ -1556,7 +1556,7 @@ export class AgentDevStore extends KernelStore {
     await writeFile(join(run.workspacePath, 'pr-evidence.json'), JSON.stringify(record, null, 2) + '\n', 'utf8');
     await writeFile(join(run.workspacePath, 'PR_EVIDENCE.md'), `# Pull Request Evidence\n\n- URL: ${record.url}\n- Recorded: ${record.recordedAt}\n\n## Checks\n\n${record.checks.map(check => `- ${check}`).join('\n')}\n\nThis record proves a PR reference was supplied. GitHub review and Actions remain external evidence.\n`, 'utf8');
     await execFileAsync('git', ['add', 'pr-evidence.json', 'PR_EVIDENCE.md'], { cwd: run.workspacePath });
-    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '-qm', 'delivery: record PR evidence'], { cwd: run.workspacePath });
+    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '-qm', 'delivery: record PR evidence'], { cwd: run.workspacePath });
     await this.advanceDelivery(projectId, [{ type: 'PR_CREATED' }]);
     return record;
   }
@@ -1578,7 +1578,7 @@ export class AgentDevStore extends KernelStore {
     await writeFile(join(run.workspacePath, 'preview-evidence.json'), JSON.stringify(record, null, 2) + '\n', 'utf8');
     await writeFile(join(run.workspacePath, 'PREVIEW_EVIDENCE.md'), `# Preview Evidence\n\n- API URL: ${record.apiUrl}\n- Web URL: ${record.webUrl}\n- Recorded: ${record.recordedAt}\n\n## Smoke test\n\n${record.smokeTest}\n\nThis record proves Preview evidence was supplied. Production deployment remains a separate approved step.\n`, 'utf8');
     await execFileAsync('git', ['add', 'preview-evidence.json', 'PREVIEW_EVIDENCE.md'], { cwd: run.workspacePath });
-    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '-qm', 'delivery: record preview evidence'], { cwd: run.workspacePath });
+    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '-qm', 'delivery: record preview evidence'], { cwd: run.workspacePath });
     await this.advanceDelivery(projectId, [{ type: 'PREVIEW_AVAILABLE' }]);
     return record;
   }
@@ -1659,7 +1659,7 @@ export class AgentDevStore extends KernelStore {
     await writeFile(join(run.workspacePath, 'production-evidence.json'), JSON.stringify(record, null, 2) + '\n', 'utf8');
     await writeFile(join(run.workspacePath, 'PRODUCTION_EVIDENCE.md'), this.buildReleaseEvidenceReport(record), 'utf8');
     await execFileAsync('git', ['add', 'production-evidence.json', 'PRODUCTION_EVIDENCE.md'], { cwd: run.workspacePath });
-    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '-qm', 'delivery: record production release evidence'], { cwd: run.workspacePath });
+    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '-qm', 'delivery: record production release evidence'], { cwd: run.workspacePath });
     await this.advanceDelivery(projectId, [{ type: 'RELEASE_COMPLETE' }]);
     return record;
   }
@@ -1802,7 +1802,7 @@ export class AgentDevStore extends KernelStore {
 
   private buildDeliveryReport(run: ApplyRun, projectName: string, steps: ApplyStep[], status: 'completed' | 'failed') {
     const stepRows = steps.map(step => `| ${step.title} | ${step.status} | ${step.detail ?? ''} |`).join('\n');
-    const featureBranch = `feature/agent-dev/revision-${run.blueprintRevision}`;
+    const featureBranch = `feature/agent-ops/revision-${run.blueprintRevision}`;
     return `# ${projectName} Delivery Report\n\n- Blueprint revision: ${run.blueprintRevision}\n- Apply run: ${run.id}\n- Status: ${status}\n- Workspace: ${run.workspacePath}\n- Local feature branch: ${featureBranch}\n- External writes: none\n\n## Local evidence\n\n| Step | Result | Detail |\n| --- | --- | --- |\n${stepRows}\n\n## External actions not executed\n\n- No GitHub repository or remote branch was created.\n- No Supabase project, schema, or Auth configuration was changed.\n- No Vercel deployment was created.\n- No Cloudflare Pages project or deployment was created.\n\n## Recovery and rollback\n\nThis report describes the Local Apply Simulator only. Delete the ignored workspace directory to remove its generated files. A future provider Apply must provide idempotency keys, a provider diff, and an explicit rollback plan before executing remote writes.\n`;
   }
 
@@ -1847,7 +1847,7 @@ export class AgentDevStore extends KernelStore {
     await writeFile(join(run.plan.workspacePath, 'runtime-run.json'), JSON.stringify(run, null, 2) + '\n', 'utf8');
     await writeFile(join(run.plan.workspacePath, 'RUNTIME_RUN_REPORT.md'), this.buildRuntimeRunReport(run, await this.getGitEvidence(run.projectId, run.blueprintRevision)), 'utf8');
     await execFileAsync('git', ['add', 'runtime-run.json', 'RUNTIME_RUN_REPORT.md'], { cwd: run.plan.workspacePath });
-    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-dev@localhost', 'commit', '-qm', commitMessage], { cwd: run.plan.workspacePath });
+    await execFileAsync('git', ['-c', 'user.name=Agent-Dev Local', '-c', 'user.email=agent-ops@localhost', 'commit', '-qm', commitMessage], { cwd: run.plan.workspacePath });
   }
 
   private buildAcceptanceReport(record: AcceptanceRecord, evalReport: EvalReport | null) {

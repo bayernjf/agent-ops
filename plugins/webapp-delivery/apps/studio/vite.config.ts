@@ -29,7 +29,7 @@ const proxy = {
 const vendorChunkPatterns: Array<[string, RegExp]> = [
   ['vendor-react', /node_modules\/(react|react-dom|scheduler)\//],
   ['vendor-icons', /node_modules\/lucide-react\//],
-  ['vendor-schema', /node_modules\/(zod|@agent-dev\/blueprint)\//],
+  ['vendor-schema', /node_modules\/(zod|@agent-ops\/blueprint)\//],
 ];
 
 export default defineConfig({

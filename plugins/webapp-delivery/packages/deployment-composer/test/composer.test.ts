@@ -32,7 +32,7 @@ describe('DeploymentComposer', () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'agent-dev-composer-'));
+    tempDir = await mkdtemp(join(tmpdir(), 'agent-ops-composer-'));
     await mkdir(join(tempDir, 'apps/api'), { recursive: true });
     await mkdir(join(tempDir, 'apps/web'), { recursive: true });
   });
@@ -121,7 +121,7 @@ describe('DeploymentComposer', () => {
       expect(apiCall).toContain('-X PATCH');
       expect(mockFetch).not.toHaveBeenCalledWith(expect.stringContaining('api.vercel.com'), expect.anything());
 
-      const body = await readFile(join(tempDir, '.agent-dev/vercel-deployment-protection.json'), 'utf8');
+      const body = await readFile(join(tempDir, '.agent-ops/vercel-deployment-protection.json'), 'utf8');
       expect(JSON.parse(body)).toEqual({ ssoProtection: null, passwordProtection: null });
 
       vi.unstubAllGlobals();
@@ -140,7 +140,7 @@ describe('DeploymentComposer', () => {
       expect(result.status).toBe('completed');
       expect(result.pagesUrl).toBe('https://feature-x.test-project-web-feature-x.pages.dev');
       expect(result.pagesUrlSource).toBe('cli-output');
-      const evidence = await readFile(join(tempDir, '.agent-dev/previews/test-project-feature-x.json'), 'utf8');
+      const evidence = await readFile(join(tempDir, '.agent-ops/previews/test-project-feature-x.json'), 'utf8');
       expect(JSON.parse(evidence).pagesUrlSource).toBe('cli-output');
       vi.unstubAllGlobals();
     });
@@ -158,7 +158,7 @@ describe('DeploymentComposer', () => {
       const composer = new DeploymentComposer({ workspacePath: tempDir, projectName: 'test-project', previewBranch: 'feature-x' }, createFullSuccessRunner());
       expect((await composer.execute()).status).toBe('completed');
 
-      const evidence = JSON.parse(await readFile(join(tempDir, '.agent-dev/previews/test-project-feature-x.json'), 'utf8'));
+      const evidence = JSON.parse(await readFile(join(tempDir, '.agent-ops/previews/test-project-feature-x.json'), 'utf8'));
       expect(evidence.observations).toEqual({
         apiHealth: { url: 'https://test-api-preview.vercel.app/api/health', httpStatus: 200, contentType: 'application/json; charset=utf-8' },
         exactCors: { expectedOrigin: corsOrigin, observedHeader: corsOrigin },

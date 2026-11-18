@@ -118,7 +118,7 @@ const FAILURE_PATTERNS: FailurePattern[] = [
     explanation: 'Agent-Dev blocked a commit because it detected a file containing secrets (like .env) or credentials. This is a safety guard to prevent accidental secret leakage.',
     remediation: [
       'Check the workspace for files like `.env`, `.vercel/`, `.wrangler/` that should not be committed',
-      'Ensure `.gitignore` includes `.env`, `.vercel/`, `.wrangler/`, `.agent-dev/`',
+      'Ensure `.gitignore` includes `.env`, `.vercel/`, `.wrangler/`, `.agent-ops/`',
       'Move secrets to environment variables or a secret manager instead of files',
       'After cleaning up, retry the operation',
     ],
@@ -266,7 +266,7 @@ const FAILURE_PATTERNS: FailurePattern[] = [
       'Use the "Recover Workspace" button in the Studio UI (Delivery tab)',
       'Recovery creates a fresh workspace and preserves the old one for inspection',
       'After recovery, re-run the Apply step to regenerate the workspace',
-      'If recovery is not available, delete the local .agent-dev directory and re-apply',
+      'If recovery is not available, delete the local .agent-ops directory and re-apply',
     ],
     autoRetryable: false,
     relatedDefects: [17, 18],

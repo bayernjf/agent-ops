@@ -19,7 +19,7 @@ describe('verifyWorkspaceArtifacts', () => {
   let workspace: string;
 
   beforeEach(async () => {
-    workspace = await mkdtemp(join(tmpdir(), 'agent-dev-workspace-'));
+    workspace = await mkdtemp(join(tmpdir(), 'agent-ops-workspace-'));
   });
 
   afterEach(async () => {

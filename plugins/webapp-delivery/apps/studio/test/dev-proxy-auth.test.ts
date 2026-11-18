@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createDaemonAuthHandler, daemonTokenPath, readDaemonToken } from '../dev-proxy-auth';
 
 // Regression coverage for the Studio dev proxy, written after walking the Studio flow on a machine
-// that had no ~/.agent-dev/daemon-token yet. `npm run dev` starts the daemon and Vite concurrently,
+// that had no ~/.agent-ops/daemon-token yet. `npm run dev` starts the daemon and Vite concurrently,
 // and the daemon only mints its token on first start, so the token file appears *after* the dev
 // server has loaded its configuration. Any token captured at startup therefore stays empty for the
 // whole session and every /api/* route answers 401 with no explanation in the UI.
@@ -25,14 +25,14 @@ function recordingRequest() {
 
 /** Points the real default read path at a scratch file instead of the caller's home directory. */
 async function withTokenPath(run: (path: string) => Promise<void>) {
-  const directory = await mkdtemp(join(tmpdir(), 'agent-dev-studio-proxy-'));
-  const previous = process.env.AGENT_DEV_DAEMON_TOKEN_PATH;
-  process.env.AGENT_DEV_DAEMON_TOKEN_PATH = join(directory, 'daemon-token');
+  const directory = await mkdtemp(join(tmpdir(), 'agent-ops-studio-proxy-'));
+  const previous = process.env.AGENT_OPS_DAEMON_TOKEN_PATH;
+  process.env.AGENT_OPS_DAEMON_TOKEN_PATH = join(directory, 'daemon-token');
   try {
-    await run(process.env.AGENT_DEV_DAEMON_TOKEN_PATH);
+    await run(process.env.AGENT_OPS_DAEMON_TOKEN_PATH);
   } finally {
-    if (previous === undefined) delete process.env.AGENT_DEV_DAEMON_TOKEN_PATH;
-    else process.env.AGENT_DEV_DAEMON_TOKEN_PATH = previous;
+    if (previous === undefined) delete process.env.AGENT_OPS_DAEMON_TOKEN_PATH;
+    else process.env.AGENT_OPS_DAEMON_TOKEN_PATH = previous;
     await rm(directory, { recursive: true, force: true });
   }
 }
@@ -82,7 +82,7 @@ describe('Studio dev proxy authentication', () => {
     });
   });
 
-  it('honours AGENT_DEV_DAEMON_TOKEN_PATH', async () => {
+  it('honours AGENT_OPS_DAEMON_TOKEN_PATH', async () => {
     await withTokenPath(async path => {
       expect(daemonTokenPath()).toBe(path);
     });

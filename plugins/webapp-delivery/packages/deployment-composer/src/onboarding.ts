@@ -50,7 +50,7 @@ export interface OnboardingEvidence {
 }
 
 /**
- * Onboard one service onto the agent-dev release flow:
+ * Onboard one service onto the agent-ops release flow:
  * Blueprint (desired resources) → plan → approved apply → verify.
  */
 export async function onboardService(

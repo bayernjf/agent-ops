@@ -197,7 +197,7 @@ function main() {
   console.log(output);
   // Debug journal for post-mortem without exposing the token stream.
   if (process.env.OPENCODE_DRIVER_LOG) {
-    const logDir = join(workspace, '.agent-dev');
+    const logDir = join(workspace, '.agent-ops');
     mkdirSync(logDir, { recursive: true });
     const logPath = join(logDir, `opencode-driver-${Date.now()}.json`);
     writeFileSync(logPath, JSON.stringify(messages.map(message => ({ type: message.type, id: message.id, finish: message.finish, content: message.content })), null, 2) + '\n');

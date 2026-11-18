@@ -27,17 +27,17 @@ let helpFixtureDirectory: string | null = null;
 
 async function withHelpFixtures(run: () => Promise<void> | void) {
   if (!helpFixtureDirectory) {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-help-fixture-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-help-fixture-'));
     const sh = (lines: string, exit: string) => `#!/bin/sh\n${lines}${exit}`;
     const cmd = (lines: string, exit: string) => `@echo off\r\n${lines}${exit}`;
     const printed = 'echo   --message  prompt text\necho   --yes-always  never ask\n';
-    await writeFile(join(directory, 'agent-dev-helps-ok'), sh(printed, ''), 'utf8');
-    await writeFile(join(directory, 'agent-dev-helps-ok.cmd'), cmd(printed.replace(/\n/g, '\r\n'), ''), 'utf8');
+    await writeFile(join(directory, 'agent-ops-helps-ok'), sh(printed, ''), 'utf8');
+    await writeFile(join(directory, 'agent-ops-helps-ok.cmd'), cmd(printed.replace(/\n/g, '\r\n'), ''), 'utf8');
     const toStderr = printed.replace(/\n/g, ' >&2\n');
-    await writeFile(join(directory, 'agent-dev-helps-failing'), sh(toStderr, 'exit 1\n'), 'utf8');
-    await writeFile(join(directory, 'agent-dev-helps-failing.cmd'), cmd(toStderr.replace(/\n/g, '\r\n'), 'exit /b 1\r\n'), 'utf8');
-    await chmod(join(directory, 'agent-dev-helps-ok'), 0o755);
-    await chmod(join(directory, 'agent-dev-helps-failing'), 0o755);
+    await writeFile(join(directory, 'agent-ops-helps-failing'), sh(toStderr, 'exit 1\n'), 'utf8');
+    await writeFile(join(directory, 'agent-ops-helps-failing.cmd'), cmd(toStderr.replace(/\n/g, '\r\n'), 'exit /b 1\r\n'), 'utf8');
+    await chmod(join(directory, 'agent-ops-helps-ok'), 0o755);
+    await chmod(join(directory, 'agent-ops-helps-failing'), 0o755);
     helpFixtureDirectory = directory;
   }
   const originalPath = process.env.PATH;
@@ -137,14 +137,14 @@ describe('capability probe', () => {
   // case lets a defect in either half hide the other behind the first failed assertion.
   it('accepts a help page from a command that ran', async () => {
     await withHelpFixtures(async () => {
-      const answered = await probeAgentCapabilities('aider', 'agent-dev-helps-ok');
+      const answered = await probeAgentCapabilities('aider', 'agent-ops-helps-ok');
       expect(answered).toMatchObject({ nonInteractive: true, helpAvailable: true });
     });
   });
 
   it('does not accept a failing command as a help page', async () => {
     await withHelpFixtures(async () => {
-      const broken = await probeAgentCapabilities('aider', 'agent-dev-helps-failing');
+      const broken = await probeAgentCapabilities('aider', 'agent-ops-helps-failing');
       expect(broken).toMatchObject({ nonInteractive: false, helpAvailable: false });
     });
   });
