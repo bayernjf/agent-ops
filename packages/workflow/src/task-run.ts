@@ -2,7 +2,7 @@ import { assign, createActor, createMachine } from 'xstate';
 
 // A Task and each of its Runs share one lifecycle, reduced from the 15-state delivery
 // machine. `review` is the human gate: a diff is produced in `running`, then either
-// accepted into `done` or rejected back to `running` for another pass.
+// accepted into `done` or rejected back to `queued` for another pass.
 export const taskRunStates = ['queued', 'running', 'review', 'done', 'failed'] as const;
 
 export type TaskRunState = (typeof taskRunStates)[number];
@@ -40,7 +40,7 @@ export const taskRunMachine = createMachine({
     review: {
       on: {
         ACCEPT: 'done',
-        REJECT: 'running',
+        REJECT: 'queued',
         FAIL: 'failed',
       },
     },
