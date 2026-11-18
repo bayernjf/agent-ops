@@ -14,4 +14,5 @@
 
 - `packages/*` 是 Agent Ops 内核，不得依赖 `plugins/webapp-delivery/*`。
 - `plugins/webapp-delivery/*` 只能依赖内核，不能反向依赖。
-- 已知待切断的反向依赖：`apps/daemon → blueprint/provider-*/deployment-composer`、`apps/studio → blueprint`。不得新增反向依赖。
+- `apps/daemon` 已收敛为只挂载 `@agent-ops/delivery-server`（webapp-delivery 的 HTTP 服务层，其内部依赖 blueprint/provider-*/deployment-composer/storage-webapp），不再直接 import 这些插件。
+- 已知待切断的反向依赖：`apps/studio → blueprint`。不得新增反向依赖。

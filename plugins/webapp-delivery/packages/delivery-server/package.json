@@ -1,0 +1,23 @@
+{
+  "name": "@agent-ops/delivery-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@agent-ops/blueprint": "*",
+    "@agent-ops/agent-runtime": "*",
+    "@agent-ops/deployment-composer": "*",
+    "@agent-ops/provider-core": "*",
+    "@agent-ops/provider-cli": "*",
+    "@agent-ops/policy": "*",
+    "@agent-ops/storage-webapp": "*",
+    "@hono/node-server": "^2.1.6",
+    "hono": "^4.7.7",
+    "zod": "^3.24.3"
+  }
+}
