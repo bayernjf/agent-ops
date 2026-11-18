@@ -21,6 +21,13 @@ export {
   type GeneratedArtifact,
   type ManualAction,
 } from './generate.js';
+export {
+  presetIdSchema,
+  PRESET_PRODUCT_TYPES,
+  presetForProductType,
+  productTypesForPreset,
+  type PresetId,
+} from './preset.js';
 
 // Every product type now ships a generated template: web-app, landing-page, browser-extension,
 // desktop (Tauri v2 by default, Electron in professional mode), mobile (Expo) and api-tool.
