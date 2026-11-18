@@ -14,7 +14,9 @@
 ## 功能裁剪 — 进行中
 
 - [x] ① 15 态 delivery machine 迁出内核 → 新建 `@agent-ops/delivery-workflow` 插件包（commit `feaacc2`）；内核 `workflow` 只留 5 态 task-run
-- [ ] ③ 拆 delivery-server：内核路由（health/doctor/credentials/connectors/runtime/profiles）回归内核 daemon，模板路由（/api/projects/* 云链路）留插件；云链路改为可选加载
+- [~] ③ 拆 delivery-server（进行中）
+  - [x] ③a 新建 `@agent-ops/server-core` 内核控制面：`createKernelApp` 暴露 task/run + health HTTP（基于 KernelStore，零依赖 webapp 插件）（commit 见 git log）
+  - [ ] ③b daemon 双模：`apps/daemon` 默认只挂内核（server-core），去 `export * from delivery-server`；webapp 云链路改为可选加载；doctor/runtime/profiles/credentials/connectors 内核路由归属待定
 - [ ] ② blueprint 收敛 preset：6 类 Blueprint 对外收敛为 preset 命名空间 + `task.recipe`（方案 B：保留 6 类 generator 实现，不物理删除）；storefront 作为独立 preset
 
 ## 收尾 — 待做
