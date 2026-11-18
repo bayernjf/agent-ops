@@ -106,4 +106,64 @@ describe('AgentDevStore executeRun', () => {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
   });
+
+  it('accepts a reviewed run into done', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await AgentDevStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const run = await store.createRun(task.id, 'codex');
+      await writeFile(join(task.worktreePath, 'NEW.md'), '# new\n', 'utf8');
+      await execFileAsync('git', ['add', '-A'], { cwd: task.worktreePath });
+      await execFileAsync('git', ['-c', 'user.name=Agent', '-c', 'user.email=agent@localhost', 'commit', '-qm', 'agent change'], { cwd: task.worktreePath });
+      await store.executeRun(run.id, fakeRunner(0));
+
+      const accepted = await store.acceptRun(run.id);
+      expect(accepted.status).toBe('done');
+      expect(store.getTask(task.id)?.status).toBe('done');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('rejects a reviewed run back to queued so it can run again', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await AgentDevStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const run = await store.createRun(task.id, 'codex');
+      await writeFile(join(task.worktreePath, 'NEW.md'), '# new\n', 'utf8');
+      await execFileAsync('git', ['add', '-A'], { cwd: task.worktreePath });
+      await execFileAsync('git', ['-c', 'user.name=Agent', '-c', 'user.email=agent@localhost', 'commit', '-qm', 'agent change'], { cwd: task.worktreePath });
+      await store.executeRun(run.id, fakeRunner(0));
+
+      const rejected = await store.rejectRun(run.id);
+      expect(rejected.status).toBe('queued');
+      expect(store.getTask(task.id)?.status).toBe('queued');
+      // The rejected run is queued again and can be re-executed.
+      await expect(store.executeRun(run.id, fakeRunner(0))).resolves.toMatchObject({ status: 'review' });
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('refuses to accept or reject a run that is not in review', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await AgentDevStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const run = await store.createRun(task.id, 'codex');
+
+      await expect(store.acceptRun(run.id)).rejects.toThrow('cannot be accepted from status queued');
+      await expect(store.rejectRun(run.id)).rejects.toThrow('cannot be rejected from status queued');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
 });

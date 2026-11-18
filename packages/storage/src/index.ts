@@ -536,6 +536,22 @@ export class AgentDevStore {
     return this.updateRunStatus(id, 'failed');
   }
 
+  async acceptRun(id: string): Promise<RunRecord> {
+    const run = this.getRun(id);
+    if (!run) throw new Error(`Run ${id} was not found.`);
+    if (run.status !== 'review') throw new Error(`Run ${id} cannot be accepted from status ${run.status}.`);
+    await this.updateTaskStatus(run.taskId, 'done');
+    return this.updateRunStatus(id, 'done');
+  }
+
+  async rejectRun(id: string): Promise<RunRecord> {
+    const run = this.getRun(id);
+    if (!run) throw new Error(`Run ${id} was not found.`);
+    if (run.status !== 'review') throw new Error(`Run ${id} cannot be rejected from status ${run.status}.`);
+    await this.updateTaskStatus(run.taskId, 'queued');
+    return this.updateRunStatus(id, 'queued');
+  }
+
   private async taskDiffStat(task: TaskRecord): Promise<string> {
     const { stdout } = await execFileAsync('git', ['diff', '--stat', task.baseRef], { cwd: task.worktreePath });
     return stdout.trim();
