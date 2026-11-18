@@ -50,7 +50,7 @@ describe('Local Codex Runtime', () => {
   it('refuses Windows instead of spawning a shim it cannot resolve', async () => {
     // The marker proves the refusal happens before spawn: if the guard regressed, node would run
     // and write it, so the assertion fails somewhere other than in prose.
-    const marker = join(tmpdir(), `agent-dev-win32-refusal-${Date.now()}.txt`);
+    const marker = join(tmpdir(), `agent-ops-win32-refusal-${Date.now()}.txt`);
     const plan = buildAgentExecutionPlan({ id: 'task-win', title: 'Never runs', objective: 'Refuse.', acceptanceCriteria: ['Refused.'] }, tmpdir(), 'codex', { execute: true });
     const result = await executeCodexPlan(
       { ...plan, command: [process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`] },

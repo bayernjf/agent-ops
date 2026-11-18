@@ -283,7 +283,7 @@ describe('LocalFileBackend (corruption safety)', () => {
     new LocalFileBackend({ type: 'local-file', options: { path: join(dir, 'credentials.json') } });
 
   it('fails closed on a corrupted store: reads and writes reject, the file is left untouched', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'agent-dev-corrupt-'));
+    const dir = await mkdtemp(join(tmpdir(), 'agent-ops-corrupt-'));
     try {
       const file = join(dir, 'credentials.json');
       await writeFile(file, '{"version":1,"secrets":{"GITHUB_TOKEN', 'utf8');
@@ -301,7 +301,7 @@ describe('LocalFileBackend (corruption safety)', () => {
   });
 
   it('rejects a truncated (empty) store and a JSON value with the wrong shape', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'agent-dev-corrupt-shape-'));
+    const dir = await mkdtemp(join(tmpdir(), 'agent-ops-corrupt-shape-'));
     try {
       const file = join(dir, 'credentials.json');
       await writeFile(file, '', 'utf8');
@@ -314,7 +314,7 @@ describe('LocalFileBackend (corruption safety)', () => {
   });
 
   it('writes go through a backup: the previous store is recoverable from .bak', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'agent-dev-backup-'));
+    const dir = await mkdtemp(join(tmpdir(), 'agent-ops-backup-'));
     try {
       const backend = localBackend(dir);
       await backend.set('FIRST_KEY', 'fixture-one');
@@ -333,7 +333,7 @@ describe('LocalFileBackend (corruption safety)', () => {
   });
 
   it('leaves no temp files behind after a successful write', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'agent-dev-atomic-'));
+    const dir = await mkdtemp(join(tmpdir(), 'agent-ops-atomic-'));
     try {
       const backend = localBackend(dir);
       await backend.set('FIRST_KEY', 'fixture-one');
@@ -346,7 +346,7 @@ describe('LocalFileBackend (corruption safety)', () => {
   });
 
   it('recovers after manual repair: a fixed store reads and writes again', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'agent-dev-repair-'));
+    const dir = await mkdtemp(join(tmpdir(), 'agent-ops-repair-'));
     try {
       const backend = localBackend(dir);
       await backend.set('FIRST_KEY', 'fixture-one');

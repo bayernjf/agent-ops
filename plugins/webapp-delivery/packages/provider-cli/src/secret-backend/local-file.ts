@@ -1,7 +1,7 @@
 /**
  * Local file secret backend.
  *
- * Stores secrets in ~/.agent-dev/credentials.json with file permissions 0600.
+ * Stores secrets in ~/.agent-ops/credentials.json with file permissions 0600.
  * Supports version history, approval workflow, and rotation.
  *
  * Backward compatible: if the legacy credentials.txt (KEY=VALUE format) exists,
@@ -25,7 +25,7 @@ export class LocalFileBackend implements SecretBackend {
   private readonly legacyPath: string;
 
   constructor(config: SecretBackendConfig) {
-    const baseDir = config.options?.path ?? process.env.AGENT_DEV_CREDENTIALS_PATH ?? join(homedir(), '.agent-dev');
+    const baseDir = config.options?.path ?? process.env.AGENT_OPS_CREDENTIALS_PATH ?? join(homedir(), '.agent-ops');
     this.path = baseDir.endsWith('.json') ? baseDir : join(baseDir, 'credentials.json');
     this.legacyPath = join(dirname(this.path), 'credentials.txt');
   }

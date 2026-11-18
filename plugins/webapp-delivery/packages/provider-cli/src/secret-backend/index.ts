@@ -5,7 +5,7 @@
  * only references (keys) and delegates storage to a SecretBackend.
  *
  * Supported backends:
- * - local-file: ~/.agent-dev/credentials.txt (default, file perms 0600)
+ * - local-file: ~/.agent-ops/credentials.txt (default, file perms 0600)
  * - infisical: Infisical secret management (via CLI or API)
  * - keychain: macOS Keychain (future)
  * - doppler: Doppler secret management (future)
@@ -117,9 +117,9 @@ export function createBackend(config: SecretBackendConfig): SecretBackend {
 
 /**
  * Get the default backend configuration.
- * Reads from AGENT_DEV_SECRET_BACKEND env var, falls back to local-file.
+ * Reads from AGENT_OPS_SECRET_BACKEND env var, falls back to local-file.
  */
 export function getDefaultBackendConfig(): SecretBackendConfig {
-  const type = (process.env.AGENT_DEV_SECRET_BACKEND as SecretBackendType) ?? 'local-file';
+  const type = (process.env.AGENT_OPS_SECRET_BACKEND as SecretBackendType) ?? 'local-file';
   return { type };
 }

@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 
 export type Theme = 'light' | 'dark';
 
-const STORAGE_KEY = 'agent-dev.studio.theme';
+const STORAGE_KEY = 'agent-ops.studio.theme';
 const THEME_COLORS: Record<Theme, string> = { light: '#FAF8F3', dark: '#12161F' };
 
 function getInitialTheme(): Theme {

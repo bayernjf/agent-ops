@@ -84,7 +84,7 @@ export const blueprintAnswersSchema = z.object({
 export type BlueprintAnswers = z.infer<typeof blueprintAnswersSchema>;
 
 export const productBlueprintSchema = z.object({
-  apiVersion: z.literal('agent-dev.io/v1alpha1'),
+  apiVersion: z.literal('agent-ops.io/v1alpha1'),
   kind: z.literal('ProductBlueprint'),
   // Defaults on the persisted schema are a read migration, not input leniency: `createBlueprint`
   // always writes these fields, but rows written before a field existed do not carry it, and a
@@ -161,7 +161,7 @@ export function createBlueprint(name: string, input: Partial<BlueprintAnswers> =
   const answers = blueprintAnswersSchema.parse(input);
   const providers = baselineProvidersFor(productTypeSchema.parse(answers.productType));
   return productBlueprintSchema.parse({
-    apiVersion: 'agent-dev.io/v1alpha1',
+    apiVersion: 'agent-ops.io/v1alpha1',
     kind: 'ProductBlueprint',
     metadata: {
       name,

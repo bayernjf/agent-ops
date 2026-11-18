@@ -8,7 +8,7 @@ import type { Context, Next } from 'hono';
 // (and CSRF-style browser requests) can still reach it. A per-user bearer token keeps every
 // /api/* route closed to callers that cannot read the token file (docs/audit-2026-08-31.md, S1/S2).
 export function daemonTokenPath() {
-  return process.env.AGENT_DEV_DAEMON_TOKEN_PATH ?? join(homedir(), '.agent-dev', 'daemon-token');
+  return process.env.AGENT_OPS_DAEMON_TOKEN_PATH ?? join(homedir(), '.agent-ops', 'daemon-token');
 }
 
 /** Loads the persistent daemon token, creating it on first start. Token survives restarts so the

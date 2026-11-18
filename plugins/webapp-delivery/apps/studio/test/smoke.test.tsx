@@ -81,14 +81,14 @@ describe('Credential backend status render', () => {
     expect(html).toContain('Infisical secret backend');
     expect(html).toContain('not written to a local credentials file');
     // The local-file claim must be gone once Infisical is the active backend.
-    expect(html).not.toContain('stored only in ~/.agent-dev/credentials.txt');
+    expect(html).not.toContain('stored only in ~/.agent-ops/credentials.txt');
   });
 
   it('keeps the local-file note when the backend is the default store', async () => {
     const html = await renderBackendStatus({ type: 'local-file', available: true });
     expect(html).toContain('class="credential-backend connected"');
     expect(html).toContain('Secret backend: local-file');
-    expect(html).toContain('stored only in ~/.agent-dev/credentials.txt');
+    expect(html).toContain('stored only in ~/.agent-ops/credentials.txt');
     expect(html).not.toContain('Infisical secret backend');
   });
 
@@ -105,6 +105,6 @@ describe('Credential backend status render', () => {
   it('renders no status line while the backend probe has not answered yet', async () => {
     const html = await renderBackendStatus(null);
     expect(html).not.toContain('credential-backend');
-    expect(html).toContain('stored only in ~/.agent-dev/credentials.txt');
+    expect(html).toContain('stored only in ~/.agent-ops/credentials.txt');
   });
 });

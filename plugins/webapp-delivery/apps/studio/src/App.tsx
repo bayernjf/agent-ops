@@ -144,7 +144,7 @@ export function App() {
   const [releaseEvidence, setReleaseEvidence] = useState<ReleaseEvidence | null>(null);
   // Every human gate records the same name: an approval nobody is named on cannot be traced back to
   // a person, and two conventions on one chain make the question "who approved this?" unanswerable.
-  const [approver, setApprover] = useState(() => localStorage.getItem('agent-dev.approver') ?? '');
+  const [approver, setApprover] = useState(() => localStorage.getItem('agent-ops.approver') ?? '');
   const [releaseSummary, setReleaseSummary] = useState('');
   const [releaseBusy, setReleaseBusy] = useState(false);
   const [recoveringWorkspace, setRecoveringWorkspace] = useState(false);
@@ -265,7 +265,7 @@ export function App() {
 
   const recordApproverLocal = (): string => {
     const name = approver.trim();
-    if (name) localStorage.setItem('agent-dev.approver', name);
+    if (name) localStorage.setItem('agent-ops.approver', name);
     return name;
   };
 

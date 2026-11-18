@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AgentDevStore } from '@agent-ops/storage-webapp';
+import { AgentOpsStore } from '@agent-ops/storage-webapp';
 import { getAgentAdapterStatus, type CodexProcessRunner } from '@agent-ops/agent-runtime';
 import type { DaemonDependencies } from '../src/app.js';
 import type { AccountDiscoveryReport, ConnectorPreflightReport } from '@agent-ops/policy';
@@ -45,8 +45,8 @@ function fakeRunner(script: Array<{ exitCode: number | null; timedOut?: boolean;
 async function recordReleasePrerequisites(workspacePath: string, options: { repository?: string; acceptance?: boolean } = {}) {
   const { repository = RELEASE_REPOSITORY, acceptance = true } = options;
   if (repository) {
-    await mkdir(join(workspacePath, '.agent-dev'), { recursive: true });
-    await writeFile(join(workspacePath, '.agent-dev', 'project-resources.json'), JSON.stringify({
+    await mkdir(join(workspacePath, '.agent-ops'), { recursive: true });
+    await writeFile(join(workspacePath, '.agent-ops', 'project-resources.json'), JSON.stringify({
       version: 1, projectName: 'Receipt Desk', projectId: 'project', blueprintRevision: 1,
       updatedAt: '2026-08-23T00:00:00.000Z', providers: { github: { repository } },
     }), 'utf8');
@@ -55,7 +55,7 @@ async function recordReleasePrerequisites(workspacePath: string, options: { repo
     await writeFile(join(workspacePath, 'acceptance.json'), JSON.stringify({
       id: 'acceptance', projectId: 'project', blueprintRevision: 1, taskId: 'task',
       status: 'approved', criteriaConfirmed: true, summary: 'Accepted.', qualityStatus: 'passed',
-      gitEvidence: { branch: 'feature/agent-dev/revision-1', head: ACCEPTED_COMMIT, status: '', diffStat: '' },
+      gitEvidence: { branch: 'feature/agent-ops/revision-1', head: ACCEPTED_COMMIT, status: '', diffStat: '' },
       submittedAt: '2026-08-23T00:00:00.000Z', approvedBy: 'test-user', approvedAt: '2026-08-23T00:00:00.000Z',
     }), 'utf8');
   }
@@ -67,9 +67,9 @@ afterEach(async () => {
 
 describe('daemon API', () => {
   it('creates and lists persisted projects', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-daemon-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-daemon-'));
     directories.push(directory);
-    const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+    const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
     const report: ConnectorPreflightReport = {
       checkedAt: '2026-08-03T00:00:00.000Z',
       localOnly: true,
@@ -153,9 +153,9 @@ describe('daemon API', () => {
     // Tier0 review 2026-10-30 H2: the Apply route catches git subprocess
     // failures whose stderr carries absolute paths and possibly credentialed
     // remote URLs; that text must stay in the server log, never the body.
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-daemon-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-daemon-'));
     directories.push(directory);
-    const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+    const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const { app } = createDaemonApp(store, undefined, { isAgentDetected: () => true });
@@ -215,9 +215,9 @@ describe('daemon API', () => {
   });
 
   it('requires explicit confirmation before recording a ready baseline approval', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-daemon-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-daemon-'));
     directories.push(directory);
-    const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+    const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
     // This walkthrough covers a run through its whole lifecycle, and one step of that is preparing a
     // run - which the route now refuses when the executor's CLI is not on this machine. The suite says
     // it is, because what is being tested is the lifecycle, not what happens to be installed here.
@@ -351,7 +351,7 @@ describe('daemon API', () => {
     expect(runtimeRun.status).toBe(201);
     await expect(runtimeRun.json()).resolves.toMatchObject({ run: { status: 'planned' } });
     const runtimeEvidence = await app.request(`http://localhost/api/projects/${createdPayload.project.id}/runtime/evidence`);
-    await expect(runtimeEvidence.json()).resolves.toMatchObject({ evidence: { branch: 'feature/agent-dev/revision-1' } });
+    await expect(runtimeEvidence.json()).resolves.toMatchObject({ evidence: { branch: 'feature/agent-ops/revision-1' } });
     const runtimeLastCommit = await app.request(`http://localhost/api/projects/${createdPayload.project.id}/runtime/last-commit`);
     expect(runtimeLastCommit.status).toBe(200);
     await expect(runtimeLastCommit.json()).resolves.toHaveProperty('lastCommit');
@@ -383,9 +383,9 @@ describe('daemon API', () => {
   }, 30_000);
 
   it('cleans a PR preview only after verifying a signed GitHub close event', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-daemon-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-daemon-'));
     directories.push(directory);
-    const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+    const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
     const cleanupCalls: { vercelProject?: string; cloudflareProject?: string; workspacePath: string }[] = [];
     const { app } = createDaemonApp(store, undefined, {
       resolveGitHubWebhookSecret: () => 'webhook-secret',
@@ -441,9 +441,9 @@ describe('daemon API', () => {
   }, 30_000);
 
   it('derives provider project names from a slug that Vercel and Cloudflare accept', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-daemon-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-daemon-'));
     directories.push(directory);
-    const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+    const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
     const { app } = createDaemonApp(store);
     const created = await app.request('http://localhost/api/projects', {
       method: 'POST',
@@ -473,9 +473,9 @@ describe('daemon API', () => {
   // scaffold generates neither, so without a guard the route would try to deploy directories that
   // are not there, after already recording a Vercel project as possibly created.
   it('refuses a hosted preview for a product type that deploys nowhere', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-daemon-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-daemon-'));
     directories.push(directory);
-    const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+    const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
     const { app } = createDaemonApp(store);
     const created = await app.request('http://localhost/api/projects', {
       method: 'POST',
@@ -499,9 +499,9 @@ describe('daemon API', () => {
   }, 30_000);
 
   it('recovers a stale workspace into a clean one and leaves the old one on disk', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-daemon-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-daemon-'));
     directories.push(directory);
-    const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+    const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
     const { app } = createDaemonApp(store);
     const created = await app.request('http://localhost/api/projects', {
       method: 'POST',
@@ -547,7 +547,7 @@ describe('daemon API', () => {
     expect(payload.run.workspacePath).toContain('revision-1-recovery-1');
     expect(payload.abandoned.workspacePath).toBe(firstRun.workspacePath);
     expect(payload.abandoned.workspace.staleConfig).toContain('.github/workflows/quality.yml');
-    expect(payload.abandoned.git?.branch).toBe('feature/agent-dev/revision-1');
+    expect(payload.abandoned.git?.branch).toBe('feature/agent-ops/revision-1');
 
     // The old workspace is kept exactly as it was so its failure stays inspectable.
     await expect(readFile(join(firstRun.workspacePath, '.github/workflows/quality.yml'), 'utf8')).resolves.toBe('name: stale\n');
@@ -555,9 +555,9 @@ describe('daemon API', () => {
     await store.close();
   }, 30_000);
   it('requires a separate request and approval before any production deploy runs', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-daemon-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-daemon-'));
     directories.push(directory);
-    const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+    const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
     const releaseCalls: { workspacePath: string; projectName: string; source: unknown }[] = [];
     const { app } = createDaemonApp(store, undefined, {
       deployRelease: async options => {
@@ -691,9 +691,9 @@ describe('daemon API', () => {
   }, 30_000);
 
   it('journals a failed release and lets the retry resume the approved release', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-daemon-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-daemon-'));
     directories.push(directory);
-    const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+    const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
     let attempt = 0;
     const { app } = createDaemonApp(store, undefined, {
       deployRelease: async () => {
@@ -777,9 +777,9 @@ describe('daemon API', () => {
   }, 30_000);
 
   it('delivers a product without a hosted deployment target through a manually confirmed distribution', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-daemon-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-daemon-'));
     directories.push(directory);
-    const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+    const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
     const releaseCalls: unknown[] = [];
     const { app } = createDaemonApp(store, undefined, {
       deployRelease: async options => {
@@ -864,9 +864,9 @@ describe('daemon API', () => {
   }, 30_000);
 
   it('keeps hosted products on the preview gate before a release request', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-daemon-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-daemon-'));
     directories.push(directory);
-    const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+    const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
     const { app } = createDaemonApp(store, undefined, {
       deployRelease: async () => { throw new Error('The preview-first guard must stop before any deploy.'); },
     });
@@ -905,9 +905,9 @@ describe('daemon API', () => {
 
   describe('agent profile API', () => {
     async function openProfileStore() {
-      const directory = await mkdtemp(join(tmpdir(), 'agent-dev-profiles-'));
+      const directory = await mkdtemp(join(tmpdir(), 'agent-ops-profiles-'));
       directories.push(directory);
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const { app } = createDaemonApp(store, undefined, {});
       return { store, app };
     }
@@ -1011,9 +1011,9 @@ describe('daemon API', () => {
     const TOKEN = 'test-daemon-token';
 
     async function openAuthedStore() {
-      const directory = await mkdtemp(join(tmpdir(), 'agent-dev-auth-'));
+      const directory = await mkdtemp(join(tmpdir(), 'agent-ops-auth-'));
       directories.push(directory);
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const { app } = createDaemonApp(store, undefined, {}, undefined, { authToken: TOKEN });
       return { store, app };
     }
@@ -1057,8 +1057,8 @@ describe('daemon API', () => {
 
     it('reports the credential backend status without exposing secret material', async () => {
       const { store, app } = await openAuthedStore();
-      const previous = process.env.AGENT_DEV_SECRET_BACKEND;
-      delete process.env.AGENT_DEV_SECRET_BACKEND;
+      const previous = process.env.AGENT_OPS_SECRET_BACKEND;
+      delete process.env.AGENT_OPS_SECRET_BACKEND;
       try {
         // Same token gate as every other credential route.
         expect((await app.request('http://localhost/api/credentials/backend')).status).toBe(401);
@@ -1067,8 +1067,8 @@ describe('daemon API', () => {
         const payload = await response.json() as { type?: string; available?: boolean; reason?: string; projectId?: string; environment?: string };
         expect(payload).toEqual({ type: 'local-file', available: true });
       } finally {
-        if (previous === undefined) delete process.env.AGENT_DEV_SECRET_BACKEND;
-        else process.env.AGENT_DEV_SECRET_BACKEND = previous;
+        if (previous === undefined) delete process.env.AGENT_OPS_SECRET_BACKEND;
+        else process.env.AGENT_OPS_SECRET_BACKEND = previous;
         await store.close();
       }
     });
@@ -1097,9 +1097,9 @@ describe('daemon API', () => {
     });
 
     it('exempts the GitHub webhook route from the bearer check (it authenticates by HMAC signature)', async () => {
-      const directory = await mkdtemp(join(tmpdir(), 'agent-dev-auth-'));
+      const directory = await mkdtemp(join(tmpdir(), 'agent-ops-auth-'));
       directories.push(directory);
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const { app } = createDaemonApp(store, undefined, { resolveGitHubWebhookSecret: () => 'test-webhook-secret' }, undefined, { authToken: TOKEN });
       try {
         const body = '{}';
@@ -1119,11 +1119,11 @@ describe('daemon API', () => {
 
   describe('daemon token file', () => {
     it('creates the token once with user-only permissions and reuses it on later starts', async () => {
-      const directory = await mkdtemp(join(tmpdir(), 'agent-dev-token-'));
+      const directory = await mkdtemp(join(tmpdir(), 'agent-ops-token-'));
       directories.push(directory);
       const tokenPath = join(directory, 'daemon-token');
-      const previous = process.env.AGENT_DEV_DAEMON_TOKEN_PATH;
-      process.env.AGENT_DEV_DAEMON_TOKEN_PATH = tokenPath;
+      const previous = process.env.AGENT_OPS_DAEMON_TOKEN_PATH;
+      process.env.AGENT_OPS_DAEMON_TOKEN_PATH = tokenPath;
       try {
         const { loadOrCreateDaemonToken } = await import('../src/auth.js');
         const first = loadOrCreateDaemonToken();
@@ -1132,8 +1132,8 @@ describe('daemon API', () => {
         // A daemon restart must reuse the same token: Studio and the MCP bridge cache it at startup.
         expect(loadOrCreateDaemonToken()).toBe(first);
       } finally {
-        if (previous === undefined) delete process.env.AGENT_DEV_DAEMON_TOKEN_PATH;
-        else process.env.AGENT_DEV_DAEMON_TOKEN_PATH = previous;
+        if (previous === undefined) delete process.env.AGENT_OPS_DAEMON_TOKEN_PATH;
+        else process.env.AGENT_OPS_DAEMON_TOKEN_PATH = previous;
       }
     });
   });
@@ -1149,9 +1149,9 @@ describe('daemon API', () => {
     const previewEvidence = (apiUrl: string, webUrl: string) => post({ confirmation: 'RECORD_PREVIEW_EVIDENCE', apiUrl, webUrl, smokeTest: 'api and web respond 200' });
 
     async function openStore() {
-      const directory = await mkdtemp(join(tmpdir(), 'agent-dev-urls-'));
+      const directory = await mkdtemp(join(tmpdir(), 'agent-ops-urls-'));
       directories.push(directory);
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const { app } = createDaemonApp(store, undefined, {});
       const created = await app.request('http://localhost/api/projects', post({ name: 'Url Guard' }));
       const { project } = await created.json() as { project: { id: string } };
@@ -1218,9 +1218,9 @@ describe('daemon API', () => {
     // other Agent's run. Resolution only consults the registry, so these expectations hold on a
     // machine where neither Agent is installed.
     async function openProjectWithApprovedTask(runtimeProvider: string, dependencies: DaemonDependencies = {}) {
-      const directory = await mkdtemp(join(tmpdir(), 'agent-dev-executor-'));
+      const directory = await mkdtemp(join(tmpdir(), 'agent-ops-executor-'));
       directories.push(directory);
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const { app } = createDaemonApp(store, undefined, dependencies);
       const created = await app.request('http://localhost/api/projects', post({
         name: 'Refused Executor',
@@ -1367,9 +1367,9 @@ describe('daemon API', () => {
     }, 30_000);
 
     it('keeps the plain "no approved task" refusal distinguishable from an executor refusal', async () => {
-      const directory = await mkdtemp(join(tmpdir(), 'agent-dev-executor-'));
+      const directory = await mkdtemp(join(tmpdir(), 'agent-ops-executor-'));
       directories.push(directory);
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       try {
         const { app } = createDaemonApp(store, undefined, {});
         const created = await app.request('http://localhost/api/projects', post({ name: 'No Task Yet' }));

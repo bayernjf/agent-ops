@@ -283,15 +283,15 @@ export class KernelStore {
   }
 
   protected runMigrations(): void {
-    this.sqlite.run('CREATE TABLE IF NOT EXISTS __agent_dev_migrations (id TEXT PRIMARY KEY NOT NULL);');
-    const result = this.sqlite.exec('SELECT id FROM __agent_dev_migrations;');
+    this.sqlite.run('CREATE TABLE IF NOT EXISTS __agent_ops_migrations (id TEXT PRIMARY KEY NOT NULL);');
+    const result = this.sqlite.exec('SELECT id FROM __agent_ops_migrations;');
     const applied = new Set((result[0]?.values ?? []).map(row => String(row[0])));
     for (const migration of this.migrations) {
       if (applied.has(migration.id)) continue;
       this.sqlite.run('BEGIN IMMEDIATE;');
       try {
         this.sqlite.exec(migration.sql);
-        this.sqlite.run('INSERT INTO __agent_dev_migrations (id) VALUES (?);', [migration.id]);
+        this.sqlite.run('INSERT INTO __agent_ops_migrations (id) VALUES (?);', [migration.id]);
         this.sqlite.run('COMMIT;');
       } catch (error) {
         this.sqlite.run('ROLLBACK;');
@@ -304,7 +304,7 @@ export class KernelStore {
     await mkdir(dirname(this.databasePath), { recursive: true });
     // Atomic replace (2026-11-02 review P2-1): the daemon lives for days and a
     // single agent run can take 15 minutes, so an in-place write killed mid-way
-    // truncated agent-dev.sqlite and the store could never open again. Write to
+    // truncated agent-ops.sqlite and the store could never open again. Write to
     // a temp file and rename over the database instead — a rename either
     // happens fully or not at all, so the live file is never half-written.
     const tmpPath = `${this.databasePath}.tmp-${process.pid}`;

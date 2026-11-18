@@ -352,7 +352,7 @@ describe('ProductBlueprint', () => {
     // Agent work is committed with `git add -A`, so the generated secret file and the provider CLI
     // state directories have to be ignored or they land in the product's first pull request.
     const ignore = artifacts.find(artifact => artifact.path === '.gitignore')!.content;
-    for (const rule of ['.env', '.env.*', '.agent-dev/', '.vercel/', '.wrangler/']) expect(ignore).toContain(rule);
+    for (const rule of ['.env', '.env.*', '.agent-ops/', '.vercel/', '.wrangler/']) expect(ignore).toContain(rule);
   });
 
   it('keeps web-app as the default product type and generates the full scaffold', () => {
@@ -424,7 +424,7 @@ describe('ProductBlueprint', () => {
   });
 
   it('generates a storefront scaffold whose own quality gate (build → smoke → eval) can pass', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-storefront-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-storefront-'));
     try {
       const artifacts = createDryRunPlan(createBlueprint('Bay Store', { productType: 'storefront' }, 1)).artifacts;
       for (const artifact of artifacts) {

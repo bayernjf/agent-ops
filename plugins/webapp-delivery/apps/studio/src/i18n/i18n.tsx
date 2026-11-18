@@ -5,7 +5,7 @@ import type { Translations } from './locales/en';
 
 export type Locale = 'en' | 'zh';
 
-const STORAGE_KEY = 'agent-dev.studio.locale';
+const STORAGE_KEY = 'agent-ops.studio.locale';
 
 const dictionaries: Record<Locale, Translations> = { en, zh };
 

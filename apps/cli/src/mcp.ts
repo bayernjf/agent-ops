@@ -22,7 +22,7 @@ type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean
 const serverVersion = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
 
 const projectIdSchema = {
-  projectId: z.string().min(1).describe('Project id as listed by agent_dev_list_projects.'),
+  projectId: z.string().min(1).describe('Project id as listed by agent_ops_list_projects.'),
 };
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, openWorldHint: false } as const;
@@ -88,12 +88,12 @@ function toDryRunResult(body: unknown, artifactId?: string): ToolResult {
   }
   const artifact = artifacts.find(candidate => candidate.id === artifactId || candidate.path === artifactId);
   if (!artifact) {
-    return errorResult(`The dry run has no artifact "${artifactId}". Call agent_dev_dry_run without artifactId to list every id.`);
+    return errorResult(`The dry run has no artifact "${artifactId}". Call agent_ops_dry_run without artifactId to list every id.`);
   }
   return jsonResult({ ...envelope, plan: { blueprintRevision: plan.blueprintRevision, artifact } });
 }
 
-export function createAgentDevMcpServer(options: McpBridgeOptions): McpServer {
+export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? 30_000;
 
@@ -118,7 +118,7 @@ export function createAgentDevMcpServer(options: McpBridgeOptions): McpServer {
         body: {
           error: timedOut
             ? `The daemon at ${options.daemonBaseUrl} did not answer within ${timeoutMs} ms. It may be busy with another run; try again shortly.`
-            : `Daemon not reachable at ${options.daemonBaseUrl}. Start it with \`agent-dev start\`.`,
+            : `Daemon not reachable at ${options.daemonBaseUrl}. Start it with \`agent-ops start\`.`,
         },
       };
     }
@@ -141,84 +141,84 @@ export function createAgentDevMcpServer(options: McpBridgeOptions): McpServer {
     return errorResult(`Daemon responded with HTTP ${status}: ${errorMessage(body)}${guidance}`);
   };
 
-  const server = new McpServer({ name: 'agent-dev', version: serverVersion });
+  const server = new McpServer({ name: 'agent-ops', version: serverVersion });
 
-  server.registerTool('agent_dev_doctor', {
+  server.registerTool('agent_ops_doctor', {
     title: 'Agent Ops doctor',
     description: 'Check the local Agent Ops environment: required commands and connector readiness.',
     annotations: READ_ONLY,
   }, () => callDaemon('GET', '/api/doctor').then(toResult));
 
-  server.registerTool('agent_dev_list_projects', {
+  server.registerTool('agent_ops_list_projects', {
     title: 'List projects',
     description: 'List all Agent Ops projects with their delivery state.',
     annotations: READ_ONLY,
   }, () => callDaemon('GET', '/api/projects').then(toResult));
 
-  server.registerTool('agent_dev_get_project', {
+  server.registerTool('agent_ops_get_project', {
     title: 'Get project',
     description: 'Get one project: delivery state and current Blueprint.',
     inputSchema: projectIdSchema,
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/projects/${encodeURIComponent(args.projectId)}`).then(toResult));
 
-  server.registerTool('agent_dev_get_release', {
+  server.registerTool('agent_ops_get_release', {
     title: 'Get release state',
     description: 'Get the production release state of a project: latest release run and recorded evidence.',
     inputSchema: projectIdSchema,
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/projects/${encodeURIComponent(args.projectId)}/release`).then(toResult));
 
-  server.registerTool('agent_dev_get_feature_task', {
+  server.registerTool('agent_ops_get_feature_task', {
     title: 'Get feature task',
     description: 'Get the current feature task of a project, if one is defined.',
     inputSchema: projectIdSchema,
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/projects/${encodeURIComponent(args.projectId)}/feature-task`).then(toResult));
 
-  server.registerTool('agent_dev_get_apply', {
+  server.registerTool('agent_ops_get_apply', {
     title: 'Get Apply run',
     description: 'Get the latest Local Apply run of a project: status, workspace and generated artifacts.',
     inputSchema: projectIdSchema,
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/projects/${encodeURIComponent(args.projectId)}/apply`).then(toResult));
 
-  server.registerTool('agent_dev_get_quality_gate', {
+  server.registerTool('agent_ops_get_quality_gate', {
     title: 'Get quality gate',
     description: 'Get the latest Quality Gate result of a project, if one has run.',
     inputSchema: projectIdSchema,
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/projects/${encodeURIComponent(args.projectId)}/quality-gate`).then(toResult));
 
-  server.registerTool('agent_dev_get_acceptance', {
+  server.registerTool('agent_ops_get_acceptance', {
     title: 'Get acceptance',
     description: 'Get the current acceptance submission of a project, if one exists.',
     inputSchema: projectIdSchema,
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/projects/${encodeURIComponent(args.projectId)}/acceptance`).then(toResult));
 
-  server.registerTool('agent_dev_get_delivery_report', {
+  server.registerTool('agent_ops_get_delivery_report', {
     title: 'Get delivery report',
     description: 'Get the consolidated delivery report of a project: Apply, feature task, runtime, quality, acceptance and Git evidence in one read.',
     inputSchema: projectIdSchema,
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/projects/${encodeURIComponent(args.projectId)}/delivery-report`).then(toResult));
 
-  server.registerTool('agent_dev_get_baseline_plan', {
+  server.registerTool('agent_ops_get_baseline_plan', {
     title: 'Get baseline plan',
     description: 'Get the baseline resource plan of a project: which cloud resources the Blueprint requires and their approval state.',
     inputSchema: projectIdSchema,
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/projects/${encodeURIComponent(args.projectId)}/baseline-plan`).then(toResult));
 
-  server.registerTool('agent_dev_get_release_plan', {
+  server.registerTool('agent_ops_get_release_plan', {
     title: 'Get release plan',
     description: 'Get the production release plan of a project: step list, idempotency key and current release run.',
     inputSchema: projectIdSchema,
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/projects/${encodeURIComponent(args.projectId)}/release/plan`).then(toResult));
 
-  server.registerTool('agent_dev_get_runtime', {
+  server.registerTool('agent_ops_get_runtime', {
     title: 'Get agent runtimes',
     description: 'Get the discovered agent runtime catalog and any custom runtime profiles on this machine.',
     annotations: READ_ONLY,
@@ -230,7 +230,7 @@ export function createAgentDevMcpServer(options: McpBridgeOptions): McpServer {
     return jsonResult({ ...(catalog.body as Record<string, unknown>), ...(profiles.body as Record<string, unknown>) });
   });
 
-  server.registerTool('agent_dev_get_connectors', {
+  server.registerTool('agent_ops_get_connectors', {
     title: 'Get connector readiness',
     description: 'Get connector preflight (installed CLIs and auth) and discovered cloud accounts. Explains why a deploy or provider step is blocked.',
     // Discovery queries cloud accounts, so this read intentionally looks at the outside world.
@@ -243,13 +243,13 @@ export function createAgentDevMcpServer(options: McpBridgeOptions): McpServer {
     return jsonResult({ preflight: preflight.body, discovery: discovery.body });
   });
 
-  server.registerTool('agent_dev_get_credentials_meta', {
+  server.registerTool('agent_ops_get_credentials_meta', {
     title: 'Get credential metadata',
     description: 'Get metadata about stored credentials: which keys are set and when they were updated. Secret values are never returned.',
     annotations: READ_ONLY,
   }, () => callDaemon('GET', '/api/credentials').then(toResult));
 
-  server.registerTool('agent_dev_create_project', {
+  server.registerTool('agent_ops_create_project', {
     title: 'Create project',
     description: 'Create a project from a name and Blueprint answers. No external system is touched.',
     inputSchema: {
@@ -259,7 +259,7 @@ export function createAgentDevMcpServer(options: McpBridgeOptions): McpServer {
     annotations: ADDITIVE,
   }, args => callDaemon('POST', '/api/projects', { name: args.name, answers: args.answers }).then(toResult));
 
-  server.registerTool('agent_dev_revise_blueprint', {
+  server.registerTool('agent_ops_revise_blueprint', {
     title: 'Revise Blueprint',
     description: 'Revise the Blueprint of a project, creating the next revision. No external system is touched.',
     inputSchema: {
@@ -269,7 +269,7 @@ export function createAgentDevMcpServer(options: McpBridgeOptions): McpServer {
     annotations: ADDITIVE,
   }, args => callDaemon('PUT', `/api/projects/${encodeURIComponent(args.projectId)}/blueprint`, { answers: args.answers }).then(toResult));
 
-  server.registerTool('agent_dev_create_feature_task', {
+  server.registerTool('agent_ops_create_feature_task', {
     title: 'Create feature task',
     description: 'Define the next feature task for a project: title, objective and acceptance criteria. The task starts as a draft; approving it is a human act in Studio. Requires a completed Local Apply.',
     inputSchema: {
@@ -295,7 +295,7 @@ export function createAgentDevMcpServer(options: McpBridgeOptions): McpServer {
     }).then(toResult);
   });
 
-  server.registerTool('agent_dev_submit_acceptance', {
+  server.registerTool('agent_ops_submit_acceptance', {
     title: 'Submit acceptance',
     description: 'Submit the acceptance record for a delivered feature: a summary and whether the acceptance criteria are met. This only records the submission; approving the delivery is a human act in Studio.',
     inputSchema: {
@@ -309,7 +309,7 @@ export function createAgentDevMcpServer(options: McpBridgeOptions): McpServer {
     criteriaConfirmed: args.criteriaConfirmed,
   }).then(toResult));
 
-  server.registerTool('agent_dev_dry_run', {
+  server.registerTool('agent_ops_dry_run', {
     title: 'Dry run',
     description: 'Preview what a Local Apply would write for the current Blueprint revision: a manifest of artifact ids, titles, paths and sizes, never the file contents themselves. Pass artifactId to read one artifact in full. Writes nothing.',
     inputSchema: {
@@ -322,7 +322,7 @@ export function createAgentDevMcpServer(options: McpBridgeOptions): McpServer {
     return response.ok ? toDryRunResult(response.body, args.artifactId) : toResult(response);
   });
 
-  server.registerTool('agent_dev_request_release', {
+  server.registerTool('agent_ops_request_release', {
     title: 'Request a production release',
     description: 'Open the production release gate (REQUEST_RELEASE). This only asks for approval; approving is a human act in Studio and is not available through this MCP server.',
     inputSchema: projectIdSchema,
@@ -333,17 +333,17 @@ export function createAgentDevMcpServer(options: McpBridgeOptions): McpServer {
 }
 
 // The daemon requires a bearer token on every /api/* route (docs/audit-2026-08-31.md §6.1-2). The
-// daemon persists it at ~/.agent-dev/daemon-token (override with AGENT_DEV_DAEMON_TOKEN).
+// daemon persists it at ~/.agent-ops/daemon-token (override with AGENT_OPS_DAEMON_TOKEN).
 function readDaemonTokenFile(): string | undefined {
-  const path = process.env.AGENT_DEV_DAEMON_TOKEN_PATH ?? join(homedir(), '.agent-dev', 'daemon-token');
+  const path = process.env.AGENT_OPS_DAEMON_TOKEN_PATH ?? join(homedir(), '.agent-ops', 'daemon-token');
   if (!existsSync(path)) return undefined;
   const token = readFileSync(path, 'utf8').trim();
   return token || undefined;
 }
 
-export async function runAgentDevMcp(): Promise<void> {
-  const daemonBaseUrl = process.env.AGENT_DEV_DAEMON_URL ?? 'http://127.0.0.1:3737';
-  const authToken = process.env.AGENT_DEV_DAEMON_TOKEN ?? readDaemonTokenFile();
-  const server = createAgentDevMcpServer({ daemonBaseUrl, authToken });
+export async function runAgentOpsMcp(): Promise<void> {
+  const daemonBaseUrl = process.env.AGENT_OPS_DAEMON_URL ?? 'http://127.0.0.1:3737';
+  const authToken = process.env.AGENT_OPS_DAEMON_TOKEN ?? readDaemonTokenFile();
+  const server = createAgentOpsMcpServer({ daemonBaseUrl, authToken });
   await server.connect(new StdioServerTransport());
 }

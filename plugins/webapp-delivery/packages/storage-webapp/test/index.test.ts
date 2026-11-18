@@ -7,26 +7,26 @@ import { promisify } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
 import initSqlJs from 'sql.js';
 import { createBlueprint, createDefaultBlueprint } from '@agent-ops/blueprint';
-import { AgentDevStore, ProfileStore, parseEvalSummary } from '../src/index.js';
+import { AgentOpsStore, ProfileStore, parseEvalSummary } from '../src/index.js';
 import { migrations } from '../src/migrations.js';
 
 const require = createRequire(import.meta.url);
 
 const execFileAsync = promisify(execFile);
 
-describe('AgentDevStore', () => {
+describe('AgentOpsStore', () => {
   it('persists a project, its initial blueprint revision, and a delivery run', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-storage-'));
-    const databasePath = join(directory, 'agent-dev.sqlite');
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-storage-'));
+    const databasePath = join(directory, 'agent-ops.sqlite');
     try {
-      const store = await AgentDevStore.open(databasePath);
+      const store = await AgentOpsStore.open(databasePath);
       const created = await store.createProject({
         name: 'Receipt Desk',
         blueprint: createDefaultBlueprint('receipt-desk'),
       });
       await store.close();
 
-      const reopened = await AgentDevStore.open(databasePath);
+      const reopened = await AgentOpsStore.open(databasePath);
       expect(reopened.listProjects()).toHaveLength(1);
       expect(reopened.getProject(created.id)?.state).toBe('NEEDS_INPUT');
       expect(reopened.getProject(created.id)?.blueprint.metadata.name).toBe('receipt-desk');
@@ -37,10 +37,10 @@ describe('AgentDevStore', () => {
   });
 
   it('adds a Blueprint revision instead of overwriting project history', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-storage-'));
-    const databasePath = join(directory, 'agent-dev.sqlite');
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-storage-'));
+    const databasePath = join(directory, 'agent-ops.sqlite');
     try {
-      const store = await AgentDevStore.open(databasePath);
+      const store = await AgentOpsStore.open(databasePath);
       const created = await store.createProject({
         name: 'Receipt Desk',
         blueprint: createDefaultBlueprint('receipt-desk'),
@@ -59,10 +59,10 @@ describe('AgentDevStore', () => {
   });
 
   it('records a baseline approval for the exact Blueprint revision', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-storage-'));
-    const databasePath = join(directory, 'agent-dev.sqlite');
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-storage-'));
+    const databasePath = join(directory, 'agent-ops.sqlite');
     try {
-      const store = await AgentDevStore.open(databasePath);
+      const store = await AgentOpsStore.open(databasePath);
       const created = await store.createProject({
         name: 'Approved Baseline',
         blueprint: createBlueprint('approved-baseline', {
@@ -80,7 +80,7 @@ describe('AgentDevStore', () => {
       expect(store.getProject(created.id)?.state).toBe('PROVISIONING');
 
       await store.close();
-      const reopened = await AgentDevStore.open(databasePath);
+      const reopened = await AgentOpsStore.open(databasePath);
       expect(reopened.getBaselineApproval(created.id, 1)).toEqual(approval);
       await reopened.close();
     } finally {
@@ -89,10 +89,10 @@ describe('AgentDevStore', () => {
   });
 
   it('runs the local Apply Simulator without provider writes', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-storage-'));
-    const databasePath = join(directory, 'agent-dev.sqlite');
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-storage-'));
+    const databasePath = join(directory, 'agent-ops.sqlite');
     try {
-      const store = await AgentDevStore.open(databasePath);
+      const store = await AgentOpsStore.open(databasePath);
       const created = await store.createProject({
         name: 'Local Apply',
         blueprint: createBlueprint('local-apply', {
@@ -118,9 +118,9 @@ describe('AgentDevStore', () => {
       await expect(readFile(join(completed.workspacePath, 'apps', 'web', 'src', 'main.tsx'), 'utf8')).resolves.toContain('createRoot');
       await expect(readFile(join(completed.workspacePath, 'apps', 'api', 'src', 'index.ts'), 'utf8')).resolves.toContain('/api/health');
       await expect(readFile(join(completed.workspacePath, 'tsconfig.json'), 'utf8')).resolves.toContain('react-jsx');
-      await expect(readFile(join(completed.workspacePath, '.git', 'HEAD'), 'utf8')).resolves.toContain('refs/heads/feature/agent-dev/revision-1');
-      await expect(readFile(join(completed.workspacePath, 'apply-manifest.json'), 'utf8')).resolves.toMatch(/"featureBranch": "feature\/agent-dev\/revision-1"/);
-      await expect(readFile(join(completed.workspacePath, 'DELIVERY_REPORT.md'), 'utf8')).resolves.toContain('Local feature branch: feature/agent-dev/revision-1');
+      await expect(readFile(join(completed.workspacePath, '.git', 'HEAD'), 'utf8')).resolves.toContain('refs/heads/feature/agent-ops/revision-1');
+      await expect(readFile(join(completed.workspacePath, 'apply-manifest.json'), 'utf8')).resolves.toMatch(/"featureBranch": "feature\/agent-ops\/revision-1"/);
+      await expect(readFile(join(completed.workspacePath, 'DELIVERY_REPORT.md'), 'utf8')).resolves.toContain('Local feature branch: feature/agent-ops/revision-1');
       const quality = await store.runQualityGate(created.id, 1);
       expect(quality.status).toBe('failed');
       expect(quality.command).toBe('npm run quality');
@@ -143,7 +143,7 @@ describe('AgentDevStore', () => {
       await expect(readFile(join(completed.workspacePath, 'RUNTIME_RUN_REPORT.md'), 'utf8')).resolves.toContain('- Agent: codex');
       await expect(readFile(join(completed.workspacePath, 'RUNTIME_RUN_REPORT.md'), 'utf8')).resolves.toContain('No Codex process was started');
       const evidence = await store.getGitEvidence(created.id, 1);
-      expect(evidence.branch).toBe('feature/agent-dev/revision-1');
+      expect(evidence.branch).toBe('feature/agent-ops/revision-1');
       const failedRuntime = await store.executeRuntimeRun(created.id, 1, async () => ({ exitCode: 1, signal: null, timedOut: false, output: 'fixture failure', startedAt: new Date().toISOString(), completedAt: new Date().toISOString() }));
       expect(failedRuntime).toMatchObject({ status: 'failed', attempts: 1, history: [{ attempt: 1, status: 'failed' }] });
       expect(store.getProject(created.id)?.state).toBe('IMPLEMENTING');
@@ -164,9 +164,9 @@ describe('AgentDevStore', () => {
   }, 30_000);
 
   it('parses the eval summary of a quality gate whose contract declares an eval check into eval-report.json', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-storage-eval-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-storage-eval-'));
     try {
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const created = await store.createProject({
         name: 'Eval Storefront',
         blueprint: createBlueprint('eval-storefront', { productType: 'storefront', githubOwner: 'acme', vercelTeam: 'acme' }, 1),
@@ -201,9 +201,9 @@ describe('AgentDevStore', () => {
   }, 60_000);
 
   it('records eval evidence as absent without failing the gate when the output carries no eval summary', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-storage-eval-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-storage-eval-'));
     try {
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const created = await store.createProject({
         name: 'Eval Absent Storefront',
         blueprint: createBlueprint('eval-absent-storefront', { productType: 'storefront', githubOwner: 'acme', vercelTeam: 'acme' }, 1),
@@ -227,9 +227,9 @@ describe('AgentDevStore', () => {
   }, 60_000);
 
   it('commits the code the agent wrote so the pushed branch carries the feature', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-storage-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-storage-'));
     try {
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const created = await store.createProject({
         name: 'Agent Commit',
         blueprint: createBlueprint('agent-commit', { mode: 'professional', githubOwner: 'acme', supabaseOrganization: 'acme', vercelTeam: 'acme', cloudflareAccount: 'acme' }),
@@ -261,9 +261,9 @@ describe('AgentDevStore', () => {
   }, 30_000);
 
   it('fails the run instead of committing a workspace secret', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-storage-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-storage-'));
     try {
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const created = await store.createProject({
         name: 'Secret Guard',
         blueprint: createBlueprint('secret-guard', { mode: 'professional', githubOwner: 'acme', supabaseOrganization: 'acme', vercelTeam: 'acme', cloudflareAccount: 'acme' }),
@@ -290,10 +290,10 @@ describe('AgentDevStore', () => {
   }, 30_000);
 
   it('fails the run instead of committing a symbolic link outside the workspace', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-storage-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-storage-'));
     let outside = '';
     try {
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const created = await store.createProject({
         name: 'Symlink Guard',
         blueprint: createBlueprint('symlink-guard', { mode: 'professional', githubOwner: 'acme', supabaseOrganization: 'acme', vercelTeam: 'acme', cloudflareAccount: 'acme' }),
@@ -308,7 +308,7 @@ describe('AgentDevStore', () => {
       // deliberately NOT node_modules — the template .gitignore now ignores `node_modules`
       // (with or without a trailing slash), so a symlink under that name never even stages. The
       // guard has to catch a link under any other, non-ignored name.
-      outside = await mkdtemp(join(tmpdir(), 'agent-dev-outside-'));
+      outside = await mkdtemp(join(tmpdir(), 'agent-ops-outside-'));
       await mkdir(join(outside, 'vendor'), { recursive: true });
       try {
         await symlink(join(outside, 'vendor'), join(applied.workspacePath, 'vendor'));
@@ -333,10 +333,10 @@ describe('AgentDevStore', () => {
   }, 30_000);
 
   it('recovers the same Apply Run after an injected step failure', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-storage-'));
-    const databasePath = join(directory, 'agent-dev.sqlite');
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-storage-'));
+    const databasePath = join(directory, 'agent-ops.sqlite');
     try {
-      const store = await AgentDevStore.open(databasePath);
+      const store = await AgentOpsStore.open(databasePath);
       const created = await store.createProject({
         name: 'Recoverable Apply',
         blueprint: createBlueprint('recoverable-apply', {
@@ -362,10 +362,10 @@ describe('AgentDevStore', () => {
   });
 
   it('journals a release only after a human approves it, and survives a reopen', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-storage-'));
-    const databasePath = join(directory, 'agent-dev.sqlite');
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-storage-'));
+    const databasePath = join(directory, 'agent-ops.sqlite');
     try {
-      const store = await AgentDevStore.open(databasePath);
+      const store = await AgentOpsStore.open(databasePath);
       const created = await store.createProject({
         name: 'Releasable',
         blueprint: createBlueprint('releasable', {
@@ -412,7 +412,7 @@ describe('AgentDevStore', () => {
       await expect(readFile(join(applied.workspacePath, 'PRODUCTION_EVIDENCE.md'), 'utf8')).resolves.toContain('"httpStatus":200');
       await store.close();
 
-      const reopened = await AgentDevStore.open(databasePath);
+      const reopened = await AgentOpsStore.open(databasePath);
       const journalled = reopened.getLatestReleaseRun(created.id, 1);
       expect(journalled).toMatchObject({ id: release.id, attempts: 1, status: 'running' });
       expect(journalled?.steps[0]).toMatchObject({ id: 'verify-release-quality', completedAt: '2026-08-23T00:00:01.000Z' });
@@ -424,10 +424,10 @@ describe('AgentDevStore', () => {
   }, 30_000);
 
   it('sends a failed release back to the step that failed', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-storage-'));
-    const databasePath = join(directory, 'agent-dev.sqlite');
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-storage-'));
+    const databasePath = join(directory, 'agent-ops.sqlite');
     try {
-      const store = await AgentDevStore.open(databasePath);
+      const store = await AgentOpsStore.open(databasePath);
       const created = await store.createProject({
         name: 'Failing Release',
         blueprint: createBlueprint('failing-release', {
@@ -459,9 +459,9 @@ describe('AgentDevStore', () => {
   }, 30_000);
 
   it('rejects delivery events the machine has no transition for and leaves the state untouched', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-storage-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-storage-'));
     try {
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const created = await store.createProject({
         name: 'Illegal Transition',
         blueprint: createBlueprint('illegal-transition', { mode: 'professional', githubOwner: 'acme', supabaseOrganization: 'acme', vercelTeam: 'acme', cloudflareAccount: 'acme' }),
@@ -490,9 +490,9 @@ describe('AgentDevStore', () => {
   }, 30_000);
 
   it('pushes and opens the pull request itself once the delivery is accepted', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-storage-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-storage-'));
     try {
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const created = await store.createProject({
         name: 'Publish PR',
         blueprint: createBlueprint('publish-pr', { mode: 'professional', githubOwner: 'acme', supabaseOrganization: 'acme', vercelTeam: 'acme', cloudflareAccount: 'acme' }),
@@ -536,7 +536,7 @@ describe('AgentDevStore', () => {
 
       const evidence = await store.publishPullRequest(created.id, 1, publisher);
       expect(calls).toHaveLength(1);
-      expect(calls[0]).toMatchObject({ branch: 'feature/agent-dev/revision-1', base: 'dev', title: 'Add receipt list' });
+      expect(calls[0]).toMatchObject({ branch: 'feature/agent-ops/revision-1', base: 'dev', title: 'Add receipt list' });
       expect(calls[0].body).toContain(acceptance.gitEvidence.head);
       expect(evidence.url).toBe('https://github.com/acme/publish-pr/pull/1');
       expect(evidence.checks.join('\n')).toContain('Pushed commit: pushedsha');
@@ -556,10 +556,10 @@ describe('AgentDevStore', () => {
   }, 60_000);
 
   it('orders apply runs deterministically when several exist for one revision', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-storage-'));
-    const databasePath = join(directory, 'agent-dev.sqlite');
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-storage-'));
+    const databasePath = join(directory, 'agent-ops.sqlite');
     try {
-      const store = await AgentDevStore.open(databasePath);
+      const store = await AgentOpsStore.open(databasePath);
       const created = await store.createProject({
         name: 'Ordered Applies',
         blueprint: createBlueprint('ordered-applies', {
@@ -582,18 +582,18 @@ describe('migrations', () => {
   const rename = '0006_rename_web_saas_product_type';
 
   it('rewrites a stored blueprint that still carries the pre-rename product type', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-migration-'));
-    const databasePath = join(directory, 'agent-dev.sqlite');
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-migration-'));
+    const databasePath = join(directory, 'agent-ops.sqlite');
     try {
       // Build the legacy database by hand and stop right before the rename, so the real
       // migration runner is what has to repair it.
       const SQL = await initSqlJs({ locateFile: () => require.resolve('sql.js/dist/sql-wasm.wasm') });
       const legacy = new SQL.Database();
-      legacy.run('CREATE TABLE IF NOT EXISTS __agent_dev_migrations (id TEXT PRIMARY KEY NOT NULL);');
+      legacy.run('CREATE TABLE IF NOT EXISTS __agent_ops_migrations (id TEXT PRIMARY KEY NOT NULL);');
       for (const migration of migrations) {
         if (migration.id === rename) continue;
         legacy.exec(migration.sql);
-        legacy.run('INSERT INTO __agent_dev_migrations (id) VALUES (?);', [migration.id]);
+        legacy.run('INSERT INTO __agent_ops_migrations (id) VALUES (?);', [migration.id]);
       }
 
       const blueprint = createDefaultBlueprint('legacy-desk');
@@ -612,7 +612,7 @@ describe('migrations', () => {
       await writeFile(databasePath, Buffer.from(legacy.export()));
       legacy.close();
 
-      const store = await AgentDevStore.open(databasePath);
+      const store = await AgentOpsStore.open(databasePath);
       // Both copies are read on every project load, and blueprint_json goes through a strict enum.
       expect(store.listBlueprintRevisions('p-legacy')[0]?.blueprintJson.spec.product.type).toBe('web-app');
       expect(store.listProjects().find(project => project.id === 'p-legacy')?.productType).toBe('web-app');
@@ -646,7 +646,7 @@ function fakeRunner(script: Array<{ exitCode: number | null; timedOut?: boolean;
 }
 
 /** Build an approved, applied project with a feature task and a two-step pipeline on a verified profile. */
-async function seedPipelinedProject(store: AgentDevStore): Promise<{ projectId: string; revision: number; workspacePath: string }> {
+async function seedPipelinedProject(store: AgentOpsStore): Promise<{ projectId: string; revision: number; workspacePath: string }> {
   const created = await store.createProject({
     name: 'Pipeline Desk',
     blueprint: createBlueprint('pipeline-desk', { mode: 'professional', githubOwner: 'acme', supabaseOrganization: 'acme', vercelTeam: 'acme', cloudflareAccount: 'acme' }),
@@ -677,9 +677,9 @@ async function requireApprovalForFirstStep(workspacePath: string): Promise<void>
 
 describe('feature task pipeline execution', () => {
   it('pauses before a step that requires approval and does not execute it', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-pipeline-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-pipeline-'));
     try {
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const { projectId, revision, workspacePath } = await seedPipelinedProject(store);
       await requireApprovalForFirstStep(workspacePath);
 
@@ -698,9 +698,9 @@ describe('feature task pipeline execution', () => {
   }, 30_000);
 
   it('resume clears the approval gate and runs the pipeline to completion', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-pipeline-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-pipeline-'));
     try {
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const { projectId, revision, workspacePath } = await seedPipelinedProject(store);
       await requireApprovalForFirstStep(workspacePath);
       await store.executeFeatureTaskPipeline(projectId, revision, fakeRunner([{ exitCode: 0 }, { exitCode: 0 }]));
@@ -721,9 +721,9 @@ describe('feature task pipeline execution', () => {
   }, 30_000);
 
   it('rejects a resume when the pipeline is not paused', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-pipeline-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-pipeline-'));
     try {
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const { projectId, revision } = await seedPipelinedProject(store);
       // Never paused: run straight through to completion first.
       const completed = await store.executeFeatureTaskPipeline(projectId, revision, fakeRunner([{ exitCode: 0 }, { exitCode: 0 }]));
@@ -737,9 +737,9 @@ describe('feature task pipeline execution', () => {
   }, 30_000);
 
   it('fails the pipeline when a step fails and continueOnFailure is unset', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-pipeline-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-pipeline-'));
     try {
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const { projectId, revision } = await seedPipelinedProject(store);
 
       const task = await store.executeFeatureTaskPipeline(projectId, revision, fakeRunner([{ exitCode: 1, output: 'fixture failure' }]));
@@ -758,7 +758,7 @@ describe('feature task pipeline execution', () => {
 });
 
 /** Build an approved, applied project with one approved task and a given Runtime provider. */
-async function seedAppliedProject(store: AgentDevStore, runtimeProvider: string): Promise<{ projectId: string; revision: number; workspacePath: string }> {
+async function seedAppliedProject(store: AgentOpsStore, runtimeProvider: string): Promise<{ projectId: string; revision: number; workspacePath: string }> {
   const created = await store.createProject({
     name: 'Runtime Executor Desk',
     blueprint: createBlueprint('runtime-executor-desk', { mode: 'professional', githubOwner: 'acme', supabaseOrganization: 'acme', vercelTeam: 'acme', cloudflareAccount: 'acme', runtimeProvider }),
@@ -776,9 +776,9 @@ async function seedAppliedProject(store: AgentDevStore, runtimeProvider: string)
 // different one's writes. These cases are the ones that were wrong before.
 describe('the Runtime executor is resolved once', () => {
   it('prepares the run on the Agent the Blueprint named', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-runtime-executor-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-runtime-executor-'));
     try {
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const { projectId, revision, workspacePath } = await seedAppliedProject(store, 'local-opencode');
 
       const run = await store.prepareRuntimeRun(projectId, revision, 'local-opencode');
@@ -795,9 +795,9 @@ describe('the Runtime executor is resolved once', () => {
   }, 30_000);
 
   it('starts a fresh run after a completed or cancelled run', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-runtime-executor-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-runtime-executor-'));
     try {
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const { projectId, revision, workspacePath } = await seedAppliedProject(store, 'local-opencode');
 
       const first = await store.prepareRuntimeRun(projectId, revision, 'local-opencode');
@@ -823,9 +823,9 @@ describe('the Runtime executor is resolved once', () => {
   }, 30_000);
 
   it('refuses to prepare a run instead of quietly planning one for Codex', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-runtime-executor-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-runtime-executor-'));
     try {
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const { projectId, revision } = await seedAppliedProject(store, 'local-claude-code');
 
       await expect(store.prepareRuntimeRun(projectId, revision, 'local-claude-code')).rejects.toThrow(/claude-code/);
@@ -838,9 +838,9 @@ describe('the Runtime executor is resolved once', () => {
   }, 30_000);
 
   it('refuses to execute a run whose recorded Agent cannot run it', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-runtime-executor-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-runtime-executor-'));
     try {
-      const store = await AgentDevStore.open(join(directory, 'agent-dev.sqlite'));
+      const store = await AgentOpsStore.open(join(directory, 'agent-ops.sqlite'));
       const { projectId, revision, workspacePath } = await seedAppliedProject(store, 'local-opencode');
       const prepared = await store.prepareRuntimeRun(projectId, revision, 'local-opencode');
       // Stand in the failure this guard exists for: a record left behind by an older build, or one
@@ -889,17 +889,17 @@ describe('parseEvalSummary', () => {
 
 describe('storage durability hardening (2026-11-02 review P2-1 / P3-8)', () => {
   it('persist replaces the database atomically and leaves no temp files behind', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-atomic-'));
-    const databasePath = join(directory, 'agent-dev.sqlite');
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-atomic-'));
+    const databasePath = join(directory, 'agent-ops.sqlite');
     try {
-      const store = await AgentDevStore.open(databasePath);
+      const store = await AgentOpsStore.open(databasePath);
       await store.createProject({ name: 'Receipt Desk', blueprint: createDefaultBlueprint('receipt-desk') });
       await store.close();
 
       const entries = await readdir(directory);
       expect(entries.filter(name => name.includes('.tmp-'))).toEqual([]);
 
-      const reopened = await AgentDevStore.open(databasePath);
+      const reopened = await AgentOpsStore.open(databasePath);
       expect(reopened.listProjects()).toHaveLength(1);
       await reopened.close();
     } finally {
@@ -908,7 +908,7 @@ describe('storage durability hardening (2026-11-02 review P2-1 / P3-8)', () => {
   });
 
   it('ProfileStore degrades a corrupted file to an empty list but refuses to overwrite it', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-profiles-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-profiles-'));
     try {
       const profilePath = join(directory, 'agent-profiles.json');
       await writeFile(profilePath, '[{"id": "broken"', 'utf8');
@@ -929,7 +929,7 @@ describe('storage durability hardening (2026-11-02 review P2-1 / P3-8)', () => {
   });
 
   it('ProfileStore treats a non-array JSON file as corrupted and recovers after repair', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-profiles-shape-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-profiles-shape-'));
     try {
       const profilePath = join(directory, 'agent-profiles.json');
       await writeFile(profilePath, '{"not":"an array"}', 'utf8');

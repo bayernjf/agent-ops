@@ -1,6 +1,6 @@
 import type { BlueprintAnswers, ProductBlueprint } from '@agent-ops/blueprint';
 
-export const APPROVER_STORAGE_KEY = 'agent-dev.approver';
+export const APPROVER_STORAGE_KEY = 'agent-ops.approver';
 
 export const defaultAnswers: BlueprintAnswers = {
   mode: 'beginner',

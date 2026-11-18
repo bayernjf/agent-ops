@@ -225,7 +225,7 @@ export const en = {
     agentAiderDesc: 'Aider AI pair programmer. Git-native, works with many models. Good for incremental changes.',
     agentAiderInstall: 'pip install aider-chat',
     agentPiDesc: 'Read-only code analysis agent. Does not modify files. Good for code review and understanding.',
-    // No install command is offered: `@agent-dev/pi` was never published, and guessing a new package
+    // No install command is offered: the Pi agent has no published package, and guessing a new
     // name would tell the user to run something unverifiable.
     customImplementationNote: 'Custom implementation note',
     customInstructionsPlaceholder: 'Any special instructions for the agent...',
@@ -635,7 +635,7 @@ export const en = {
     builtIn: 'Built-in',
     custom: 'Custom',
     eyebrow: 'Local runtime',
-    formNote: 'Detected Agents can be inspected here. Only verified execution adapters can run tasks. Custom Agents are persisted in .agent-dev/agents.conf.',
+    formNote: 'Detected Agents can be inspected here. Only verified execution adapters can run tasks. Custom Agents are persisted in .agent-ops/agents.conf.',
     detecting: 'Detecting local Agents...',
     notFound: 'No Agents found.',
     runningProbe: 'Running read-only capability probe...',
@@ -850,7 +850,7 @@ export const en = {
   confirmations: {
     releaseToProduction: 'Release {name} to production as {approvedBy}?',
     approveBaseline: 'Record approval for this baseline as {approvedBy}? No remote resource will be created.',
-    runApplySimulator: 'Run the local Apply Simulator? It writes only inside .agent-dev and makes no external changes.',
+    runApplySimulator: 'Run the local Apply Simulator? It writes only inside .agent-ops and makes no external changes.',
     runNpmInstall: 'Run npm install in the isolated Agent Ops workspace? This may access the npm registry and writes only that workspace.',
     deletePreviewProjects: 'Delete the preview projects from Vercel and Cloudflare?',
     // Nothing runs during a dry run, so this gate names no executor: the previous wording promised a
@@ -869,7 +869,7 @@ export const en = {
     whoApproves: 'Who approves this baseline?',
     recordingApproval: 'Recording approval...',
     approvePlan: 'Approve baseline plan',
-    runSimulator: 'Run the local simulator to create the delivery package in the ignored `.agent-dev` workspace.',
+    runSimulator: 'Run the local simulator to create the delivery package in the ignored `.agent-ops` workspace.',
     importRepoLabel: 'Import an existing repository (optional)',
     importRepoPlaceholder: 'https://github.com/owner/repo',
     importRepoHint: 'Clone this repository into the workspace instead of generating the scaffold. Your files are never overwritten; conflicts are reported in the apply manifest.',

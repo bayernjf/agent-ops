@@ -139,9 +139,9 @@ describe('GitHubAdapter', () => {
   });
 
   it('uses the saved GitHub token for owner and repository discovery', async () => {
-    const previous = process.env.AGENT_DEV_CREDENTIALS_PATH;
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-github-token-'));
-    process.env.AGENT_DEV_CREDENTIALS_PATH = join(directory, 'credentials.txt');
+    const previous = process.env.AGENT_OPS_CREDENTIALS_PATH;
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-github-token-'));
+    process.env.AGENT_OPS_CREDENTIALS_PATH = join(directory, 'credentials.txt');
     await saveCredentials({ GITHUB_TOKEN: 'fixture-token' });
     const receivedTokens: Array<string | undefined> = [];
     const runner: CommandRunner = async (_command, args, options) => {
@@ -154,8 +154,8 @@ describe('GitHubAdapter', () => {
       expect(receivedTokens).toEqual(['fixture-token', 'fixture-token']);
       expect(state.resources[0]).toMatchObject({ externalId: 'R_1', url: 'https://github.com/bayernjf/test-project' });
     } finally {
-      if (previous === undefined) delete process.env.AGENT_DEV_CREDENTIALS_PATH;
-      else process.env.AGENT_DEV_CREDENTIALS_PATH = previous;
+      if (previous === undefined) delete process.env.AGENT_OPS_CREDENTIALS_PATH;
+      else process.env.AGENT_OPS_CREDENTIALS_PATH = previous;
       await rm(directory, { recursive: true, force: true });
     }
   });
@@ -322,7 +322,7 @@ describe('RealProviderRegistry', () => {
       if (key.includes('wrangler pages project list')) return { stdout: 'other', stderr: '', exitCode: 0, success: true };
       return { stdout: 'ok', stderr: '', exitCode: 0, success: true };
     };
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-names-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-names-'));
     const registry = new RealProviderRegistry({
       resolveContext: async () => ({ workspacePath: directory, projectName: 'test-project' }),
       runner,
@@ -394,23 +394,23 @@ describe('RealProviderRegistry', () => {
 
 describe('local credential and resource files', () => {
   it('writes credentials with metadata without exposing values in metadata', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-credentials-'));
-    const previous = process.env.AGENT_DEV_CREDENTIALS_PATH;
-    process.env.AGENT_DEV_CREDENTIALS_PATH = join(directory, 'credentials.txt');
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-credentials-'));
+    const previous = process.env.AGENT_OPS_CREDENTIALS_PATH;
+    process.env.AGENT_OPS_CREDENTIALS_PATH = join(directory, 'credentials.txt');
     try {
       await saveCredentials({ GITHUB_TOKEN: 'fixture-secret', OPENAI_API_KEY: 'fixture-key' });
       expect(loadCredentials()).toEqual({ GITHUB_TOKEN: 'fixture-secret', OPENAI_API_KEY: 'fixture-key' });
       expect(getCredentialMeta()).toMatchObject({ version: 1, keys: ['GITHUB_TOKEN', 'OPENAI_API_KEY'] });
       await expect(readFile(join(directory, 'credentials.txt.meta.json'), 'utf8')).resolves.not.toContain('fixture-secret');
     } finally {
-      if (previous === undefined) delete process.env.AGENT_DEV_CREDENTIALS_PATH;
-      else process.env.AGENT_DEV_CREDENTIALS_PATH = previous;
+      if (previous === undefined) delete process.env.AGENT_OPS_CREDENTIALS_PATH;
+      else process.env.AGENT_OPS_CREDENTIALS_PATH = previous;
       await rm(directory, { recursive: true, force: true });
     }
   });
 
   it('persists project resources and generates an application env file without credentials', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-resources-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-resources-'));
     try {
       writeProjectResources(directory, 'demo', 'project-1', 1, 'vercel', { projectId: 'prj_demo', productionUrl: 'https://demo.example' });
       const resources = loadProjectResources(directory);
@@ -429,7 +429,7 @@ describe('local credential and resource files', () => {
   });
 
   it('never writes service-role or user-defined credentials into the workspace env', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-env-allowlist-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-env-allowlist-'));
     try {
       generateEnvFile(
         directory,
@@ -479,13 +479,13 @@ describe('credential backend routing', () => {
   };
 
   const withInfisicalEnv = async (run: (backend: SecretBackend) => Promise<void>) => {
-    const previous = process.env.AGENT_DEV_SECRET_BACKEND;
-    process.env.AGENT_DEV_SECRET_BACKEND = 'infisical';
+    const previous = process.env.AGENT_OPS_SECRET_BACKEND;
+    process.env.AGENT_OPS_SECRET_BACKEND = 'infisical';
     try {
       await run(useMockBackend());
     } finally {
-      if (previous === undefined) delete process.env.AGENT_DEV_SECRET_BACKEND;
-      else process.env.AGENT_DEV_SECRET_BACKEND = previous;
+      if (previous === undefined) delete process.env.AGENT_OPS_SECRET_BACKEND;
+      else process.env.AGENT_OPS_SECRET_BACKEND = previous;
       restoreInfisicalFactory();
     }
   };
@@ -495,23 +495,23 @@ describe('credential backend routing', () => {
   // tests in a file sequentially in declaration order).
 
   it('defaults to the local-file backend without touching any snapshot', async () => {
-    delete process.env.AGENT_DEV_SECRET_BACKEND;
+    delete process.env.AGENT_OPS_SECRET_BACKEND;
     expect(credentialBackendType()).toBe('local-file');
     await expect(refreshCredentialCache()).resolves.toBeUndefined();
   });
 
   it('fails loudly when the backend is unavailable — no silent fallback to the local file', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-no-fallback-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-no-fallback-'));
     const credentialsFile = join(directory, 'credentials.txt');
-    const previousPath = process.env.AGENT_DEV_CREDENTIALS_PATH;
-    process.env.AGENT_DEV_CREDENTIALS_PATH = credentialsFile;
+    const previousPath = process.env.AGENT_OPS_CREDENTIALS_PATH;
+    process.env.AGENT_OPS_CREDENTIALS_PATH = credentialsFile;
     const localFixture = '# Agent-Dev credentials. Never commit or share this file.\n\nGITHUB_TOKEN=LOCAL-SENTINEL\nOPENAI_API_KEY=LOCAL-SENTINEL-2\n';
     try {
       await writeFile(credentialsFile, localFixture, 'utf8');
       await writeFile(`${credentialsFile}.meta.json`, JSON.stringify({ version: 1, updatedAt: '2026-08-01T00:00:00.000Z', keys: ['GITHUB_TOKEN', 'OPENAI_API_KEY'] }), 'utf8');
       // Positive control: the very same fixture is readable with no backend override, so the
       // expectations below fail because of backend selection rather than a malformed fixture.
-      delete process.env.AGENT_DEV_SECRET_BACKEND;
+      delete process.env.AGENT_OPS_SECRET_BACKEND;
       expect(loadCredentials()).toEqual({ GITHUB_TOKEN: 'LOCAL-SENTINEL', OPENAI_API_KEY: 'LOCAL-SENTINEL-2' });
 
       await withInfisicalEnv(async backend => {
@@ -530,8 +530,8 @@ describe('credential backend routing', () => {
       // Refusing to serve the file must also leave it untouched for the operator to recover.
       await expect(readFile(credentialsFile, 'utf8')).resolves.toBe(localFixture);
     } finally {
-      if (previousPath === undefined) delete process.env.AGENT_DEV_CREDENTIALS_PATH;
-      else process.env.AGENT_DEV_CREDENTIALS_PATH = previousPath;
+      if (previousPath === undefined) delete process.env.AGENT_OPS_CREDENTIALS_PATH;
+      else process.env.AGENT_OPS_CREDENTIALS_PATH = previousPath;
       await rm(directory, { recursive: true, force: true });
     }
   });

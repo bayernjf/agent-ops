@@ -1,7 +1,7 @@
 import { serve } from '@hono/node-server';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname, parse } from 'node:path';
-import { AgentDevStore } from '@agent-ops/storage-webapp';
+import { AgentOpsStore } from '@agent-ops/storage-webapp';
 import { refreshCredentialCache } from '@agent-ops/provider-cli';
 import { createDaemonApp } from './app.js';
 import { loadOrCreateDaemonToken } from './auth.js';
@@ -36,15 +36,15 @@ export function resolveWorkspaceRoot(startDirectory: string): string {
 }
 
 export async function startDaemon(options: StartDaemonOptions = {}) {
-  const port = options.port ?? Number(process.env.AGENT_DEV_PORT ?? 3737);
+  const port = options.port ?? Number(process.env.AGENT_OPS_PORT ?? 3737);
   const databasePath =
     options.databasePath ??
-    process.env.AGENT_DEV_DATABASE_PATH ??
-    join(resolveWorkspaceRoot(process.cwd()), '.agent-dev', 'agent-dev.sqlite');
+    process.env.AGENT_OPS_DATABASE_PATH ??
+    join(resolveWorkspaceRoot(process.cwd()), '.agent-ops', 'agent-ops.sqlite');
   const dataDirectory = dirname(databasePath);
-  const store = await AgentDevStore.open(databasePath);
+  const store = await AgentOpsStore.open(databasePath);
   const authToken = loadOrCreateDaemonToken();
-  // No-op unless AGENT_DEV_SECRET_BACKEND=infisical; a misconfigured/unreachable backend
+  // No-op unless AGENT_OPS_SECRET_BACKEND=infisical; a misconfigured/unreachable backend
   // fails startup loudly rather than silently serving empty credentials (no fallback).
   await refreshCredentialCache();
   const { app, events } = createDaemonApp(store, new DaemonEventBus(), {}, dataDirectory, { authToken });

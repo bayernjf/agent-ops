@@ -11,7 +11,7 @@ afterEach(async () => {
 });
 
 async function createMonorepo() {
-  const root = await mkdtemp(join(tmpdir(), 'agent-dev-root-'));
+  const root = await mkdtemp(join(tmpdir(), 'agent-ops-root-'));
   directories.push(root);
   await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'root', workspaces: ['apps/*'] }), 'utf8');
   const packageDirectory = join(root, 'apps', 'daemon');
@@ -28,7 +28,7 @@ describe('resolveWorkspaceRoot', () => {
   });
 
   it('falls back to the starting directory when no workspace root exists above it', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-orphan-'));
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-orphan-'));
     directories.push(directory);
     expect(resolveWorkspaceRoot(directory)).toBe(directory);
   });

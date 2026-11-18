@@ -211,7 +211,7 @@ export class DeploymentComposer {
   // `vercel api` reuses the CLI's existing login, so no long-lived personal token has to exist.
   // The body goes through a file because the request needs literal JSON `null`, which `--field` coerces to "".
   private async disableVercelDeploymentProtectionViaCli(env: Record<string, string>): Promise<void> {
-    const bodyDir = join(this.workspacePath, '.agent-dev');
+    const bodyDir = join(this.workspacePath, '.agent-ops');
     await mkdir(bodyDir, { recursive: true });
     const bodyPath = join(bodyDir, 'vercel-deployment-protection.json');
     await writeFile(bodyPath, `${JSON.stringify({ ssoProtection: null, passwordProtection: null })}\n`, 'utf8');
@@ -302,7 +302,7 @@ export class DeploymentComposer {
       this.frontendDistDirectory,
       '--project-name', this.cloudflareProjectName!,
       '--branch', this.previewBranch,
-      '--commit-message', `agent-dev preview: ${this.projectName}/${this.previewBranch}`,
+      '--commit-message', `agent-ops preview: ${this.projectName}/${this.previewBranch}`,
     ], {
       cwd: this.workspacePath,
       timeout: 180_000,
@@ -373,7 +373,7 @@ export class DeploymentComposer {
       completedAt: new Date().toISOString(),
     };
 
-    const outputDir = join(this.workspacePath, '.agent-dev', 'previews');
+    const outputDir = join(this.workspacePath, '.agent-ops', 'previews');
     await mkdir(outputDir, { recursive: true });
     const evidencePath = join(outputDir, `${this.projectName}-${this.previewBranch}.json`);
     await writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');

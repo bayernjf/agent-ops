@@ -11,9 +11,9 @@ export type CredentialMeta = { version: 1; updatedAt: string; keys: string[] };
 /**
  * Credential storage backend selector.
  *
- * - `local-file` (default): reads/writes ~/.agent-dev/credentials.txt directly — the
+ * - `local-file` (default): reads/writes ~/.agent-ops/credentials.txt directly — the
  *   historical behaviour, byte-for-byte unchanged.
- * - `infisical` (AGENT_DEV_SECRET_BACKEND=infisical): delegates to the InfisicalBackend
+ * - `infisical` (AGENT_OPS_SECRET_BACKEND=infisical): delegates to the InfisicalBackend
  *   via the SecretBackend abstraction. Reads come from a process-local snapshot hydrated
  *   by `refreshCredentialCache()` at daemon startup and re-hydrated after every write, so
  *   the synchronous `providerCredentialEnv()` call sites (25+ across the provider adapters
@@ -25,12 +25,12 @@ export type CredentialMeta = { version: 1; updatedAt: string; keys: string[] };
 export type CredentialBackendType = 'local-file' | 'infisical';
 
 export function credentialBackendType(): CredentialBackendType {
-  return process.env.AGENT_DEV_SECRET_BACKEND === 'infisical' ? 'infisical' : 'local-file';
+  return process.env.AGENT_OPS_SECRET_BACKEND === 'infisical' ? 'infisical' : 'local-file';
 }
 
 let backendCache: { credentials: Credentials; fetchedAt: string } | null = null;
 
-export function credentialsPath() { return process.env.AGENT_DEV_CREDENTIALS_PATH ?? join(homedir(), '.agent-dev', 'credentials.txt'); }
+export function credentialsPath() { return process.env.AGENT_OPS_CREDENTIALS_PATH ?? join(homedir(), '.agent-ops', 'credentials.txt'); }
 function metaPath() { return `${credentialsPath()}.meta.json`; }
 
 /**
