@@ -144,14 +144,14 @@ export function createAgentDevMcpServer(options: McpBridgeOptions): McpServer {
   const server = new McpServer({ name: 'agent-dev', version: serverVersion });
 
   server.registerTool('agent_dev_doctor', {
-    title: 'Agent-Dev doctor',
-    description: 'Check the local Agent-Dev environment: required commands and connector readiness.',
+    title: 'Agent Ops doctor',
+    description: 'Check the local Agent Ops environment: required commands and connector readiness.',
     annotations: READ_ONLY,
   }, () => callDaemon('GET', '/api/doctor').then(toResult));
 
   server.registerTool('agent_dev_list_projects', {
     title: 'List projects',
-    description: 'List all Agent-Dev projects with their delivery state.',
+    description: 'List all Agent Ops projects with their delivery state.',
     annotations: READ_ONLY,
   }, () => callDaemon('GET', '/api/projects').then(toResult));
 
