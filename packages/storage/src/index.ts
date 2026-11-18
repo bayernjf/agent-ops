@@ -10,10 +10,11 @@ import initSqlJs, { type Database } from 'sql.js';
 import type { ProductBlueprint } from '@agent-ops/blueprint';
 import { createBaselinePlan, createDryRunPlan, productBlueprintSchema } from '@agent-ops/blueprint';
 import { buildAgentExecutionPlan, describeRuntimeExecutorRejection, executeCodexPlan, isAgentExecutable, resolveRuntimeExecutor, type CodexExecutionPlan, type CodexExecutionResult, type CodexProcessRunner, resolvePipelinePrompt, getNextPipelineStep, isPipelineComplete, type FeatureTaskPipeline, type PipelineStep, type PipelineStepResult } from '@agent-ops/agent-runtime';
-import { createNeedsInputRun, restoreDeliveryActor, isEventReplay, type DeliveryEvent, type DeliverySnapshot, type DeliveryState } from '@agent-ops/workflow';
-import { applyRuns, baselineApprovals, blueprintRevisions, deliveryRuns, projects, releaseRuns } from './schema.js';
+import { createNeedsInputRun, restoreDeliveryActor, isEventReplay, type DeliveryEvent, type DeliverySnapshot, type DeliveryState, type TaskRunState } from '@agent-ops/workflow';
+import { applyRuns, baselineApprovals, blueprintRevisions, deliveryRuns, projects, releaseRuns, tasks, runs } from './schema.js';
 import { migrations } from './migrations.js';
 import { ProfileStore, type CreateProfileInput, type UpdateProfileInput, type ProfileValidationResult } from './profiles-store.js';
+import { addWorktree, removeWorktree } from './worktree.js';
 
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
@@ -23,12 +24,44 @@ const execFileAsync = promisify(execFile);
 const npmSpawnOptions = process.platform === 'win32' ? { shell: true } : {};
 
 function createOrm(database: Database) {
-  return drizzle(database, { schema: { applyRuns, baselineApprovals, projects, blueprintRevisions, deliveryRuns, releaseRuns } });
+  return drizzle(database, { schema: { applyRuns, baselineApprovals, projects, blueprintRevisions, deliveryRuns, releaseRuns, tasks, runs } });
 }
 
 export type CreateProjectInput = {
   name: string;
   blueprint: ProductBlueprint;
+};
+
+export type CreateTaskInput = {
+  repo: string;
+  baseRef: string;
+  title: string;
+  objective?: string;
+  recipe?: string;
+  worktreePath?: string;
+};
+
+export type TaskRecord = {
+  id: string;
+  repo: string;
+  baseRef: string;
+  worktreePath: string;
+  recipe: string;
+  title: string;
+  objective: string;
+  status: TaskRunState;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RunRecord = {
+  id: string;
+  taskId: string;
+  agentId: string;
+  status: TaskRunState;
+  diffStat: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type ProjectSummary = {
@@ -362,6 +395,103 @@ export class AgentDevStore {
     store.runMigrations();
     await store.persist();
     return store;
+  }
+
+  async createTask(input: CreateTaskInput): Promise<TaskRecord> {
+    const now = new Date().toISOString();
+    const record: TaskRecord = {
+      id: randomUUID(),
+      repo: input.repo,
+      baseRef: input.baseRef,
+      worktreePath: input.worktreePath ?? '',
+      recipe: input.recipe ?? '',
+      title: input.title,
+      objective: input.objective ?? '',
+      status: 'queued',
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.orm.insert(tasks).values(record).run();
+    await this.persist();
+    return record;
+  }
+
+  getTask(id: string): TaskRecord | undefined {
+    return this.orm.select().from(tasks).where(eq(tasks.id, id)).get() as TaskRecord | undefined;
+  }
+
+  listTasks(): TaskRecord[] {
+    return this.orm.select().from(tasks).all() as TaskRecord[];
+  }
+
+  async updateTaskStatus(id: string, status: TaskRunState): Promise<TaskRecord> {
+    const existing = this.getTask(id);
+    if (!existing) throw new Error(`Task ${id} was not found.`);
+    const now = new Date().toISOString();
+    this.orm.update(tasks).set({ status, updatedAt: now }).where(eq(tasks.id, id)).run();
+    await this.persist();
+    return { ...existing, status, updatedAt: now };
+  }
+
+  async provisionTask(id: string): Promise<TaskRecord> {
+    const existing = this.getTask(id);
+    if (!existing) throw new Error(`Task ${id} was not found.`);
+    if (existing.worktreePath) return existing;
+    const path = join(this.dataDirectory, 'tasks', id, 'work');
+    await addWorktree(existing.repo, existing.baseRef, path);
+    const now = new Date().toISOString();
+    this.orm.update(tasks).set({ worktreePath: path, updatedAt: now }).where(eq(tasks.id, id)).run();
+    await this.persist();
+    return { ...existing, worktreePath: path, updatedAt: now };
+  }
+
+  async releaseTask(id: string): Promise<TaskRecord> {
+    const existing = this.getTask(id);
+    if (!existing) throw new Error(`Task ${id} was not found.`);
+    if (!existing.worktreePath) return existing;
+    await removeWorktree(existing.repo, existing.worktreePath);
+    const now = new Date().toISOString();
+    this.orm.update(tasks).set({ worktreePath: '', updatedAt: now }).where(eq(tasks.id, id)).run();
+    await this.persist();
+    return { ...existing, worktreePath: '', updatedAt: now };
+  }
+
+  async createRun(taskId: string, agentId: string): Promise<RunRecord> {
+    if (!this.getTask(taskId)) throw new Error(`Task ${taskId} was not found.`);
+    const now = new Date().toISOString();
+    const record: RunRecord = {
+      id: randomUUID(),
+      taskId,
+      agentId,
+      status: 'queued',
+      diffStat: '',
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.orm.insert(runs).values(record).run();
+    await this.persist();
+    return record;
+  }
+
+  getRun(id: string): RunRecord | undefined {
+    return this.orm.select().from(runs).where(eq(runs.id, id)).get() as RunRecord | undefined;
+  }
+
+  listRuns(taskId: string): RunRecord[] {
+    return this.orm.select().from(runs).where(eq(runs.taskId, taskId)).all() as RunRecord[];
+  }
+
+  async updateRunStatus(id: string, status: TaskRunState, diffStat?: string): Promise<RunRecord> {
+    const existing = this.getRun(id);
+    if (!existing) throw new Error(`Run ${id} was not found.`);
+    const now = new Date().toISOString();
+    this.orm.update(runs).set({
+      status,
+      updatedAt: now,
+      ...(diffStat !== undefined ? { diffStat } : {}),
+    }).where(eq(runs.id, id)).run();
+    await this.persist();
+    return { ...existing, status, updatedAt: now, ...(diffStat !== undefined ? { diffStat } : {}) };
   }
 
   async createProject(input: CreateProjectInput): Promise<StoredProject> {

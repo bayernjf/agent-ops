@@ -9,3 +9,9 @@
 - 提交信息用英文 Conventional Commits；每个提交只处理一个独立目的。
 - 提交前至少运行 `npm run typecheck && npm test`。
 - 本地工作分支为 `dev`；`main` 通过 PR 合入，不直接提交。
+
+## 分层边界
+
+- `packages/*` 是 Agent Ops 内核，不得依赖 `plugins/webapp-delivery/*`。
+- `plugins/webapp-delivery/*` 只能依赖内核，不能反向依赖。
+- 已知待切断的反向依赖：`packages/storage → blueprint`、`apps/daemon → blueprint/provider-*/deployment-composer`、`apps/studio → blueprint`。不得新增反向依赖。
