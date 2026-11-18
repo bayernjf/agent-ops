@@ -10,7 +10,8 @@
   },
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "plugins/webapp-delivery/packages/*"
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
