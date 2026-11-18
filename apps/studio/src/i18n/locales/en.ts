@@ -4,8 +4,8 @@ import type { AcceptanceRecord, AgentCapabilityProbe, ApplyRun, PreviewDeploymen
 
 export const en = {
   common: {
-    appName: 'Agent-Dev Studio',
-    brandName: 'Agent-Dev',
+    appName: 'Agent Ops Studio',
+    brandName: 'Agent Ops',
     loading: 'Loading...',
     loadMore: 'Load more',
     save: 'Save',
@@ -225,7 +225,8 @@ export const en = {
     agentAiderDesc: 'Aider AI pair programmer. Git-native, works with many models. Good for incremental changes.',
     agentAiderInstall: 'pip install aider-chat',
     agentPiDesc: 'Read-only code analysis agent. Does not modify files. Good for code review and understanding.',
-    agentPiInstall: 'npm install -g @agent-dev/pi',
+    // No install command is offered: `@agent-dev/pi` was never published, and guessing a new package
+    // name would tell the user to run something unverifiable.
     customImplementationNote: 'Custom implementation note',
     customInstructionsPlaceholder: 'Any special instructions for the agent...',
     resourceOwnership: 'Resource ownership',
@@ -358,9 +359,9 @@ export const en = {
       steps: {
         '0': 'Confirm the intended GitHub account or organization.',
         '1': 'Grant only repository, pull request and checks permissions.',
-        '2': 'Return to Agent-Dev for a read-only capability check.',
+        '2': 'Return to Agent Ops for a read-only capability check.',
       },
-      verification: 'Agent-Dev can read the selected account and list its permitted repositories.',
+      verification: 'Agent Ops can read the selected account and list its permitted repositories.',
     },
     supabase: {
       title: 'Authorize Supabase and choose an organization',
@@ -370,7 +371,7 @@ export const en = {
         '1': 'Choose the organization and region.',
         '2': 'Review the project plan before any project is created.',
       },
-      verification: 'Agent-Dev can discover the chosen organization without reading database data.',
+      verification: 'Agent Ops can discover the chosen organization without reading database data.',
     },
     cloudflare: {
       title: 'Authorize Cloudflare Pages',
@@ -380,7 +381,7 @@ export const en = {
         '1': 'Choose the account that owns the Pages project.',
         '2': 'Approve Pages-only access; do not grant DNS access unless a custom domain is planned.',
       },
-      verification: 'Agent-Dev can list Pages capabilities for the selected account.',
+      verification: 'Agent Ops can list Pages capabilities for the selected account.',
     },
     vercel: {
       title: 'Authorize Vercel Functions',
@@ -390,7 +391,7 @@ export const en = {
         '1': 'Choose the team for the API project.',
         '2': 'Review the required server-side environment variable targets.',
       },
-      verification: 'Agent-Dev can discover the selected team and its deployment capabilities.',
+      verification: 'Agent Ops can discover the selected team and its deployment capabilities.',
     },
     privacyReview: {
       title: 'Approve the sensitive-data boundary',
@@ -526,7 +527,7 @@ export const en = {
     pages: 'Pages',
     web: 'Web',
     eyebrow: 'Delivery evidence',
-    openPullRequestDescription: 'Agent-Dev pushes the accepted commit to the recorded repository, opens the Pull Request against the integration branch, and records the evidence itself.',
+    openPullRequestDescription: 'Agent Ops pushes the accepted commit to the recorded repository, opens the Pull Request against the integration branch, and records the evidence itself.',
     opening: 'Opening...',
     pushAndOpen: 'Push and open Pull Request',
     recordDualPreviewDescription: 'Supply both public URLs and the smoke-test result before Preview is marked ready.',
@@ -850,7 +851,7 @@ export const en = {
     releaseToProduction: 'Release {name} to production as {approvedBy}?',
     approveBaseline: 'Record approval for this baseline as {approvedBy}? No remote resource will be created.',
     runApplySimulator: 'Run the local Apply Simulator? It writes only inside .agent-dev and makes no external changes.',
-    runNpmInstall: 'Run npm install in the isolated Agent-Dev workspace? This may access the npm registry and writes only that workspace.',
+    runNpmInstall: 'Run npm install in the isolated Agent Ops workspace? This may access the npm registry and writes only that workspace.',
     deletePreviewProjects: 'Delete the preview projects from Vercel and Cloudflare?',
     // Nothing runs during a dry run, so this gate names no executor: the previous wording promised a
     // Codex process would not start, which answered a question the user had not asked.
@@ -915,7 +916,7 @@ export const en = {
           missingReason: 'Choose the Cloudflare account that will own the Pages project.',
         },
         reason: {
-          hasOwner: 'After approval, Agent-Dev may create the {title} in {owner}.',
+          hasOwner: 'After approval, Agent Ops may create the {title} in {owner}.',
         },
       },
   },

@@ -19,7 +19,7 @@ const AGENT_COPY: Record<string, AgentCopyKeys> = {
   opencode: { desc: 'blueprint.agentOpencodeDesc', install: 'blueprint.agentOpencodeInstall' },
   codebuddy: { desc: 'blueprint.agentCodebuddyDesc', install: 'blueprint.agentCodebuddyInstall' },
   hermes: { desc: 'blueprint.agentHermesDesc', install: 'blueprint.agentHermesInstall' },
-  pi: { desc: 'blueprint.agentPiDesc', install: 'blueprint.agentPiInstall' },
+  pi: { desc: 'blueprint.agentPiDesc' },
   // No published install command for OpenClaw in this repository, so only the description exists.
   openclaw: { desc: 'blueprint.agentOpenclawDesc' },
 };

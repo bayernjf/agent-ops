@@ -4,8 +4,8 @@ import type { Translations } from './en';
 
 export const zh = {
   common: {
-    appName: 'Agent-Dev Studio',
-    brandName: 'Agent-Dev',
+    appName: 'Agent Ops Studio',
+    brandName: 'Agent Ops',
     loading: '加载中...',
     loadMore: '加载更多',
     save: '保存',
@@ -214,7 +214,8 @@ export const zh = {
     agentAiderDesc: 'Aider AI 结对编程。Git 原生，支持多种模型。适合增量修改。',
     agentAiderInstall: 'pip install aider-chat',
     agentPiDesc: '只读代码分析 Agent。不修改文件。适合代码审查和理解。',
-    agentPiInstall: 'npm install -g @agent-dev/pi',
+    // No install command is offered: `@agent-dev/pi` was never published, and guessing a new package
+    // name would tell the user to run something unverifiable.
     customImplementationNote: '自定义实现说明',
     customInstructionsPlaceholder: '给 Agent 的任何特殊说明...',
     resourceOwnership: '资源归属',
@@ -346,9 +347,9 @@ export const zh = {
       steps: {
         '0': '确认目标 GitHub 账户或组织。',
         '1': '仅授予仓库、PR 和检查权限。',
-        '2': '返回 Agent-Dev 进行只读能力检查。',
+        '2': '返回 Agent Ops 进行只读能力检查。',
       },
-      verification: 'Agent-Dev 可读取所选账户并列出其允许的仓库。',
+      verification: 'Agent Ops 可读取所选账户并列出其允许的仓库。',
     },
     supabase: {
       title: '授权 Supabase 并选择组织',
@@ -358,7 +359,7 @@ export const zh = {
         '1': '选择组织和区域。',
         '2': '在创建项目前审查项目套餐。',
       },
-      verification: 'Agent-Dev 可发现所选组织，不读取数据库数据。',
+      verification: 'Agent Ops 可发现所选组织，不读取数据库数据。',
     },
     cloudflare: {
       title: '授权 Cloudflare Pages',
@@ -368,7 +369,7 @@ export const zh = {
         '1': '选择拥有 Pages 项目的账户。',
         '2': '批准仅 Pages 访问；除非计划自定义域名，否则不授予 DNS 访问。',
       },
-      verification: 'Agent-Dev 可列出所选账户的 Pages 能力。',
+      verification: 'Agent Ops 可列出所选账户的 Pages 能力。',
     },
     vercel: {
       title: '授权 Vercel Functions',
@@ -378,7 +379,7 @@ export const zh = {
         '1': '选择 API 项目的团队。',
         '2': '审查所需的服务端环境变量目标。',
       },
-      verification: 'Agent-Dev 可发现所选团队及其部署能力。',
+      verification: 'Agent Ops 可发现所选团队及其部署能力。',
     },
     privacyReview: {
       title: '批准敏感数据边界',
@@ -514,7 +515,7 @@ export const zh = {
     pages: 'Pages',
     web: 'Web',
     eyebrow: '交付证据',
-    openPullRequestDescription: 'Agent-Dev 将已接受的 commit 推送到已记录的仓库，针对集成分支打开 Pull Request，并自行记录证据。',
+    openPullRequestDescription: 'Agent Ops 将已接受的 commit 推送到已记录的仓库，针对集成分支打开 Pull Request，并自行记录证据。',
     opening: '正在打开...',
     pushAndOpen: '推送并打开 Pull Request',
     recordDualPreviewDescription: '在 Preview 标记为就绪之前，提供两个公开 URL 和 Smoke Test 结果。',
@@ -831,7 +832,7 @@ export const zh = {
     releaseToProduction: '以 {approvedBy} 的身份将 {name} Release 到生产环境？',
     approveBaseline: '以 {approvedBy} 的身份记录此 Baseline 的批准？不会创建任何远程资源。',
     runApplySimulator: '运行本地 Apply Simulator？它只在 .agent-dev 目录内写入，不会进行外部更改。',
-    runNpmInstall: '在隔离的 Agent-Dev 工作区中运行 npm install？这可能会访问 npm registry，且只写入该工作区。',
+    runNpmInstall: '在隔离的 Agent Ops 工作区中运行 npm install？这可能会访问 npm registry，且只写入该工作区。',
     deletePreviewProjects: '删除 Vercel 和 Cloudflare 上的 Preview 项目？',
     // Dry-run 什么也不跑，所以这道闸门不提执行者；原先的文案在承诺「不会启动 Codex 进程」，
     // 那是用户没问的问题。
@@ -898,7 +899,7 @@ export const zh = {
           missingReason: '选择将拥有 Pages 项目的 Cloudflare 账户。',
         },
         reason: {
-          hasOwner: '批准后，Agent-Dev 可在 {owner} 中创建 {title}。',
+          hasOwner: '批准后，Agent Ops 可在 {owner} 中创建 {title}。',
         },
       },
   },
