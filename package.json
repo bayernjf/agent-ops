@@ -11,7 +11,8 @@
   "workspaces": [
     "packages/*",
     "apps/*",
-    "plugins/webapp-delivery/packages/*"
+    "plugins/webapp-delivery/packages/*",
+    "plugins/webapp-delivery/apps/*"
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
