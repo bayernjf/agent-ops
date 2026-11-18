@@ -11,16 +11,6 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@agent-ops/blueprint": "*",
-    "@agent-ops/agent-runtime": "*",
-    "@agent-ops/deployment-composer": "*",
-    "@agent-ops/provider-core": "*",
-    "@agent-ops/provider-cli": "*",
-    "@agent-ops/policy": "*",
-    "@agent-ops/storage-webapp": "*",
-    "@agent-ops/workflow": "*",
-    "@hono/node-server": "^2.1.6",
-    "hono": "^4.7.7",
-    "zod": "^3.24.3"
+    "@agent-ops/delivery-server": "*"
   }
 }
