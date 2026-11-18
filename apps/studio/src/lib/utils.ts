@@ -1,0 +1,57 @@
+import type { BlueprintAnswers, ProductBlueprint } from '@agent-ops/blueprint';
+
+export const APPROVER_STORAGE_KEY = 'agent-dev.approver';
+
+export const defaultAnswers: BlueprintAnswers = {
+  mode: 'beginner',
+  productType: 'web-app',
+  desktopShell: 'tauri',
+  productIntent: '',
+  dataSensitivity: 'standard',
+  previewStrategy: 'per-pull-request',
+  analyticsProviders: [],
+  runtimeProvider: 'local-codex',
+  customInstructions: '',
+  storefrontProfile: 'retail',
+  // Same defaults as storefrontConfigSchema so the literal satisfies the inferred type.
+  storefrontConfig: { themeColor: '#b45309', tagline: '', seedProducts: [] },
+  githubOwner: '',
+  vercelTeam: '',
+  cloudflareAccount: '',
+  supabaseOrganization: '',
+};
+
+export function formatDate(value: string, locale: string) {
+  return new Intl.DateTimeFormat(locale, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
+export function answersFromBlueprint(blueprint: ProductBlueprint): BlueprintAnswers {
+  return {
+    mode: blueprint.metadata.mode,
+    productIntent: blueprint.metadata.productIntent,
+    productType: blueprint.spec.product.type,
+    desktopShell: blueprint.spec.product.desktopShell,
+    dataSensitivity: blueprint.spec.product.dataSensitivity,
+    previewStrategy: blueprint.spec.deployment.previewStrategy,
+    analyticsProviders: blueprint.spec.analytics.providers,
+    runtimeProvider: blueprint.spec.runtime.provider,
+    customInstructions: blueprint.metadata.customInstructions,
+    storefrontProfile: blueprint.spec.product.storefrontProfile,
+    storefrontConfig: blueprint.spec.storefrontConfig,
+    githubOwner: blueprint.spec.sourceControl.owner,
+    vercelTeam: blueprint.spec.deployment.api.team,
+    cloudflareAccount: blueprint.spec.deployment.web.account,
+    supabaseOrganization: blueprint.spec.data.organization,
+  };
+}
+
+export function recordApprover(approver: string): string {
+  const name = approver.trim();
+  if (name) localStorage.setItem(APPROVER_STORAGE_KEY, name);
+  return name;
+}

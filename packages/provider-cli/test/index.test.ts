@@ -1,0 +1,578 @@
+import { describe, expect, it } from 'vitest';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { GitHubAdapter, VercelAdapter, CloudflareAdapter, ManualProviderAdapter, RealProviderRegistry, getCredentialMeta, loadCredentials, providerCredentialEnv, saveCredentials, refreshCredentialCache, writeProjectResources, loadProjectResources, generateEnvFile, registerBackend, InfisicalBackend, credentialBackendType, type CommandRunner, type CliResult, type SecretBackend } from '../src/index.js';
+
+const mockRunner = (responses: Record<string, CliResult>): CommandRunner => {
+  return async (command, args) => {
+    const key = `${command} ${args.join(' ')}`;
+    for (const [pattern, result] of Object.entries(responses)) {
+      if (key.includes(pattern)) return result;
+    }
+    return { stdout: '', stderr: 'not found', exitCode: 1, success: false };
+  };
+};
+
+const approval = { id: 'approval-1', status: 'approved' as const, approvedAt: '2026-08-08T00:00:00.000Z' };
+const resources = [{ id: 'github-repository', kind: 'repository', owner: 'bayernjf' }];
+
+describe('GitHubAdapter', () => {
+  it('discovers existing repo and plans noop', async () => {
+    const runner = mockRunner({
+      'gh api user --jq .login': { stdout: 'bayernjf', stderr: '', exitCode: 0, success: true },
+      'gh repo view bayernjf/test-project --json': { stdout: JSON.stringify({ name: 'test-project', owner: { login: 'bayernjf' }, isPrivate: true }), stderr: '', exitCode: 0, success: true },
+    });
+    const adapter = new GitHubAdapter('bayernjf', 'test-project', '/tmp/workspace', runner);
+    const state = await adapter.discover();
+    expect(state.resources).toHaveLength(1);
+    expect(state.resources[0].owner).toBe('bayernjf');
+    const plan = await adapter.plan(resources);
+    expect(plan.resources[0].action).toBe('noop');
+  });
+
+  it('plans create when repo does not exist', async () => {
+    const runner = mockRunner({
+      'gh api user --jq .login': { stdout: 'bayernjf', stderr: '', exitCode: 0, success: true },
+      'gh repo view': { stdout: '', stderr: 'repository not found', exitCode: 1, success: false },
+    });
+    const adapter = new GitHubAdapter('bayernjf', 'test-project', '/tmp/workspace', runner);
+    const plan = await adapter.plan(resources);
+    expect(plan.resources[0].action).toBe('create');
+    expect(plan.noExternalChanges).toBe(true);
+  });
+
+  it('creates the declared integration and production branches so a pull request has a base', async () => {
+    const calls: string[] = [];
+    const runner: CommandRunner = async (command, args) => {
+      const key = `${command} ${args.join(' ')}`;
+      calls.push(key);
+      if (key.includes('gh api user')) return { stdout: 'bayernjf', stderr: '', exitCode: 0, success: true };
+      if (key.includes('git rev-list')) return { stdout: 'a1b2c3d\n', stderr: '', exitCode: 0, success: true };
+      if (key.includes('gh repo create') || key.includes('gh api repos/') || key.includes('gh repo edit')) return { stdout: 'ok', stderr: '', exitCode: 0, success: true };
+      if (key.includes('gh repo view')) return { stdout: '', stderr: 'not found', exitCode: 1, success: false };
+      return { stdout: '', stderr: '', exitCode: 1, success: false };
+    };
+    const adapter = new GitHubAdapter('bayernjf', 'test-project', '/tmp/workspace', runner, { integrationBranch: 'dev', productionBranch: 'main' });
+    await adapter.apply(await adapter.plan(resources), approval);
+
+    // The feature branch is the only ref `repo create --push` publishes, and both bases have to
+    // start at the baseline commit rather than at the feature under review.
+    expect(calls).toContain('gh api repos/bayernjf/test-project/git/refs -f ref=refs/heads/dev -f sha=a1b2c3d');
+    expect(calls).toContain('gh api repos/bayernjf/test-project/git/refs -f ref=refs/heads/main -f sha=a1b2c3d');
+    expect(calls).toContain('gh repo edit bayernjf/test-project --default-branch main');
+  });
+
+  it('backfills the declared branches on a repository that already exists', async () => {
+    const calls: string[] = [];
+    const runner: CommandRunner = async (command, args) => {
+      const key = `${command} ${args.join(' ')}`;
+      calls.push(key);
+      if (key.includes('gh api user')) return { stdout: 'bayernjf', stderr: '', exitCode: 0, success: true };
+      if (key.includes('gh repo view')) return { stdout: JSON.stringify({ name: 'test-project', owner: { login: 'bayernjf' }, isPrivate: true }), stderr: '', exitCode: 0, success: true };
+      if (key.includes('git rev-list')) return { stdout: 'a1b2c3d\n', stderr: '', exitCode: 0, success: true };
+      return { stdout: 'ok', stderr: '', exitCode: 0, success: true };
+    };
+    const adapter = new GitHubAdapter('bayernjf', 'test-project', '/tmp/workspace', runner, { integrationBranch: 'dev', productionBranch: 'main' });
+    const plan = await adapter.plan(resources);
+    expect(plan.resources[0].action).toBe('noop');
+    await adapter.apply(plan, approval);
+
+    // A repository provisioned before the platform declared these branches would otherwise never
+    // gain them, and its first pull request would have no base.
+    expect(calls).not.toContain('gh repo create bayernjf/test-project --private --source /tmp/workspace --push');
+    expect(calls).toContain('gh api repos/bayernjf/test-project/git/refs -f ref=refs/heads/dev -f sha=a1b2c3d');
+  });
+
+  it('pushes the branch and opens a pull request', async () => {
+    const calls: string[] = [];
+    const runner: CommandRunner = async (command, args) => {
+      const key = `${command} ${args.join(' ')}`;
+      calls.push(key);
+      if (key.includes('git remote get-url')) return { stdout: 'https://github.com/bayernjf/test-project.git\n', stderr: '', exitCode: 0, success: true };
+      if (key.includes('git push')) return { stdout: '', stderr: '', exitCode: 0, success: true };
+      if (key.includes('git rev-parse')) return { stdout: 'deadbee\n', stderr: '', exitCode: 0, success: true };
+      if (key.includes('gh pr create')) return { stdout: 'https://github.com/bayernjf/test-project/pull/1\n', stderr: '', exitCode: 0, success: true };
+      return { stdout: '', stderr: '', exitCode: 1, success: false };
+    };
+    const adapter = new GitHubAdapter('bayernjf', 'test-project', '/tmp/workspace', runner);
+    const published = await adapter.publishPullRequest({ branch: 'feature/x', base: 'dev', title: 'Feature', body: 'Evidence', expectedRepository: 'bayernjf/test-project' });
+    expect(published).toEqual({ url: 'https://github.com/bayernjf/test-project/pull/1', head: 'deadbee' });
+    expect(calls).toContain('git push -u origin feature/x');
+  });
+
+  it('refuses to push when origin is not the recorded repository', async () => {
+    const runner = mockRunner({ 'git remote get-url': { stdout: 'https://github.com/someone-else/other.git', stderr: '', exitCode: 0, success: true } });
+    const adapter = new GitHubAdapter('bayernjf', 'test-project', '/tmp/workspace', runner);
+    // Pushing an accepted delivery to an unrecorded remote would publish the product somewhere the
+    // evidence does not describe.
+    await expect(adapter.publishPullRequest({ branch: 'feature/x', base: 'dev', title: 'Feature', body: 'Evidence', expectedRepository: 'bayernjf/test-project' })).rejects.toThrow(/Refusing to push/);
+  });
+
+  it('reuses the pull request a previous attempt already opened', async () => {
+    const runner = mockRunner({
+      'git remote get-url': { stdout: 'https://github.com/bayernjf/test-project.git', stderr: '', exitCode: 0, success: true },
+      'git push': { stdout: '', stderr: '', exitCode: 0, success: true },
+      'git rev-parse': { stdout: 'deadbee', stderr: '', exitCode: 0, success: true },
+      'gh pr create': { stdout: '', stderr: 'a pull request for branch feature/x already exists', exitCode: 1, success: false },
+      'gh pr view': { stdout: 'https://github.com/bayernjf/test-project/pull/7', stderr: '', exitCode: 0, success: true },
+    });
+    const adapter = new GitHubAdapter('bayernjf', 'test-project', '/tmp/workspace', runner);
+    const published = await adapter.publishPullRequest({ branch: 'feature/x', base: 'dev', title: 'Feature', body: 'Evidence', expectedRepository: 'bayernjf/test-project' });
+    expect(published.url).toBe('https://github.com/bayernjf/test-project/pull/7');
+  });
+
+  it('creates repo on apply', async () => {
+    let createCalled = false;
+    const runner: CommandRunner = async (command, args) => {
+      const key = `${command} ${args.join(' ')}`;
+      if (key.includes('gh api user')) return { stdout: 'bayernjf', stderr: '', exitCode: 0, success: true };
+      if (key.includes('gh repo create')) { createCalled = true; return { stdout: 'Created', stderr: '', exitCode: 0, success: true }; }
+      if (key.includes('gh repo view')) return { stdout: '', stderr: 'not found', exitCode: 1, success: false };
+      return { stdout: '', stderr: '', exitCode: 1, success: false };
+    };
+    const adapter = new GitHubAdapter('bayernjf', 'test-project', '/tmp/workspace', runner);
+    const plan = await adapter.plan(resources);
+    const result = await adapter.apply(plan, approval);
+    expect(createCalled).toBe(true);
+    expect(result.applied).toBe(true);
+  });
+
+  it('uses the saved GitHub token for owner and repository discovery', async () => {
+    const previous = process.env.AGENT_DEV_CREDENTIALS_PATH;
+    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-github-token-'));
+    process.env.AGENT_DEV_CREDENTIALS_PATH = join(directory, 'credentials.txt');
+    await saveCredentials({ GITHUB_TOKEN: 'fixture-token' });
+    const receivedTokens: Array<string | undefined> = [];
+    const runner: CommandRunner = async (_command, args, options) => {
+      receivedTokens.push(options?.env?.GITHUB_TOKEN);
+      if (args[0] === 'api') return { stdout: 'bayernjf', stderr: '', exitCode: 0, success: true };
+      return { stdout: JSON.stringify({ id: 'R_1', name: 'test-project', owner: { login: 'bayernjf' }, isPrivate: true, url: 'https://github.com/bayernjf/test-project' }), stderr: '', exitCode: 0, success: true };
+    };
+    try {
+      const state = await new GitHubAdapter('', 'test-project', '/tmp/workspace', runner).discover();
+      expect(receivedTokens).toEqual(['fixture-token', 'fixture-token']);
+      expect(state.resources[0]).toMatchObject({ externalId: 'R_1', url: 'https://github.com/bayernjf/test-project' });
+    } finally {
+      if (previous === undefined) delete process.env.AGENT_DEV_CREDENTIALS_PATH;
+      else process.env.AGENT_DEV_CREDENTIALS_PATH = previous;
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('detects owner drift', async () => {
+    const runner = mockRunner({
+      'gh api user --jq .login': { stdout: 'bayernjf', stderr: '', exitCode: 0, success: true },
+      'gh repo view': { stdout: JSON.stringify({ name: 'test-project', owner: { login: 'other-user' }, isPrivate: true }), stderr: '', exitCode: 0, success: true },
+    });
+    const adapter = new GitHubAdapter('bayernjf', 'test-project', '/tmp/workspace', runner);
+    const drift = await adapter.detectDrift(resources);
+    expect(drift).toHaveLength(1);
+    expect(drift[0].type).toBe('owner-mismatch');
+  });
+});
+
+describe('VercelAdapter', () => {
+  const vercelResources = [{ id: 'vercel-api', kind: 'functions-project', owner: 'bayernjf' }];
+
+  it('plans create when project not found', async () => {
+    const runner = mockRunner({
+      'vercel project ls': { stdout: 'other-project\nsome-other', stderr: '', exitCode: 0, success: true },
+    });
+    const adapter = new VercelAdapter('bayernjf', 'test-project', '/tmp/workspace', runner);
+    const plan = await adapter.plan(vercelResources);
+    expect(plan.resources[0].action).toBe('create');
+  });
+
+  it('plans noop when project exists', async () => {
+    const runner = mockRunner({
+      'vercel project ls': { stdout: 'test-project\nother-project', stderr: '', exitCode: 0, success: true },
+    });
+    const adapter = new VercelAdapter('bayernjf', 'test-project', '/tmp/workspace', runner);
+    const plan = await adapter.plan(vercelResources);
+    expect(plan.resources[0].action).toBe('noop');
+  });
+
+  it('keeps Vercel project facts returned by the CLI', async () => {
+    const runner = mockRunner({
+      'vercel project ls': { stdout: 'test-project', stderr: '', exitCode: 0, success: true },
+      'vercel project inspect': { stdout: JSON.stringify({ id: 'prj_123', name: 'test-project', accountId: 'team_123', targets: { production: { url: 'https://test-project.vercel.app' } } }), stderr: '', exitCode: 0, success: true },
+    });
+    const state = await new VercelAdapter('bayernjf', 'test-project', '/tmp/workspace', runner).discover();
+    expect(state.resources[0]).toMatchObject({ externalId: 'prj_123', url: 'https://test-project.vercel.app', metadata: { orgId: 'team_123' } });
+  });
+});
+
+describe('CloudflareAdapter', () => {
+  const cfResources = [{ id: 'cloudflare-pages', kind: 'pages-project', owner: 'bayernjf' }];
+
+  it('plans create when project not found', async () => {
+    const runner = mockRunner({
+      'wrangler pages project list': { stdout: 'other-project', stderr: '', exitCode: 0, success: true },
+    });
+    const adapter = new CloudflareAdapter('bayernjf', 'test-project', '/tmp/workspace', runner);
+    const plan = await adapter.plan(cfResources);
+    expect(plan.resources[0].action).toBe('create');
+  });
+
+  it('plans noop when project exists', async () => {
+    const runner = mockRunner({
+      'wrangler pages project list': { stdout: 'test-project\nother', stderr: '', exitCode: 0, success: true },
+    });
+    const adapter = new CloudflareAdapter('bayernjf', 'test-project', '/tmp/workspace', runner);
+    const plan = await adapter.plan(cfResources);
+    expect(plan.resources[0].action).toBe('noop');
+  });
+
+  it('keeps Cloudflare Pages facts returned by Wrangler', async () => {
+    const runner = mockRunner({
+      'wrangler pages project list --json': { stdout: JSON.stringify([{ id: 'cf_123', name: 'test-project', subdomain: 'test-project.pages.dev', production_branch: 'main', account_id: 'account_123', created_on: '2026-08-09T00:00:00.000Z' }]), stderr: '', exitCode: 0, success: true },
+      'wrangler pages project list': { stdout: 'test-project', stderr: '', exitCode: 0, success: true },
+    });
+    const state = await new CloudflareAdapter('bayernjf', 'test-project', '/tmp/workspace', runner).discover();
+    expect(state.resources[0]).toMatchObject({ externalId: 'cf_123', url: 'https://test-project.pages.dev', metadata: { accountId: 'account_123', productionBranch: 'main' } });
+  });
+
+  it('creates the project during onboarding without deploying the frontend', async () => {
+    // The frontend `dist` does not exist at provider-apply time, so a deploy here would fail with
+    // ENOENT. Deployment belongs to the Preview/Release orchestration.
+    const calls: string[] = [];
+    const runner: CommandRunner = async (command, args) => {
+      calls.push(`${command} ${args.join(' ')}`);
+      if (args.includes('list')) return { stdout: 'other', stderr: '', exitCode: 0, success: true };
+      if (args.includes('create')) return { stdout: 'Created', stderr: '', exitCode: 0, success: true };
+      if (args.includes('deploy')) return { stdout: 'Deployed', stderr: '', exitCode: 0, success: true };
+      return { stdout: '', stderr: 'not found', exitCode: 1, success: false };
+    };
+    const adapter = new CloudflareAdapter('bayernjf', 'test-project', '/tmp/workspace', runner);
+    const result = await adapter.apply({ providerId: 'cloudflare', idempotencyKey: 'cloudflare:cloudflare-pages:create', noExternalChanges: true, resources: [{ spec: { id: 'cloudflare-pages', kind: 'pages-project', owner: 'bayernjf' }, action: 'create', reason: 'does not exist' }] }, approval);
+    expect(result.applied).toBe(true);
+    expect(calls.some(call => call.includes('pages project create'))).toBe(true);
+    expect(calls.some(call => call.includes('pages deploy'))).toBe(false);
+  });
+});
+
+describe('ManualProviderAdapter', () => {
+  const manualResources = [{ id: 'supabase-project', kind: 'database-auth-project', owner: 'my-org' }];
+
+  it('always returns noop plan', async () => {
+    const adapter = new ManualProviderAdapter('supabase', 'Supabase is manual.');
+    const plan = await adapter.plan(manualResources);
+    expect(plan.resources[0].action).toBe('noop');
+    expect(plan.resources[0].reason).toBe('Supabase is manual.');
+  });
+
+  it('verify returns not verified with missing', async () => {
+    const adapter = new ManualProviderAdapter('supabase', 'Supabase is manual.');
+    const verification = await adapter.verify(manualResources);
+    expect(verification.verified).toBe(false);
+    expect(verification.missing).toEqual(['supabase-project']);
+  });
+
+  it('detectDrift reports all as missing', async () => {
+    const adapter = new ManualProviderAdapter('supabase', 'Supabase is manual.');
+    const drift = await adapter.detectDrift(manualResources);
+    expect(drift).toHaveLength(1);
+    expect(drift[0].type).toBe('missing');
+  });
+});
+
+describe('RealProviderRegistry', () => {
+  it('routes to correct adapters and resolves context', async () => {
+    const runner = mockRunner({
+      'gh auth status': { stdout: 'Logged in', stderr: '', exitCode: 0, success: true },
+      'gh api user': { stdout: 'bayernjf', stderr: '', exitCode: 0, success: true },
+      'gh repo view': { stdout: '', stderr: 'not found', exitCode: 1, success: false },
+      'gh repo create': { stdout: 'Created', stderr: '', exitCode: 0, success: true },
+      'vercel whoami': { stdout: 'bayernjf', stderr: '', exitCode: 0, success: true },
+      'vercel project ls': { stdout: 'other', stderr: '', exitCode: 0, success: true },
+      'vercel --prod': { stdout: 'Deployed', stderr: '', exitCode: 0, success: true },
+      'wrangler whoami': { stdout: 'Authenticated', stderr: '', exitCode: 0, success: true },
+      'wrangler pages project list': { stdout: 'other', stderr: '', exitCode: 0, success: true },
+      'wrangler pages project create': { stdout: 'Created', stderr: '', exitCode: 0, success: true },
+      'wrangler pages deploy': { stdout: 'Deployed', stderr: '', exitCode: 0, success: true },
+    });
+    const registry = new RealProviderRegistry({
+      resolveContext: async () => ({ workspacePath: '/tmp/workspace', projectName: 'test-project' }),
+      runner,
+    });
+    const specs = {
+      github: [{ id: 'github-repository', kind: 'repository', owner: 'bayernjf' }],
+      vercel: [{ id: 'vercel-api', kind: 'functions-project', owner: 'bayernjf' }],
+      cloudflare: [{ id: 'cloudflare-pages', kind: 'pages-project', owner: 'bayernjf' }],
+      supabase: [{ id: 'supabase-project', kind: 'database-auth-project', owner: 'my-org' }],
+    };
+    const plans = await registry.plan('proj-1', specs);
+    expect(plans).toHaveLength(4);
+    expect(plans.find(p => p.providerId === 'github')!.resources[0].action).toBe('create');
+    expect(plans.find(p => p.providerId === 'supabase')!.resources[0].action).toBe('noop');
+    expect(plans.find(p => p.providerId === 'supabase')!.resources[0].reason).toContain('irreversible');
+  });
+
+  it('names apply-stage Vercel/Cloudflare projects with the production suffixes', async () => {
+    const calls: string[] = [];
+    const runner: CommandRunner = async (command, args) => {
+      const key = `${command} ${args.join(' ')}`;
+      calls.push(key);
+      if (key.includes('whoami')) return { stdout: 'ok', stderr: '', exitCode: 0, success: true };
+      // Neither production-named project exists yet, so plan says create and apply must create
+      // exactly those names.
+      if (key.includes('vercel project ls')) return { stdout: 'other', stderr: '', exitCode: 0, success: true };
+      if (key.includes('vercel project inspect')) return { stdout: JSON.stringify({ id: 'prj_1', name: 'test-project-api' }), stderr: '', exitCode: 0, success: true };
+      if (key.includes('wrangler pages project list')) return { stdout: 'other', stderr: '', exitCode: 0, success: true };
+      return { stdout: 'ok', stderr: '', exitCode: 0, success: true };
+    };
+    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-names-'));
+    const registry = new RealProviderRegistry({
+      resolveContext: async () => ({ workspacePath: directory, projectName: 'test-project' }),
+      runner,
+    });
+    const specs = {
+      vercel: [{ id: 'vercel-api', kind: 'functions-project', owner: 'bayernjf' }],
+      cloudflare: [{ id: 'cloudflare-pages', kind: 'pages-project', owner: 'bayernjf' }],
+    };
+    const plans = await registry.plan('proj-1', specs);
+    expect(plans.map(p => p.resources[0].action)).toEqual(['create', 'create']);
+    try {
+      await registry.apply('proj-1', plans, { id: 'approval-1', status: 'approved', approvedAt: new Date().toISOString() });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+    expect(calls).toContain('vercel project add test-project-api');
+    expect(calls).toContain('npx wrangler pages project create test-project-web --production-branch main');
+    // The bare apply-stage name must never reach the provider CLIs (2026-09-10 reconciliation:
+    // bare-name projects were abandoned junk; production lives at <name>-api / <name>-web).
+    expect(calls.some(c => /(vercel|wrangler).*test-project(?!-)/.test(c))).toBe(false);
+  });
+
+  it('degrades to manual when CLI is not authenticated', async () => {
+    const runner = mockRunner({
+      'gh auth status': { stdout: '', stderr: 'not logged in', exitCode: 1, success: false },
+      'vercel whoami': { stdout: '', stderr: 'not logged in', exitCode: 1, success: false },
+      'wrangler whoami': { stdout: '', stderr: 'not logged in', exitCode: 1, success: false },
+    });
+    const registry = new RealProviderRegistry({
+      resolveContext: async () => ({ workspacePath: '/tmp/workspace', projectName: 'test-project' }),
+      runner,
+    });
+    const specs = {
+      github: [{ id: 'github-repository', kind: 'repository', owner: 'bayernjf' }],
+      vercel: [{ id: 'vercel-api', kind: 'functions-project', owner: 'bayernjf' }],
+      cloudflare: [{ id: 'cloudflare-pages', kind: 'pages-project', owner: 'bayernjf' }],
+      supabase: [{ id: 'supabase-project', kind: 'database-auth-project', owner: 'my-org' }],
+    };
+    const plans = await registry.plan('proj-1', specs);
+    expect(plans.every(p => p.resources[0].action === 'noop')).toBe(true);
+    expect(plans.find(p => p.providerId === 'github')!.resources[0].reason).toContain('not authenticated');
+    expect(plans.find(p => p.providerId === 'cloudflare')!.resources[0].reason).toContain('wrangler');
+  });
+
+  it('rechecks provider availability after credentials are updated', async () => {
+    let authenticated = false;
+    const registry = new RealProviderRegistry({
+      resolveContext: async () => ({ workspacePath: '/tmp/workspace', projectName: 'test-project' }),
+      runner: async (command, args) => {
+        if (command === 'gh' && args[0] === 'auth') return { stdout: authenticated ? 'Logged in' : '', stderr: authenticated ? '' : 'not logged in', exitCode: authenticated ? 0 : 1, success: authenticated };
+        if (command === 'gh' && args[0] === 'repo') return { stdout: '', stderr: 'not found', exitCode: 1, success: false };
+        return { stdout: '', stderr: 'not found', exitCode: 1, success: false };
+      },
+    });
+    const specs = { github: [{ id: 'github-repository', kind: 'repository', owner: 'bayernjf' }] };
+    expect((await registry.plan('proj-1', specs))[0].resources[0].action).toBe('noop');
+    authenticated = true;
+    registry.invalidateCredentials();
+    expect((await registry.plan('proj-1', specs))[0].resources[0].action).toBe('create');
+  });
+
+  it('throws when context cannot be resolved', async () => {
+    const registry = new RealProviderRegistry({
+      resolveContext: async () => null,
+    });
+    await expect(registry.plan('proj-1', {})).rejects.toThrow('No workspace context');
+  });
+});
+
+describe('local credential and resource files', () => {
+  it('writes credentials with metadata without exposing values in metadata', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-credentials-'));
+    const previous = process.env.AGENT_DEV_CREDENTIALS_PATH;
+    process.env.AGENT_DEV_CREDENTIALS_PATH = join(directory, 'credentials.txt');
+    try {
+      await saveCredentials({ GITHUB_TOKEN: 'fixture-secret', OPENAI_API_KEY: 'fixture-key' });
+      expect(loadCredentials()).toEqual({ GITHUB_TOKEN: 'fixture-secret', OPENAI_API_KEY: 'fixture-key' });
+      expect(getCredentialMeta()).toMatchObject({ version: 1, keys: ['GITHUB_TOKEN', 'OPENAI_API_KEY'] });
+      await expect(readFile(join(directory, 'credentials.txt.meta.json'), 'utf8')).resolves.not.toContain('fixture-secret');
+    } finally {
+      if (previous === undefined) delete process.env.AGENT_DEV_CREDENTIALS_PATH;
+      else process.env.AGENT_DEV_CREDENTIALS_PATH = previous;
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('persists project resources and generates an application env file without credentials', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-resources-'));
+    try {
+      writeProjectResources(directory, 'demo', 'project-1', 1, 'vercel', { projectId: 'prj_demo', productionUrl: 'https://demo.example' });
+      const resources = loadProjectResources(directory);
+      expect(resources?.providers.vercel).toMatchObject({ projectId: 'prj_demo' });
+      generateEnvFile(directory, { OPENAI_API_KEY: 'fixture-key' }, resources, 'demo');
+      const env = await readFile(join(directory, '.env'), 'utf8');
+      // P1-1 (2026-11-02 review): the workspace .env is whitelist-based and the
+      // allowlist is empty -- no stored credential may reach the agent workspace.
+      expect(env).not.toContain('OPENAI_API_KEY');
+      expect(env).not.toContain('fixture-key');
+      expect(env).toContain('VERCEL_PROJECT_ID=prj_demo');
+      expect(env).toContain('APP_NAME=demo');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('never writes service-role or user-defined credentials into the workspace env', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-env-allowlist-'));
+    try {
+      generateEnvFile(
+        directory,
+        {
+          SUPABASE_SERVICE_ROLE_KEY: 'fixture-service-role',
+          GITHUB_WEBHOOK_SECRET: 'fixture-webhook',
+          MY_CUSTOM_CREDENTIAL: 'fixture-custom',
+        },
+        null,
+        'demo'
+      );
+      const env = await readFile(join(directory, '.env'), 'utf8');
+      expect(env).not.toContain('fixture-service-role');
+      expect(env).not.toContain('fixture-webhook');
+      expect(env).not.toContain('fixture-custom');
+      expect(env).not.toContain('SUPABASE_SERVICE_ROLE_KEY');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('credential backend routing', () => {
+  // The real infisical factory is restored after each test so other suites keep hitting
+  // the built-in backends.
+  const restoreInfisicalFactory = () => registerBackend('infisical', config => new InfisicalBackend(config));
+
+  const useMockBackend = (overrides: Partial<SecretBackend> = {}): SecretBackend => {
+    const store: Record<string, string> = {};
+    const backend: SecretBackend = {
+      type: 'infisical',
+      get: async key => store[key] ?? null,
+      getSecret: async key => (key in store ? { key, value: store[key], status: 'active' } : null),
+      set: async (key, value) => { store[key] = value; },
+      delete: async key => { delete store[key]; },
+      listKeys: async () => Object.keys(store),
+      getAll: async () => ({ ...store }),
+      isAvailable: async () => ({ available: true }),
+      rotate: async () => { throw new Error('not implemented'); },
+      approve: async () => { throw new Error('not implemented'); },
+      reject: async () => { throw new Error('not implemented'); },
+      getHistory: async () => [],
+      ...overrides,
+    };
+    registerBackend('infisical', () => backend);
+    return backend;
+  };
+
+  const withInfisicalEnv = async (run: (backend: SecretBackend) => Promise<void>) => {
+    const previous = process.env.AGENT_DEV_SECRET_BACKEND;
+    process.env.AGENT_DEV_SECRET_BACKEND = 'infisical';
+    try {
+      await run(useMockBackend());
+    } finally {
+      if (previous === undefined) delete process.env.AGENT_DEV_SECRET_BACKEND;
+      else process.env.AGENT_DEV_SECRET_BACKEND = previous;
+      restoreInfisicalFactory();
+    }
+  };
+
+  // NOTE: these tests share the module-level credential snapshot in credentials.ts, so the
+  // no-hydration expectations must run BEFORE any test hydrates the cache (vitest runs
+  // tests in a file sequentially in declaration order).
+
+  it('defaults to the local-file backend without touching any snapshot', async () => {
+    delete process.env.AGENT_DEV_SECRET_BACKEND;
+    expect(credentialBackendType()).toBe('local-file');
+    await expect(refreshCredentialCache()).resolves.toBeUndefined();
+  });
+
+  it('fails loudly when the backend is unavailable — no silent fallback to the local file', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-no-fallback-'));
+    const credentialsFile = join(directory, 'credentials.txt');
+    const previousPath = process.env.AGENT_DEV_CREDENTIALS_PATH;
+    process.env.AGENT_DEV_CREDENTIALS_PATH = credentialsFile;
+    const localFixture = '# Agent-Dev credentials. Never commit or share this file.\n\nGITHUB_TOKEN=LOCAL-SENTINEL\nOPENAI_API_KEY=LOCAL-SENTINEL-2\n';
+    try {
+      await writeFile(credentialsFile, localFixture, 'utf8');
+      await writeFile(`${credentialsFile}.meta.json`, JSON.stringify({ version: 1, updatedAt: '2026-08-01T00:00:00.000Z', keys: ['GITHUB_TOKEN', 'OPENAI_API_KEY'] }), 'utf8');
+      // Positive control: the very same fixture is readable with no backend override, so the
+      // expectations below fail because of backend selection rather than a malformed fixture.
+      delete process.env.AGENT_DEV_SECRET_BACKEND;
+      expect(loadCredentials()).toEqual({ GITHUB_TOKEN: 'LOCAL-SENTINEL', OPENAI_API_KEY: 'LOCAL-SENTINEL-2' });
+
+      await withInfisicalEnv(async backend => {
+        backend.isAvailable = async () => ({ available: false, reason: 'project unreachable' });
+        await expect(refreshCredentialCache()).rejects.toThrow(/not available.*project unreachable/s);
+        // Every read surface must refuse instead of quietly serving the disk copy: a future
+        // `catch { return readLocalFile() }` would hand out LOCAL-SENTINEL and go unnoticed
+        // by a test that only checks the throw.
+        expect(() => loadCredentials()).toThrow(/not hydrated/);
+        expect(() => providerCredentialEnv()).toThrow(/not hydrated/);
+        // The meta path is the third read surface; it reports the empty snapshot instead of the
+        // local .meta.json keys and updatedAt.
+        expect(getCredentialMeta()).toEqual({ version: 1, updatedAt: '', keys: [] });
+      });
+
+      // Refusing to serve the file must also leave it untouched for the operator to recover.
+      await expect(readFile(credentialsFile, 'utf8')).resolves.toBe(localFixture);
+    } finally {
+      if (previousPath === undefined) delete process.env.AGENT_DEV_CREDENTIALS_PATH;
+      else process.env.AGENT_DEV_CREDENTIALS_PATH = previousPath;
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects reads before the snapshot is hydrated', async () => {
+    await withInfisicalEnv(async () => {
+      expect(() => loadCredentials()).toThrow(/not hydrated/);
+      await refreshCredentialCache();
+      expect(loadCredentials()).toEqual({});
+    });
+  });
+
+  it('routes load/save through the registered backend and diffs deletions on save', async () => {
+    await withInfisicalEnv(async backend => {
+      const sets: Array<[string, string]> = [];
+      const deletes: string[] = [];
+      const originalSet = backend.set.bind(backend);
+      const originalDelete = backend.delete.bind(backend);
+      backend.set = async (key, value) => { sets.push([key, value]); await originalSet(key, value); };
+      backend.delete = async key => { deletes.push(key); await originalDelete(key); };
+
+      await backend.set('GITHUB_TOKEN', 'gh-old');
+      await backend.set('OPENAI_API_KEY', 'key-1');
+      sets.length = 0;
+      await refreshCredentialCache();
+      expect(loadCredentials()).toEqual({ GITHUB_TOKEN: 'gh-old', OPENAI_API_KEY: 'key-1' });
+
+      await saveCredentials({ GITHUB_TOKEN: 'gh-new', VERCEL_TOKEN: 'vc-1' });
+      expect(sets).toEqual([['GITHUB_TOKEN', 'gh-new'], ['VERCEL_TOKEN', 'vc-1']]);
+      expect(deletes).toEqual(['OPENAI_API_KEY']);
+      expect(await backend.getAll()).toEqual({ GITHUB_TOKEN: 'gh-new', VERCEL_TOKEN: 'vc-1' });
+      expect(loadCredentials()).toEqual({ GITHUB_TOKEN: 'gh-new', VERCEL_TOKEN: 'vc-1' });
+      expect(getCredentialMeta().keys).toEqual(['GITHUB_TOKEN', 'VERCEL_TOKEN']);
+    });
+  });
+
+  it('propagates write failures instead of pretending the save succeeded', async () => {
+    await withInfisicalEnv(async backend => {
+      backend.set = async () => { throw new Error('Infisical write rejected'); };
+      await refreshCredentialCache();
+      await expect(saveCredentials({ GITHUB_TOKEN: 'x' })).rejects.toThrow(/Infisical write rejected/);
+    });
+  });
+});

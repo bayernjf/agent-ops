@@ -1,0 +1,663 @@
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
+import { describe, expect, it } from 'vitest';
+import { baselineProvidersFor, createBaselinePlan, createBlueprint, createDefaultBlueprint, createDryRunPlan, generateArtifacts, getBlueprintDecisions, getManualActions, productBlueprintSchema } from '../src/index.js';
+
+const execFileAsync = promisify(execFile);
+
+describe('ProductBlueprint', () => {
+  it('creates the fixed v0.1 Web app Golden Path', () => {
+    const blueprint = createDefaultBlueprint('Receipt Desk');
+
+    expect(blueprint.spec.deployment.web.provider).toBe('cloudflare-pages');
+    expect(blueprint.spec.deployment.api.provider).toBe('vercel-functions');
+    expect(blueprint.spec.data.provider).toBe('supabase');
+    expect(productBlueprintSchema.parse(blueprint)).toEqual(blueprint);
+  });
+
+  // The blueprint is the record of what the delivery actually has. Naming a Pages project and a
+  // Vercel deployment for an MCP server is a false claim, and it stayed false even after the
+  // baseline plan stopped asking for those providers, because these fields were hardcoded literals.
+  it('records no deployment target for a product type that provisions none', () => {
+    const apiTool = createBlueprint('MCP Word Tools', { productType: 'api-tool', cloudflareAccount: 'bayernjf', vercelTeam: 'bayernjf', supabaseOrganization: 'acme' });
+
+    expect(apiTool.spec.deployment.web).toEqual({ provider: 'none', account: '' });
+    expect(apiTool.spec.deployment.api).toEqual({ provider: 'none', team: '' });
+    expect(apiTool.spec.data).toEqual({ provider: 'none', auth: 'none', organization: '' });
+
+    const landing = createBlueprint('Launch Page', { productType: 'landing-page', cloudflareAccount: 'bayernjf', vercelTeam: 'bayernjf', supabaseOrganization: 'acme' });
+
+    expect(landing.spec.deployment.web).toEqual({ provider: 'cloudflare-pages', account: 'bayernjf' });
+    expect(landing.spec.deployment.api).toEqual({ provider: 'none', team: '' });
+    expect(landing.spec.data.provider).toBe('none');
+  });
+
+  // Fields added to the persisted spec without a default made every blueprint written before them
+  // fail validation inside getProject, which turned into a 500 on every route that loads the project.
+  // 20 of 23 revisions in the local database were unreadable this way.
+  it('still reads a blueprint persisted before the newer spec fields existed', () => {
+    const current = createDefaultBlueprint('Receipt Desk') as unknown as Record<string, Record<string, unknown>>;
+    const legacy = structuredClone(current);
+    delete legacy.metadata.mode;
+    delete legacy.metadata.productIntent;
+    delete legacy.metadata.customInstructions;
+    delete (legacy.spec.product as Record<string, unknown>).desktopShell;
+
+    const parsed = productBlueprintSchema.parse(legacy);
+    expect(parsed.metadata).toMatchObject({ mode: 'beginner', productIntent: '', customInstructions: '' });
+    expect(parsed.spec.product.desktopShell).toBe('tauri');
+  });
+
+  it('defaults the runtime to local-codex for the Golden Path', () => {
+    const blueprint = createDefaultBlueprint('Receipt Desk');
+    expect(blueprint.spec.runtime.provider).toBe('local-codex');
+    expect(productBlueprintSchema.parse(blueprint)).toEqual(blueprint);
+  });
+
+  it('accepts every supported runtime provider without mutating the value', () => {
+    for (const provider of ['local-codex', 'local-opencode', 'local-claude', 'local-aider', 'local-openclaw', 'local-codebuddy'] as const) {
+      const blueprint = createBlueprint('Runtime Desk', { runtimeProvider: provider }, 1);
+      expect(blueprint.spec.runtime.provider).toBe(provider);
+      expect(productBlueprintSchema.parse(blueprint)).toEqual(blueprint);
+    }
+  });
+
+  it('surfaces the runtime as a designer-facing decision in professional mode', () => {
+    const blueprint = createBlueprint('Sensitive Desk', {
+      mode: 'professional',
+      runtimeProvider: 'local-opencode',
+    }, 2);
+
+    const decisions = getBlueprintDecisions(blueprint);
+    expect(decisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'runtime', value: 'local-opencode', mode: 'ask' }),
+    ]));
+  });
+
+  it('blocks baseline approval until every ownership target is selected', () => {
+    const incomplete = createBaselinePlan(createDefaultBlueprint('Receipt Desk'));
+    const complete = createBaselinePlan(createBlueprint('Receipt Desk', {
+      githubOwner: 'acme', vercelTeam: 'acme', cloudflareAccount: 'acme', supabaseOrganization: 'acme',
+    }));
+
+    expect(incomplete.readyForApproval).toBe(false);
+    expect(incomplete.resources).toEqual(expect.arrayContaining([expect.objectContaining({ status: 'blocked' })]));
+    expect(complete.readyForApproval).toBe(true);
+    expect(complete.resources.map(resource => resource.id)).toEqual(['github-repository', 'supabase-project', 'vercel-api', 'cloudflare-pages']);
+  });
+
+  // An MCP server runs as a local stdio process and an extension ships to a store: they provision
+  // nothing outside GitHub. Demanding a Supabase org and a Vercel team made their baseline
+  // unapprovable forever, and filling the fields in to escape that would have created three cloud
+  // projects the product never touches.
+  it('asks only for the ownership targets a product type actually provisions', () => {
+    const apiTool = createBaselinePlan(createBlueprint('MCP Word Tools', { productType: 'api-tool', githubOwner: 'acme' }));
+    expect(apiTool.resources.map(resource => resource.id)).toEqual(['github-repository']);
+    expect(apiTool.readyForApproval).toBe(true);
+
+    for (const productType of ['browser-extension', 'desktop', 'mobile'] as const) {
+      const plan = createBaselinePlan(createBlueprint('Local Product', { productType, githubOwner: 'acme' }));
+      expect(plan.resources.map(resource => resource.id)).toEqual(['github-repository']);
+      expect(plan.readyForApproval).toBe(true);
+    }
+
+    // A landing page really is deployed to Pages, so Cloudflare stays required for it.
+    const landing = createBaselinePlan(createBlueprint('Launch Site', { productType: 'landing-page', githubOwner: 'acme' }));
+    expect(landing.resources.map(resource => resource.id)).toEqual(['github-repository', 'cloudflare-pages']);
+    expect(landing.readyForApproval).toBe(false);
+    expect(createBaselinePlan(createBlueprint('Launch Site', { productType: 'landing-page', githubOwner: 'acme', cloudflareAccount: 'acme' })).readyForApproval).toBe(true);
+  });
+
+  it('only asks the user to authorize the providers the product type uses', () => {
+    const ids = (productType: 'web-app' | 'api-tool' | 'landing-page') =>
+      getManualActions(createBlueprint('Authorization Desk', { productType })).map(action => action.id);
+
+    expect(ids('web-app')).toEqual(['authorize-github', 'authorize-supabase', 'authorize-cloudflare', 'authorize-vercel']);
+    expect(ids('api-tool')).toEqual(['authorize-github']);
+    expect(ids('landing-page')).toEqual(['authorize-github', 'authorize-cloudflare']);
+  });
+
+  // The decision cards are the first thing a user reads about what will be built, and both of them
+  // used to describe the web-app golden path for every type: an MCP server was offered a Supabase
+  // organization and a Vercel team while its own generated PRODUCT_STANDARD.md said data and auth
+  // were "Not provisioned for this product type". The strings are not asserted here on purpose —
+  // what has to hold is that the card and the document that type generates say the same thing.
+  it('describes each product type with the baseline its own generated standard documents', () => {
+    const combos = [
+      { productType: 'web-app' },
+      { productType: 'landing-page' },
+      { productType: 'browser-extension' },
+      { productType: 'desktop', desktopShell: 'tauri' },
+      { productType: 'desktop', desktopShell: 'electron' },
+      { productType: 'mobile' },
+      { productType: 'api-tool' },
+    ] as const;
+
+    for (const combo of combos) {
+      const blueprint = createBlueprint('Decision Desk', combo, 1);
+      const card = (id: string) => getBlueprintDecisions(blueprint).find(decision => decision.id === id)!;
+      const standard = createDryRunPlan(blueprint).artifacts
+        .find(artifact => artifact.path === 'generated/PRODUCT_STANDARD.md')!.content;
+      const documented = (field: string) => standard.match(new RegExp(`^- ${field}: (.+)$`, 'm'))![1];
+
+      expect(card('stack').value, `${combo.productType}: stack card disagrees with PRODUCT_STANDARD.md`)
+        .toBe(`${documented('Frontend')} | ${documented('Backend')}`);
+
+      const providers = baselineProvidersFor(combo.productType);
+      const named = card('providers').value;
+      for (const [provider, label] of [['supabase', 'Supabase'], ['vercel', 'Vercel'], ['cloudflare', 'Cloudflare']] as const) {
+        expect(
+          named.includes(label),
+          `${combo.productType}: cloud card ${providers.includes(provider) ? 'omits' : 'names'} ${label}`,
+        ).toBe(providers.includes(provider));
+      }
+      // No cloud provider still leaves a human step: authorizing GitHub. Dropping the gate for
+      // repository-only types would let a baseline be approved without any authorization at all.
+      expect(card('providers').mode, `${combo.productType}: authorization gate dropped`).toBe('manual');
+    }
+  });
+
+  it('preserves professional answers and surfaces their approval boundaries', () => {
+    const blueprint = createBlueprint('Sensitive Desk', {
+      mode: 'professional',
+      productIntent: 'Manage receipts for a small team.',
+      dataSensitivity: 'sensitive',
+      analyticsProviders: ['ga4'],
+      previewStrategy: 'stable-dev-api',
+      customInstructions: 'Use the existing design system.',
+    }, 2);
+
+    expect(blueprint.metadata).toMatchObject({ mode: 'professional', revision: 2 });
+    expect(getBlueprintDecisions(blueprint)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'privacy', mode: 'ask' }),
+      expect.objectContaining({ id: 'custom', mode: 'manual' }),
+    ]));
+  });
+
+  it('generates stable artifacts and a no-side-effect dry run', () => {
+    const blueprint = createBlueprint('Receipt Desk', { analyticsProviders: ['ga4'] }, 3);
+    const first = createDryRunPlan(blueprint);
+    const second = createDryRunPlan(blueprint);
+
+    expect(first).toEqual(second);
+    expect(first.noExternalChanges).toBe(true);
+      expect(first.artifacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'config/env.contract.yaml', content: expect.stringContaining('VITE_GA4_MEASUREMENT_ID') }),
+      expect.objectContaining({ path: 'generated/DELIVERY_HANDOFF.md' }),
+      expect.objectContaining({ path: 'apps/web/src/main.tsx' }),
+      expect.objectContaining({ path: 'tsconfig.json', content: expect.stringContaining('react-jsx') }),
+      expect.objectContaining({ path: 'package.json', content: expect.stringContaining('"name": "receipt-desk"') }),
+      expect.objectContaining({ path: 'vite.config.ts', content: expect.stringContaining('@vitejs/plugin-react') }),
+      expect.objectContaining({ path: 'apps/api/src/index.ts', content: expect.stringContaining('/api/health') }),
+      expect.objectContaining({ path: 'apps/api/src/index.ts', content: expect.stringContaining("import { handle } from 'hono/vercel';") }),
+      expect.objectContaining({ path: 'apps/api/vercel.json', content: expect.stringContaining('"@vercel/node"') }),
+      expect.objectContaining({ path: 'apps/api/vercel.json', content: expect.not.stringContaining('nodejs22.x') }),
+      expect.objectContaining({ path: '.github/workflows/quality.yml', content: expect.stringContaining('npm ci') }),
+      expect.objectContaining({ path: '.github/workflows/quality.yml', content: expect.stringContaining('actions/checkout@v5') }),
+      expect.objectContaining({ path: '.github/workflows/quality.yml', content: expect.stringContaining('actions/setup-node@v5') }),
+      // Both the locked install and the setup-node cache need a committed lock file; the install
+      // step commits one and publishPullRequest refuses to push a branch without it.
+      expect.objectContaining({ path: '.github/workflows/quality.yml', content: expect.stringContaining('cache: npm') }),
+    ]));
+  });
+
+  it('emits stable i18n keys alongside the dry-run English prose', () => {
+    const blueprint = createBlueprint('Receipt Desk', { analyticsProviders: ['ga4'] }, 3);
+    const plan = createDryRunPlan(blueprint);
+
+    // The English prose remains the contract (MCP bridge feeds it to external coding agents).
+    expect(plan.summary).toContain('generated artifacts');
+    expect(plan.automaticPreparation).toHaveLength(3);
+
+    // Parallel stable keys + params let Studio resolve locale translations, falling back to prose.
+    expect(plan.summaryKey).toBe('dryRun.summary');
+    expect(plan.summaryParams.artifactCount).toBe(plan.artifacts.length);
+    expect(plan.summaryParams.actionCount).toBe(plan.manualActions.length);
+    expect(plan.automaticPreparationKeys).toEqual([
+      'dryRun.automaticPreparation.validateSchema',
+      'dryRun.automaticPreparation.generateArtifacts',
+      'dryRun.automaticPreparation.classifyBoundaries',
+    ]);
+    expect(plan.automaticPreparationKeys).toHaveLength(plan.automaticPreparation.length);
+  });
+
+  it('emits stable i18n keys for every decision title and reason', () => {
+    const blueprint = createBlueprint('Receipt Desk', { analyticsProviders: ['ga4'], mode: 'professional' }, 3);
+    const decisions = getBlueprintDecisions(blueprint);
+
+    // Every decision must carry a titleKey and reasonKey; values may be dynamic (per-type stack,
+    // runtime provider, custom instructions) and are allowed to omit a key.
+    for (const decision of decisions) {
+      expect(decision.titleKey, `decision ${decision.id} missing titleKey`).toBeDefined();
+      expect(decision.titleKey!.startsWith('decision.')).toBe(true);
+      expect(decision.reasonKey, `decision ${decision.id} missing reasonKey`).toBeDefined();
+      expect(decision.reasonKey!.startsWith('decision.')).toBe(true);
+    }
+
+    // Known fixed decisions carry valueKeys too.
+    const byId = Object.fromEntries(decisions.map(d => [d.id, d]));
+    expect(byId['source-control'].valueKey).toBe('decision.sourceControl.value');
+    expect(byId['production'].valueKey).toBe('decision.production.value');
+    expect(byId['privacy'].valueKey).toMatch(/^decision\.privacy\.value\./);
+    expect(byId['preview'].valueKey).toMatch(/^decision\.preview\.value\./);
+    expect(byId['analytics'].valueKey).toMatch(/^decision\.analytics\.value\./);
+  });
+
+  it('emits stable i18n keys for the baseline plan summary and every resource', () => {
+    const blueprint = createBlueprint('Receipt Desk', {}, 3);
+    const plan = createBaselinePlan(blueprint);
+
+    expect(plan.summaryKey).toBeDefined();
+    expect(plan.summaryKey!.startsWith('baseline.summary.')).toBe(true);
+
+    for (const resource of plan.resources) {
+      expect(resource.titleKey, `resource ${resource.id} missing titleKey`).toBeDefined();
+      expect(resource.titleKey!.startsWith('baseline.resource.')).toBe(true);
+      expect(resource.reasonKey, `resource ${resource.id} missing reasonKey`).toBeDefined();
+    }
+
+    // A product type with no cloud providers only has the GitHub resource.
+    const mcpBlueprint = createBlueprint('Receipt Desk', { productType: 'api-tool' }, 3);
+    const mcpPlan = createBaselinePlan(mcpBlueprint);
+    expect(mcpPlan.resources).toHaveLength(1);
+    expect(mcpPlan.resources[0].id).toBe('github-repository');
+  });
+
+  it('emits stable i18n keys for every manual action', () => {
+    const blueprint = createBlueprint('Receipt Desk', { analyticsProviders: ['ga4', 'clarity'], dataSensitivity: 'sensitive', customInstructions: 'Use pnpm' }, 3);
+    const actions = getManualActions(blueprint);
+
+    expect(actions.length).toBeGreaterThan(0);
+    for (const action of actions) {
+      expect(action.titleKey, `action ${action.id} missing titleKey`).toBeDefined();
+      expect(action.titleKey!.startsWith('manualAction.')).toBe(true);
+      expect(action.reasonKey, `action ${action.id} missing reasonKey`).toBeDefined();
+      expect(action.verificationKey, `action ${action.id} missing verificationKey`).toBeDefined();
+      expect(action.stepsKeys, `action ${action.id} missing stepsKeys`).toBeDefined();
+      expect(action.stepsKeys!.length).toBe(action.steps.length);
+    }
+
+    // Analytics actions carry a parameterized title.
+    const ga4 = actions.find(a => a.id === 'configure-ga4');
+    expect(ga4?.titleKey).toBe('manualAction.analytics.title');
+    expect(ga4?.titleParams?.provider).toBe('Google Analytics 4');
+  });
+
+  it('emits a titleKey for every generated artifact', () => {
+    const webApp = createBlueprint('Receipt Desk', { productType: 'web-app' }, 3);
+    const landing = createBlueprint('Receipt Desk', { productType: 'landing-page' }, 3);
+
+    for (const artifact of generateArtifacts(webApp)) {
+      expect(artifact.titleKey, `artifact ${artifact.id} missing titleKey`).toBeDefined();
+      expect(artifact.titleKey!.startsWith('artifact.')).toBe(true);
+    }
+
+    // The two type-specific titles encode the type in the key; all others use a flat id key.
+    const variableIds = new Set(['template-root-package', 'template-readme']);
+    for (const artifact of generateArtifacts(webApp)) {
+      if (variableIds.has(artifact.id)) {
+        expect(artifact.titleKey).toBe(`artifact.${artifact.id}.web-app`);
+      } else {
+        expect(artifact.titleKey).toBe(`artifact.${artifact.id}`);
+      }
+    }
+    for (const artifact of generateArtifacts(landing)) {
+      if (variableIds.has(artifact.id)) {
+        expect(artifact.titleKey).toBe(`artifact.${artifact.id}.landing-page`);
+      }
+    }
+
+    // The same variable id must produce different titles (and different keys) across types.
+    const webPkg = generateArtifacts(webApp).find(a => a.id === 'template-root-package')!;
+    const landPkg = generateArtifacts(landing).find(a => a.id === 'template-root-package')!;
+    expect(webPkg.title).not.toBe(landPkg.title);
+    expect(webPkg.titleKey).not.toBe(landPkg.titleKey);
+  });
+
+  it('backs every declared quality check with a script that actually runs, for every generated product type', () => {
+    // The gate is one `npm run quality` chain: a check declared in the contract but missing from
+    // scripts stops the chain with "Missing script", so the product's CI can never go green.
+    const combos = [
+      { productType: 'web-app' },
+      { productType: 'landing-page' },
+      { productType: 'browser-extension' },
+      { productType: 'desktop', desktopShell: 'tauri' },
+      { productType: 'desktop', desktopShell: 'electron' },
+      { productType: 'mobile' },
+      { productType: 'api-tool' },
+      { productType: 'storefront' },
+    ] as const;
+    for (const combo of combos) {
+      const productType = combo.productType;
+      const blueprint = createBlueprint('Receipt Desk', combo, 1);
+      const artifacts = createDryRunPlan(blueprint).artifacts;
+      const rootPackage = JSON.parse(artifacts.find(artifact => artifact.path === 'package.json')!.content) as { scripts: Record<string, string> };
+
+      expect(blueprint.spec.quality.required.length, `${productType} declares no quality checks`).toBeGreaterThan(0);
+      for (const check of blueprint.spec.quality.required) {
+        expect(rootPackage.scripts[check], `${productType}: spec.quality.required names "${check}" but no script runs it`).toBeDefined();
+        expect(rootPackage.scripts.quality, `${productType}: quality script skips "${check}"`).toContain(`npm run ${check}`);
+      }
+    }
+  });
+
+  it('ships the config and fixtures the web-app quality checks need', () => {
+    const artifacts = createDryRunPlan(createBlueprint('Receipt Desk', {}, 1)).artifacts;
+    // A `unit` script with no test file, or a `lint` script with no config, exits non-zero rather
+    // than reporting a passing gate — so the scaffold has to ship both.
+    expect(artifacts.map(artifact => artifact.path)).toEqual(expect.arrayContaining(['eslint.config.js', 'apps/api/src/health.test.ts', 'scripts/smoke.mjs', '.gitignore']));
+    // Agent work is committed with `git add -A`, so the generated secret file and the provider CLI
+    // state directories have to be ignored or they land in the product's first pull request.
+    const ignore = artifacts.find(artifact => artifact.path === '.gitignore')!.content;
+    for (const rule of ['.env', '.env.*', '.agent-dev/', '.vercel/', '.wrangler/']) expect(ignore).toContain(rule);
+  });
+
+  it('keeps web-app as the default product type and generates the full scaffold', () => {
+    const blueprint = createDefaultBlueprint('Receipt Desk');
+    expect(blueprint.spec.product.type).toBe('web-app');
+    const artifacts = createDryRunPlan(blueprint).artifacts;
+    expect(artifacts.find(a => a.path === 'apps/web/src/main.tsx')).toBeDefined();
+    expect(artifacts.find(a => a.path === 'apps/api/src/index.ts')).toBeDefined();
+  });
+
+  it('generates a real static-site scaffold for landing-page', () => {
+    const blueprint = createBlueprint('Launch Page', { productType: 'landing-page' }, 1);
+    expect(blueprint.spec.product.type).toBe('landing-page');
+    const artifacts = createDryRunPlan(blueprint).artifacts;
+
+    // Landing pages ship real templates, not a guided handoff.
+    expect(artifacts.find(a => a.path === 'src/index.html')).toBeDefined();
+    expect(artifacts.find(a => a.path === 'scripts/build.mjs')).toBeDefined();
+    expect(artifacts.find(a => a.path === 'wrangler.toml')).toBeDefined();
+    const indexHtml = artifacts.find(a => a.path === 'src/index.html')!.content;
+    expect(indexHtml).toContain('<main');
+    expect(indexHtml).not.toContain('api-base-url');
+    // Static landings must not advertise backend secrets in the environment contract.
+    const env = artifacts.find(a => a.path === 'config/env.contract.yaml')!.content;
+    expect(env).not.toContain('SUPABASE_SERVICE_ROLE_KEY');
+    expect(env).not.toContain('VITE_SUPABASE_URL');
+    // Governance docs still describe the static delivery baseline.
+    const standard = artifacts.find(a => a.path === 'generated/PRODUCT_STANDARD.md')!.content;
+    expect(standard).toContain('Static site on Cloudflare Pages');
+  });
+
+  it('generates the isomorphic storefront skeleton for the brand-retail profile', () => {
+    const blueprint = createBlueprint('Bay Store', { productType: 'storefront' }, 1);
+    expect(blueprint.spec.product.type).toBe('storefront');
+    // Default profile is brand retail; storefront calls an external commerce API, not its own DB.
+    expect(blueprint.spec.product.storefrontProfile).toBe('retail');
+    expect(blueprint.spec.data).toEqual({ provider: 'none', auth: 'none', organization: '' });
+    expect(blueprint.spec.deployment.web).toEqual({ provider: 'none', account: '' });
+    expect(blueprint.spec.deployment.api.provider).toBe('vercel-functions');
+
+    const artifacts = createDryRunPlan(blueprint).artifacts;
+    const paths = artifacts.map(a => a.path);
+    // Isomorphic page set mirroring commerce-os front/src.
+    for (const page of [
+      'src/pages/index.astro',
+      'src/pages/catalog.astro',
+      'src/pages/catalog/[id].astro',
+      'src/pages/orders/[cartId].astro',
+      'src/lib/api.ts',
+      'src/components/CartIsland.tsx',
+      'src/components/OrderIsland.tsx',
+      'config/storefront.config.json',
+    ]) {
+      expect(paths, `storefront scaffold missing ${page}`).toContain(page);
+    }
+    const home = artifacts.find(a => a.path === 'src/pages/index.astro')!.content;
+    expect(home).toContain('profile:retail');
+    expect(home).toContain('Bay Store');
+    // SSR-only env var must be present and the browser must not carry commerce credentials.
+    const envExample = artifacts.find(a => a.path === 'config/env.example')!.content;
+    expect(envExample).toContain('COMMERCE_API_BASE_URL');
+
+    // The quality contract carries the shipped baseline eval check (FR5-4): a real runner backs it
+    // and its final EVAL_SUMMARY line is what the platform parses into eval-report.json.
+    expect(blueprint.spec.quality.required).toEqual(['build', 'smoke', 'eval']);
+    const storefrontScripts = JSON.parse(artifacts.find(a => a.path === 'package.json')!.content).scripts as Record<string, string>;
+    expect(storefrontScripts.eval).toContain('scripts/eval-run.mjs');
+    expect(artifacts.find(a => a.path === 'scripts/eval-run.mjs')!.content).toContain('EVAL_SUMMARY');
+  });
+
+  it('generates a storefront scaffold whose own quality gate (build → smoke → eval) can pass', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-storefront-'));
+    try {
+      const artifacts = createDryRunPlan(createBlueprint('Bay Store', { productType: 'storefront' }, 1)).artifacts;
+      for (const artifact of artifacts) {
+        const target = join(directory, artifact.path);
+        await mkdir(dirname(target), { recursive: true });
+        await writeFile(target, artifact.content, 'utf8');
+      }
+      // build/smoke/eval are plain node scripts, so the chain runs without any install.
+      const result = await execFileAsync('npm', ['run', 'quality'], { cwd: directory, timeout: 60_000 });
+      const output = `${result.stdout}${result.stderr}`;
+      expect(output).toContain('eval-score: 1');
+      expect(output).toContain('EVAL_SUMMARY');
+      expect(output).toContain('"passed":true');
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  }, 90_000);
+
+  it('renders multi-currency display and a monetization placeholder for the cross-border profile', () => {
+    const blueprint = createBlueprint('Bay Global', { productType: 'storefront', storefrontProfile: 'cross-border' }, 1);
+    expect(blueprint.spec.product.storefrontProfile).toBe('cross-border');
+    const artifacts = createDryRunPlan(blueprint).artifacts;
+
+    const home = artifacts.find(a => a.path === 'src/pages/index.astro')!.content;
+    expect(home).toContain('profile:cross-border');
+    expect(home).toContain('currency-switcher');
+    expect(home).toContain('data-currencies="CNY,USD,EUR"');
+    // Price monetization must be an explicit placeholder, not a silently real conversion.
+    expect(home).toContain('价格货币化占位');
+
+    const apiLib = artifacts.find(a => a.path === 'src/lib/api.ts')!.content;
+    expect(apiLib).toContain('SUPPORTED_CURRENCIES');
+    expect(apiLib).toContain('convertPrice');
+
+    // The retail profile must NOT carry the cross-border currency machinery.
+    const retailHome = createDryRunPlan(createBlueprint('Bay Store', { productType: 'storefront' }, 1))
+      .artifacts.find(a => a.path === 'src/pages/index.astro')!.content;
+    expect(retailHome).not.toContain('currency-switcher');
+  });
+
+  it('surfaces recurring-order placeholders for the subscription profile', () => {
+    const blueprint = createBlueprint('Bay Box', { productType: 'storefront', storefrontProfile: 'subscription' }, 1);
+    expect(blueprint.spec.product.storefrontProfile).toBe('subscription');
+    const artifacts = createDryRunPlan(blueprint).artifacts;
+
+    const home = artifacts.find(a => a.path === 'src/pages/index.astro')!.content;
+    expect(home).toContain('profile:subscription');
+    expect(home).toContain('subscription-plans');
+    expect(home).toContain('recurring-placeholder');
+
+    const apiLib = artifacts.find(a => a.path === 'src/lib/api.ts')!.content;
+    expect(apiLib).toContain('SUBSCRIPTION_PLANS');
+    expect(apiLib).toContain('isRecurringOrder');
+
+    // Subscription semantics must not leak into retail or cross-border profiles.
+    for (const profile of ['retail', 'cross-border'] as const) {
+      const other = createDryRunPlan(createBlueprint('Bay', { productType: 'storefront', storefrontProfile: profile }, 1))
+        .artifacts.find(a => a.path === 'src/pages/index.astro')!.content;
+      expect(other, `profile ${profile} must not carry subscription plans`).not.toContain('subscription-plans');
+    }
+  });
+
+  it('TF-04 contract: a storefront Blueprint (structure + config) generates a site reflecting its content', () => {
+    // The pipeline consumes a storefront template as Blueprint-level input: the structure is
+    // productType=storefront + profile, and products/theme/copy come from storefrontConfig.
+    const blueprint = createBlueprint('Cafe Noir', {
+      productType: 'storefront',
+      storefrontProfile: 'retail',
+      storefrontConfig: {
+        themeColor: '#222222',
+        tagline: '现烘咖啡豆，每周新鲜送达',
+        seedProducts: [
+          { title: '埃塞俄比亚耶加雪菲', price: 6800, currency: 'CNY' },
+          { title: '哥伦比亚慧兰', price: 5800, currency: 'CNY' },
+        ],
+      },
+    }, 1);
+
+    // Contract: the Blueprint itself round-trips through the persisted schema.
+    expect(productBlueprintSchema.parse(blueprint)).toEqual(blueprint);
+    expect(blueprint.spec.storefrontConfig.seedProducts).toHaveLength(2);
+
+    const artifacts = createDryRunPlan(blueprint).artifacts;
+    const config = JSON.parse(artifacts.find(a => a.path === 'config/storefront.config.json')!.content) as {
+      profile: string; tagline: string; theme: { color: string }; seedProducts: { title: string; price: number }[];
+    };
+    expect(config.profile).toBe('retail');
+    expect(config.theme.color).toBe('#222222');
+    expect(config.tagline).toBe('现烘咖啡豆，每周新鲜送达');
+    expect(config.seedProducts.map(p => p.title)).toEqual(['埃塞俄比亚耶加雪菲', '哥伦比亚慧兰']);
+
+    // Configured copy surfaces on the generated homepage.
+    const home = artifacts.find(a => a.path === 'src/pages/index.astro')!.content;
+    expect(home).toContain('现烘咖啡豆，每周新鲜送达');
+
+    // Every declared quality check still maps to a real script (pipeline can go green).
+    const rootPackage = JSON.parse(artifacts.find(a => a.path === 'package.json')!.content) as { scripts: Record<string, string> };
+    for (const check of blueprint.spec.quality.required) {
+      expect(rootPackage.scripts[check], `missing script for ${check}`).toBeDefined();
+    }
+  });
+
+  it('generates a real browser-extension (MV3) scaffold with a web-store delivery handoff', () => {
+    const blueprint = createBlueprint('Tab Guardian', { productType: 'browser-extension' }, 1);
+    const artifacts = createDryRunPlan(blueprint).artifacts;
+
+    // Real extension source, not a guided handoff.
+    expect(artifacts.find(a => a.path === 'manifest.config.ts')).toBeDefined();
+    expect(artifacts.find(a => a.path === 'vite.config.ts')).toBeDefined();
+    expect(artifacts.find(a => a.path === 'popup.html')).toBeDefined();
+    expect(artifacts.find(a => a.path === 'options.html')).toBeDefined();
+    expect(artifacts.find(a => a.path === 'src/background.ts')).toBeDefined();
+    expect(artifacts.find(a => a.path === 'src/content.ts')).toBeDefined();
+    // Governance docs are still emitted.
+    expect(artifacts.find(a => a.path === 'generated/PRODUCT_STANDARD.md')).toBeDefined();
+    // No Web app scaffold is emitted.
+    expect(artifacts.find(a => a.path === 'apps/web/src/main.tsx')).toBeUndefined();
+    // The handoff is the normal governance one, not the "not yet auto-generated" placeholder.
+    expect(artifacts.find(a => a.path === 'generated/DELIVERY_HANDOFF.md')?.content).not.toContain('not yet');
+  });
+
+  // Both assertions below pin defects found by really running the generated `quality` script:
+  // without DOM/node libs and skipLibCheck, `tsc --noEmit` fails on vite's own typings, and a
+  // manifest icon the generator never emits makes `vite build` fail with a missing asset.
+  it('generates a browser-extension scaffold whose own quality gate can pass', () => {
+    const artifacts = createDryRunPlan(createBlueprint('Tab Guardian', { productType: 'browser-extension' }, 1)).artifacts;
+    const tsconfig = JSON.parse(artifacts.find(a => a.path === 'tsconfig.json')!.content);
+    expect(tsconfig.compilerOptions.lib).toContain('DOM');
+    expect(tsconfig.compilerOptions.skipLibCheck).toBe(true);
+    expect(tsconfig.compilerOptions.types).toContain('node');
+    expect(JSON.parse(artifacts.find(a => a.path === 'package.json')!.content).devDependencies['@types/node']).toBeDefined();
+    expect(artifacts.find(a => a.path === 'manifest.config.ts')!.content).not.toContain('default_icon');
+  });
+
+  it('generates a Tauri v2 desktop scaffold whose own quality gate can pass', () => {
+    const blueprint = createBlueprint('Soft Desk', { productType: 'desktop' }, 1);
+    const artifacts = createDryRunPlan(blueprint).artifacts;
+    const path = (value: string) => artifacts.find(a => a.path === value);
+
+    // Governance layer still applies to desktop products.
+    expect(path('generated/PRODUCT_STANDARD.md')).toBeDefined();
+    expect(path('generated/DELIVERY_HANDOFF.md')!.content).not.toContain('not yet');
+
+    expect(path('src-tauri/tauri.conf.json')).toBeDefined();
+    expect(path('src-tauri/src/lib.rs')!.content).toContain('tauri::generate_handler![app_version]');
+    // The webview really calls the Rust command, so a broken IPC surface fails visibly.
+    expect(path('src/main.ts')!.content).toContain("invoke<string>('app_version')");
+
+    // `tauri::generate_context!` refuses to compile without bundle.icon on disk, and a text-only
+    // generator cannot emit a PNG — so the scaffold ships a script that writes a placeholder.
+    const conf = JSON.parse(path('src-tauri/tauri.conf.json')!.content);
+    expect(conf.bundle.icon).toEqual(['icons/icon.png']);
+    expect(path('scripts/ensure-icon.mjs')).toBeDefined();
+    const scripts = JSON.parse(path('package.json')!.content).scripts as Record<string, string>;
+    expect(scripts['rust-check']).toContain('node scripts/ensure-icon.mjs');
+
+    // Cargo package/crate names cannot contain hyphens where they are used as a Rust path.
+    expect(path('src-tauri/Cargo.toml')!.content).toContain('name = "soft_desk"');
+    expect(path('src-tauri/src/main.rs')!.content).toContain('soft_desk_lib::run()');
+
+    // cargo check needs the Rust toolchain and the Linux webview headers in CI.
+    const workflow = path('.github/workflows/quality.yml')!.content;
+    expect(workflow).toContain('dtolnay/rust-toolchain@stable');
+    expect(workflow).toContain('libwebkit2gtk-4.1-dev');
+    // Without `workspaces` the cache action looks for a manifest at the repository root and caches
+    // nothing, so cargo check pays the full cold compile on every pull request.
+    expect(workflow).toContain('Swatinem/rust-cache@v2');
+    expect(workflow).toContain('workspaces: src-tauri');
+
+    expect(path('.gitignore')!.content).toContain('src-tauri/target/');
+  });
+
+  it('generates an Electron desktop scaffold when professional mode picks that shell', () => {
+    const blueprint = createBlueprint('Soft Desk', { productType: 'desktop', desktopShell: 'electron' }, 1);
+    const artifacts = createDryRunPlan(blueprint).artifacts;
+    const path = (value: string) => artifacts.find(a => a.path === value);
+
+    expect(path('src-tauri/tauri.conf.json')).toBeUndefined();
+    expect(path('electron/main.ts')!.content).toContain("ipcMain.handle('app-version'");
+    // The renderer must not get Node APIs of its own; the preload bridge is the only channel.
+    expect(path('electron/main.ts')!.content).toContain('nodeIntegration: false');
+    expect(path('electron/preload.ts')!.content).toContain('contextBridge.exposeInMainWorld');
+    // Electron loads the built renderer over file://, where an absolute base 404s every chunk.
+    expect(path('vite.config.mts')!.content).toContain("base: './'");
+    expect(path('electron-builder.yml')).toBeDefined();
+    expect(blueprint.spec.quality.required).toEqual(['typecheck', 'build']);
+  });
+
+  it('generates an Expo mobile scaffold with the store steps kept manual', () => {
+    const blueprint = createBlueprint('Soft Desk', { productType: 'mobile' }, 1);
+    const artifacts = createDryRunPlan(blueprint).artifacts;
+    const path = (value: string) => artifacts.find(a => a.path === value);
+
+    expect(path('generated/PRODUCT_STANDARD.md')).toBeDefined();
+    expect(path('generated/DELIVERY_HANDOFF.md')!.content).not.toContain('not yet');
+    expect(path('app/_layout.tsx')!.content).toContain("from 'expo-router'");
+    expect(path('app/index.tsx')).toBeDefined();
+    expect(path('eas.json')).toBeDefined();
+    // Bundle identifiers are dotted and reject the hyphens a product slug carries.
+    expect(JSON.parse(path('app.json')!.content).expo.ios.bundleIdentifier).toBe('io.agentdev.softdesk');
+    expect(path('generated/DISTRIBUTION.md')!.content).toContain('eas submit');
+  });
+
+  it('generates an MCP server, the one API-first shape with its own delivery path', () => {
+    const blueprint = createBlueprint('Soft Desk', { productType: 'api-tool' }, 1);
+    const artifacts = createDryRunPlan(blueprint).artifacts;
+    const path = (value: string) => artifacts.find(a => a.path === value);
+
+    expect(path('generated/DELIVERY_HANDOFF.md')!.content).not.toContain('not yet');
+    expect(path('src/server.ts')!.content).toContain("server.registerTool(");
+    // The client spawns the built entry as a command, so it needs both a bin and a shebang.
+    expect(JSON.parse(path('package.json')!.content).bin).toEqual({ 'soft-desk': 'dist/index.js' });
+    expect(path('src/index.ts')!.content.startsWith('#!/usr/bin/env node')).toBe(true);
+    // stdout carries JSON-RPC; a stray console.log there breaks the client's parser.
+    expect(path('src/index.ts')!.content).toContain('console.error');
+    expect(path('src/index.ts')!.content).not.toContain('console.log');
+    // Nothing is deployed to a URL for this type.
+    expect(path('vercel.json')).toBeUndefined();
+    expect(path('wrangler.toml')).toBeUndefined();
+    expect(path('index.html')).toBeUndefined();
+    expect(path('generated/DISTRIBUTION.md')!.content).toContain('claude_desktop_config.json');
+  });
+
+  // The banner's inline style once carried two display declarations; the trailing display:flex
+  // won, so the banner rendered on every page load even after the visitor had already chosen.
+  // Hidden must stay the initial state: only the consent script may flip it to flex.
+  it('keeps the analytics consent banner hidden until the consent script shows it', () => {
+    const blueprint = createBlueprint('Receipt Desk', { analyticsProviders: ['ga4', 'clarity'] }, 1);
+    const artifacts = createDryRunPlan(blueprint).artifacts;
+    const banner = artifacts.find(a => a.content.includes('analytics-consent-banner'));
+    expect(banner).toBeDefined();
+    const style = banner!.content.match(/id="analytics-consent-banner" style="([^"]+)"/)![1];
+    expect(style.match(/display:/g)).toHaveLength(1);
+    expect(style.startsWith('display:none')).toBe(true);
+  });
+});

@@ -1,0 +1,1085 @@
+import type { ProductBlueprint } from './index.js';
+
+// id is intentionally a string rather than a fixed literal union: each product type contributes its
+// own template ids (e.g. `template-landing-index`), and a closed union would force every type to
+// share the web-app ids. The generator owns the namespace; tests assert by stable `path`.
+export type GeneratedArtifact = {
+  id: string;
+  title: string;
+  titleKey?: string;
+  path: string;
+  content: string;
+};
+
+export type ManualAction = {
+  id: string;
+  title: string;
+  titleKey?: string;
+  titleParams?: Record<string, string | number>;
+  reason: string;
+  reasonKey?: string;
+  steps: string[];
+  stepsKeys?: string[];
+  verification: string;
+  verificationKey?: string;
+};
+
+export type DryRunPlan = {
+  blueprintRevision: number;
+  noExternalChanges: true;
+  summary: string;
+  // Stable i18n key + params for the summary. Studio resolves the key against its locale table and
+  // falls back to `summary` (English prose) when the key is missing. The MCP bridge keeps reading
+  // `summary` so external coding agents always receive English instructions.
+  summaryKey: string;
+  summaryParams: { artifactCount: number; actionCount: number };
+  automaticPreparation: string[];
+  // One key per entry in automaticPreparation, same order.
+  automaticPreparationKeys: string[];
+  manualActions: ManualAction[];
+  artifacts: GeneratedArtifact[];
+};
+
+export type BaselinePlanResource = {
+  id: 'github-repository' | 'supabase-project' | 'vercel-api' | 'cloudflare-pages';
+  title: string;
+  titleKey?: string;
+  owner: string | null;
+  status: 'blocked' | 'requires-approval';
+  reason: string;
+  reasonKey?: string;
+  reasonParams?: Record<string, string | number>;
+};
+
+export type BaselinePlan = {
+  blueprintRevision: number;
+  noExternalChanges: true;
+  readyForApproval: boolean;
+  summary: string;
+  summaryKey?: string;
+  summaryParams?: Record<string, string | number>;
+  resources: BaselinePlanResource[];
+};
+
+type ProductType = ProductBlueprint['spec']['product']['type'];
+
+export type BaselineProviderId = 'github' | 'supabase' | 'vercel' | 'cloudflare';
+
+// Describes how the Governance layer (shared docs) should describe each product type's stack.
+// `hasBackend` gates whether backend/server-side env vars appear in the Environment Contract: static
+// types (landing page, extension, desktop, mobile) must not advertise Supabase/Vercel secrets.
+// `providers` is the single source of truth for which cloud resources a type's baseline needs, read
+// by the baseline plan, the manual authorization list and the daemon's provider specs. Types that
+// call Supabase "optional" are deliberately absent from it: optional must not gate approval.
+// Keyed on ProductType rather than string so a new product type cannot compile until it declares one.
+export const PRODUCT_TYPE_DESCRIPTORS: Record<ProductType, { frontend: string; backend: string; deploySteps: string; hasBackend: boolean; providers: readonly BaselineProviderId[] }> = {
+  'web-app': {
+    frontend: 'React/Vite on Cloudflare Pages',
+    backend: 'Hono on Vercel Functions',
+    deploySteps: 'Deploy the Vercel API Preview, then the Cloudflare Pages Preview.',
+    hasBackend: true,
+    providers: ['github', 'supabase', 'vercel', 'cloudflare'],
+  },
+  'landing-page': {
+    frontend: 'Static site on Cloudflare Pages',
+    backend: 'None (static, client-rendered)',
+    deploySteps: 'Deploy the Cloudflare Pages Preview (static build).',
+    hasBackend: false,
+    providers: ['github', 'cloudflare'],
+  },
+  'browser-extension': {
+    frontend: 'Manifest V3 + Popup/Options (TypeScript) + Background service worker + Content scripts',
+    backend: 'None required by default; Supabase optional for accounts / remote config',
+    deploySteps:
+      'Build with Vite + @crxjs/vite-plugin into `dist/`, load unpacked from `chrome://extensions`, '
+      + 'then package `dist/` and submit to the Chrome Web Store / Firefox Add-ons (store review is manual, outside v0.1).',
+    hasBackend: false,
+    providers: ['github'],
+  },
+  'desktop': {
+    frontend: 'Vite/TypeScript UI inside a desktop shell — Tauri v2 by default, Electron in professional mode',
+    backend: 'Rust core (Tauri commands) or Electron main process over IPC; Supabase optional for accounts / sync',
+    deploySteps:
+      'Run `npm run quality`, then `npm run bundle` to produce the platform installer. Code signing, '
+      + 'notarization and store/update distribution stay manual — see `generated/DISTRIBUTION.md`.',
+    hasBackend: false,
+    providers: ['github'],
+  },
+  'mobile': {
+    frontend: 'Expo (React Native) with expo-router, TypeScript',
+    backend: 'None required by default; Supabase optional for accounts / sync',
+    deploySteps:
+      'Run `npm run quality`, then `npx expo start` for a device/simulator smoke. Native binaries come '
+      + 'from EAS Build (`eas build -p ios|android`); store accounts, signing credentials and review stay manual.',
+    hasBackend: false,
+    providers: ['github'],
+  },
+  // An MCP server is the one API-first shape with its own delivery path: it is consumed as a local
+  // process through a client's config file, so nothing is deployed to a URL and no cloud project
+  // is created. Webhook receivers and HTTP tool endpoints belong in web-app' API workspace.
+  'api-tool': {
+    frontend: 'None (MCP server; tools are the interface)',
+    backend: 'Model Context Protocol server over stdio (@modelcontextprotocol/sdk), TypeScript',
+    deploySteps:
+      'Run `npm run quality`, then `npm run build` and register the built entry in an MCP client '
+      + 'config (Claude Desktop, Cursor). Publishing to npm and client distribution stay manual — '
+      + 'see `generated/DISTRIBUTION.md`.',
+    hasBackend: false,
+    providers: ['github'],
+  },
+  // Tier0 独立站双用 L1：storefront 前台模板。SSR 站点部署到 Vercel node 函数；商品/订单/支付数据
+  // 全部来自外部电商内核（commerce-os），本模板不生成 Supabase、不生成自己的后端——前端只经
+  // COMMERCE_API_BASE_URL 消费 /api/v1/storefront/*。行业差异由 spec.product.storefrontProfile 配置化。
+  'storefront': {
+    frontend: 'Astro SSR (node standalone) + React 19 islands',
+    backend: 'External commerce-os storefront API (/api/v1/storefront/*); no generated backend',
+    deploySteps:
+      'Deploy the Astro SSR build to Vercel Functions, then set COMMERCE_API_BASE_URL to the commerce-os '
+      + 'storefront API URL and smoke the catalog page. Payment stays fake until a real provider is configured.',
+    hasBackend: false,
+    providers: ['github', 'vercel'],
+  },
+};
+
+export function baselineProvidersFor(productType: ProductType): readonly BaselineProviderId[] {
+  return PRODUCT_TYPE_DESCRIPTORS[productType].providers;
+}
+
+function markdown(value: string) {
+  return value.replaceAll('```', "'''");
+}
+
+// One builder for all seven product types: the trigger, runner, action versions and install command
+// have to move together, and seven copies of this YAML meant every change was six chances to miss one.
+// `npm ci` + `cache: npm` both require a committed `package-lock.json`; Agent-Dev refuses to open the
+// product's pull request until the install step has produced and committed one, so it is always there.
+function qualityWorkflow(extraSteps = ''): string {
+  return `name: quality
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+${extraSteps}      - run: npm ci
+      - run: npm run quality
+`;
+}
+
+function yamlQuoted(value: string) {
+  return JSON.stringify(value);
+}
+
+/**
+ * Generate analytics script snippets with a privacy consent gate.
+ * Scripts only load after the user explicitly consents (stored in localStorage).
+ * Returns an empty string if no analytics providers are selected.
+ */
+function analyticsSnippet(blueprint: ProductBlueprint): string {
+  const providers = blueprint.spec.analytics.providers;
+  if (providers.length === 0) return '';
+
+  const ga4Snippet = providers.includes('ga4') ? `
+    <!-- Google Analytics 4 (loaded only after consent) -->
+    <script>
+    (function() {
+      function loadGA4() {
+        var id = document.querySelector('meta[name="ga4-measurement-id"]')?.content;
+        if (!id) return;
+        var s = document.createElement('script');
+        s.async = true;
+        s.src = 'https://www.googletagmanager.com/gtag/js?id=' + id;
+        document.head.appendChild(s);
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        window.gtag = gtag;
+        gtag('js', new Date());
+        gtag('config', id, { anonymize_ip: true });
+      }
+      if (localStorage.getItem('analytics-consent') === 'granted') loadGA4();
+      window.addEventListener('analytics-consent-granted', loadGA4);
+    })();
+    </script>` : '';
+
+  const claritySnippet = providers.includes('clarity') ? `
+    <!-- Microsoft Clarity (loaded only after consent) -->
+    <script>
+    (function() {
+      function loadClarity() {
+        var id = document.querySelector('meta[name="clarity-project-id"]')?.content;
+        if (!id) return;
+        (function(c,l,a,r,i,t,y){
+          c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+          t=l.createElement(r);t.async=1;t.src='https://www.clarity.ms/tag/'+i;
+          y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+        })(window, document, 'clarity', 'script', id);
+      }
+      if (localStorage.getItem('analytics-consent') === 'granted') loadClarity();
+      window.addEventListener('analytics-consent-granted', loadClarity);
+    })();
+    </script>` : '';
+
+  const consentBanner = `
+    <!-- Privacy consent banner -->
+    <div id="analytics-consent-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#1a1a1a;color:#fff;padding:16px 24px;z-index:9999;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;">
+      <span style="font-size:14px;">We use analytics to improve the product. You can opt in or opt out at any time.</span>
+      <div style="display:flex;gap:8px;">
+        <button onclick="document.getElementById('analytics-consent-banner').style.display='none';localStorage.setItem('analytics-consent','denied');" style="background:transparent;color:#fff;border:1px solid #666;padding:8px 16px;cursor:pointer;border-radius:4px;">Decline</button>
+        <button onclick="document.getElementById('analytics-consent-banner').style.display='none';localStorage.setItem('analytics-consent','granted');window.dispatchEvent(new Event('analytics-consent-granted'));" style="background:#286b43;color:#fff;border:none;padding:8px 16px;cursor:pointer;border-radius:4px;">Accept</button>
+      </div>
+    </div>
+    <script>
+    (function() {
+      if (!localStorage.getItem('analytics-consent')) {
+        document.getElementById('analytics-consent-banner').style.display = 'flex';
+      }
+    })();
+    </script>`;
+
+  const metaTags = [
+    providers.includes('ga4') ? '    <meta name="ga4-measurement-id" content="%VITE_GA4_MEASUREMENT_ID%" />' : '',
+    providers.includes('clarity') ? '    <meta name="clarity-project-id" content="%VITE_CLARITY_PROJECT_ID%" />' : '',
+  ].filter(Boolean).join('\n');
+
+  return `\n${metaTags}${ga4Snippet}${claritySnippet}${consentBanner}\n  `;
+}
+
+function analyticsVariables(blueprint: ProductBlueprint) {
+  return blueprint.spec.analytics.providers.flatMap(provider => {
+    if (provider === 'ga4') {
+      return [{
+        name: 'VITE_GA4_MEASUREMENT_ID',
+        classification: 'public',
+        source: 'manual Google Analytics property selection',
+        targets: 'cloudflare-pages',
+        validation: 'Verify the GA4 script loads only after privacy approval.',
+      }];
+    }
+    return [{
+      name: 'VITE_CLARITY_PROJECT_ID',
+      classification: 'public',
+      source: 'manual Microsoft Clarity project selection',
+      targets: 'cloudflare-pages',
+      validation: 'Verify the Clarity script loads only after privacy approval.',
+    }];
+  });
+}
+
+function environmentContract(blueprint: ProductBlueprint) {
+  const desc = PRODUCT_TYPE_DESCRIPTORS[blueprint.spec.product.type];
+  const backendVariables = desc?.hasBackend
+    ? [
+        {
+          name: 'VITE_API_BASE_URL',
+          classification: 'public' as const,
+          source: 'derived Vercel deployment URL',
+          targets: 'cloudflare-pages',
+          validation: 'Health-check the deployed API URL before the frontend build.',
+        },
+        {
+          name: 'VITE_SUPABASE_URL',
+          classification: 'managed' as const,
+          source: 'Supabase project output',
+          targets: 'cloudflare-pages',
+          validation: 'Verify the value is a HTTPS Supabase project URL.',
+        },
+        {
+          name: 'VITE_SUPABASE_ANON_KEY',
+          classification: 'public' as const,
+          source: 'Supabase project output',
+          targets: 'cloudflare-pages',
+          validation: 'Verify it is an anon/publishable key, never a service role key.',
+        },
+        {
+          name: 'SUPABASE_SERVICE_ROLE_KEY',
+          classification: 'secret' as const,
+          source: 'Supabase secret reference',
+          targets: 'vercel-functions',
+          validation: 'Verify the key is absent from browser builds, Markdown and logs.',
+        },
+        {
+          name: 'ALLOWED_ORIGINS',
+          classification: 'derived' as const,
+          source: 'Cloudflare Pages deployment URL',
+          targets: 'vercel-functions',
+          validation: 'Run a cross-origin API smoke test from the Pages preview URL.',
+        },
+      ]
+    : [];
+  const variables = [
+    ...backendVariables,
+    ...analyticsVariables(blueprint),
+  ];
+
+  const body = variables.map(variable => [
+    `  - name: ${variable.name}`,
+    `    classification: ${variable.classification}`,
+    `    source: ${yamlQuoted(variable.source)}`,
+    '    environments: [preview, dev, production]',
+    `    targets: [${variable.targets}]`,
+    `    validation: ${yamlQuoted(variable.validation)}`,
+  ].join('\n')).join('\n');
+  return `# Generated from ProductBlueprint revision ${blueprint.metadata.revision}. Do not store secret values here.\nvariables:\n${body}\n`;
+}
+
+export function getManualActions(blueprint: ProductBlueprint): ManualAction[] {
+  const providers = baselineProvidersFor(blueprint.spec.product.type);
+  const providerActions: Record<string, ManualAction> = {
+    github: {
+      id: 'authorize-github',
+      title: 'Authorize GitHub access',
+      titleKey: 'manualAction.github.title',
+      reason: 'Repository ownership and protected-branch permissions belong to you.',
+      reasonKey: 'manualAction.github.reason',
+      steps: ['Confirm the intended GitHub account or organization.', 'Grant only repository, pull request and checks permissions.', 'Return to Agent-Dev for a read-only capability check.'],
+      stepsKeys: ['manualAction.github.steps.0', 'manualAction.github.steps.1', 'manualAction.github.steps.2'],
+      verification: 'Agent-Dev can read the selected account and list its permitted repositories.',
+      verificationKey: 'manualAction.github.verification',
+    },
+    supabase: {
+      id: 'authorize-supabase',
+      title: 'Authorize Supabase and choose an organization',
+      titleKey: 'manualAction.supabase.title',
+      reason: 'Database region, plan and project ownership can affect cost and compliance.',
+      reasonKey: 'manualAction.supabase.reason',
+      steps: ['Sign in to Supabase.', 'Choose the organization and region.', 'Review the project plan before any project is created.'],
+      stepsKeys: ['manualAction.supabase.steps.0', 'manualAction.supabase.steps.1', 'manualAction.supabase.steps.2'],
+      verification: 'Agent-Dev can discover the chosen organization without reading database data.',
+      verificationKey: 'manualAction.supabase.verification',
+    },
+    cloudflare: {
+      id: 'authorize-cloudflare',
+      title: 'Authorize Cloudflare Pages',
+      titleKey: 'manualAction.cloudflare.title',
+      reason: 'Pages deployment remains in your Cloudflare account.',
+      reasonKey: 'manualAction.cloudflare.reason',
+      steps: ['Sign in to Cloudflare.', 'Choose the account that owns the Pages project.', 'Approve Pages-only access; do not grant DNS access unless a custom domain is planned.'],
+      stepsKeys: ['manualAction.cloudflare.steps.0', 'manualAction.cloudflare.steps.1', 'manualAction.cloudflare.steps.2'],
+      verification: 'Agent-Dev can list Pages capabilities for the selected account.',
+      verificationKey: 'manualAction.cloudflare.verification',
+    },
+    vercel: {
+      id: 'authorize-vercel',
+      title: 'Authorize Vercel Functions',
+      titleKey: 'manualAction.vercel.title',
+      reason: 'API deployment and server-side environment variables remain in your Vercel team.',
+      reasonKey: 'manualAction.vercel.reason',
+      steps: ['Sign in to Vercel.', 'Choose the team for the API project.', 'Review the required server-side environment variable targets.'],
+      stepsKeys: ['manualAction.vercel.steps.0', 'manualAction.vercel.steps.1', 'manualAction.vercel.steps.2'],
+      verification: 'Agent-Dev can discover the selected team and its deployment capabilities.',
+      verificationKey: 'manualAction.vercel.verification',
+    },
+  };
+  const actions: ManualAction[] = (['github', 'supabase', 'cloudflare', 'vercel'] as const)
+    .filter(p => providers.includes(p))
+    .map(p => ({ ...providerActions[p], steps: [...providerActions[p].steps], stepsKeys: [...(providerActions[p].stepsKeys ?? [])] }));
+
+  if (blueprint.spec.product.dataSensitivity === 'sensitive') {
+    actions.unshift({
+      id: 'privacy-review',
+      title: 'Approve the sensitive-data boundary',
+      titleKey: 'manualAction.privacyReview.title',
+      reason: 'Sensitive product data requires an explicit privacy, retention and access review.',
+      reasonKey: 'manualAction.privacyReview.reason',
+      steps: ['Define what sensitive data is collected.', 'Confirm who can access it and how long it is retained.', 'Approve the privacy notice and incident contact.'],
+      stepsKeys: ['manualAction.privacyReview.steps.0', 'manualAction.privacyReview.steps.1', 'manualAction.privacyReview.steps.2'],
+      verification: 'The approved policy is recorded before provisioning begins.',
+      verificationKey: 'manualAction.privacyReview.verification',
+    });
+  }
+
+  for (const provider of blueprint.spec.analytics.providers) {
+    const label = provider === 'ga4' ? 'Google Analytics 4' : 'Microsoft Clarity';
+    actions.push({
+      id: `configure-${provider}`,
+      title: `Configure ${label}`,
+      titleKey: 'manualAction.analytics.title',
+      titleParams: { provider: label },
+      reason: 'Analytics changes the privacy boundary and requires an account-owned identifier.',
+      reasonKey: 'manualAction.analytics.reason',
+      steps: ['Confirm tracking is permitted for this product.', 'Create or select the analytics property.', 'Provide only the public measurement or project ID.'],
+      stepsKeys: ['manualAction.analytics.steps.0', 'manualAction.analytics.steps.1', 'manualAction.analytics.steps.2'],
+      verification: 'The public identifier is present in the environment contract and the client script is observable after consent.',
+      verificationKey: 'manualAction.analytics.verification',
+    });
+  }
+
+  if (blueprint.metadata.customInstructions) {
+    actions.push({
+      id: 'custom-instruction',
+      title: 'Resolve the custom implementation note',
+      titleKey: 'manualAction.custom.title',
+      reason: 'The note is preserved but is not backed by an automation module yet.',
+      reasonKey: 'manualAction.custom.reason',
+      steps: ['Review the requested note.', 'Decide whether it requires a supported module or a project-specific ADR.', 'Approve its acceptance criteria before implementation.'],
+      stepsKeys: ['manualAction.custom.steps.0', 'manualAction.custom.steps.1', 'manualAction.custom.steps.2'],
+      verification: 'A linked implementation task or ADR records the resolution.',
+      verificationKey: 'manualAction.custom.verification',
+    });
+  }
+  return actions;
+}
+
+// Governance artifacts are shared across product types: the Blueprint, Policy, Quality Gate and
+// release boundary are identical regardless of the delivered artifact shape. Only the Delivery
+// baseline and deploy step strings differ per type, drawn from PRODUCT_TYPE_DESCRIPTORS.
+function buildGovernanceArtifacts(blueprint: ProductBlueprint): GeneratedArtifact[] {
+  const desc = PRODUCT_TYPE_DESCRIPTORS[blueprint.spec.product.type] ?? PRODUCT_TYPE_DESCRIPTORS['web-app'];
+  const intent = markdown(blueprint.metadata.productIntent || 'Not specified yet.');
+  const analytics = blueprint.spec.analytics.providers.length === 0 ? 'None' : blueprint.spec.analytics.providers.join(', ').toUpperCase();
+  const quality = blueprint.spec.quality.required.join(', ');
+  const header = `> Generated from ProductBlueprint revision ${blueprint.metadata.revision}. Do not edit this file directly.\n\n`;
+  return [
+    {
+      id: 'product-standard',
+      title: 'Product Standard',
+      path: 'generated/PRODUCT_STANDARD.md',
+      content: `${header}# ${markdown(blueprint.metadata.name)} Product Standard\n\n## Product intent\n${intent}\n\n## Delivery baseline\n- Frontend: ${desc.frontend}\n- Backend: ${desc.backend}\n- Data and auth: ${desc.hasBackend ? 'Supabase' : 'Not provisioned for this product type'}\n- Source control: GitHub pull requests from ${blueprint.spec.sourceControl.integrationBranch} to ${blueprint.spec.sourceControl.productionBranch}\n- Preview: ${blueprint.spec.deployment.previewStrategy}\n- Analytics: ${analytics}\n\n## Quality contract\nRequired before preview: ${quality}.\n\n## Approval boundary\nProduction release, secret changes and sensitive-data changes require human approval.\n`,
+    },
+    {
+      id: 'agent-instructions',
+      title: 'Agent Instructions',
+      path: 'generated/AGENTS.md',
+      content: `${header}# Agent Execution Constraints\n\n- Work only from an approved specification and acceptance criteria.\n- Never read, print or commit secret values.\n- Keep work on a feature branch and use pull requests for integration.\n- Run ${quality} before reporting a task as ready.\n- Do not deploy to production, alter DNS or change data policy without an explicit human approval.\n- Treat this Blueprint revision as the governing source for delivery decisions.\n`,
+    },
+    {
+      id: 'delivery-workflow',
+      title: 'Delivery Workflow',
+      path: 'generated/DELIVERY_WORKFLOW.md',
+      content: `${header}# Delivery Workflow\n\n1. Clarify feature scope and acceptance criteria.\n2. Create an isolated feature branch and worktree.\n3. Implement with the approved Agent instructions.\n4.  Run ${quality}.\n5. Create a pull request to ${blueprint.spec.sourceControl.integrationBranch}.\n6. ${desc.deploySteps}\n7. Run the joint smoke test and request human preview approval.\n8. Open a release PR to ${blueprint.spec.sourceControl.productionBranch}; production deployment requires approval.\n9. Generate a delivery report with evidence and residual risks.\n`,
+    },
+    {
+      id: 'environment-contract',
+      title: 'Environment Contract',
+      path: 'config/env.contract.yaml',
+      content: environmentContract(blueprint),
+    },
+    {
+      id: 'delivery-handoff',
+      title: 'Delivery Handoff',
+      path: 'generated/DELIVERY_HANDOFF.md',
+      content: `${header}# ${markdown(blueprint.metadata.name)} Handoff\n\n## Current state\n- Blueprint revision: ${blueprint.metadata.revision}\n- Delivery state: needs input\n- External resources: not created by this plan\n\n## Next owner actions\n${getManualActions(blueprint).map((action, index) => `${index + 1}. ${action.title}: ${action.reason}`).join('\n')}\n\n## Known boundaries\nProvider authorization, resource provisioning, production release and secret handling remain outside this dry run.\n`,
+    },
+  ];
+}
+
+// Every check named in spec.quality.required has to be a real script in the generated package.json,
+// otherwise `npm run quality` dies mid-run ("Missing script") and the product's CI can never go green.
+function qualityScript(blueprint: ProductBlueprint): string {
+  return blueprint.spec.quality.required.map(check => `npm run ${check}`).join(' && ');
+}
+
+function buildWebSaaS(blueprint: ProductBlueprint): GeneratedArtifact[] {
+  const templateHeader = `Generated from ProductBlueprint revision ${blueprint.metadata.revision}.`;
+  const templatePackageName = blueprint.metadata.name.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'agent-dev-product';
+  return [
+    { id: 'template-root-package', title: 'Web app workspace package', path: 'package.json', content: JSON.stringify({ name: templatePackageName, private: true, type: 'module', packageManager: 'npm@10.8.2', scripts: { dev: 'concurrently -k "npm run dev -w web" "npm run dev -w api"', lint: 'eslint .', typecheck: 'tsc --noEmit', unit: 'vitest run', build: 'npm run build -w web', smoke: 'node scripts/smoke.mjs', quality: qualityScript(blueprint) }, workspaces: ['apps/web', 'apps/api'], devDependencies: { '@eslint/js': '^9.26.0', '@types/node': '^22.15.3', '@types/react': '^19.1.2', '@types/react-dom': '^19.1.2', '@vitejs/plugin-react': '^4.4.1', concurrently: '^9.1.0', eslint: '^9.26.0', globals: '^16.0.0', typescript: '^5.8.3', 'typescript-eslint': '^8.32.0', vite: '^7.3.6', vitest: '^3.1.3' } }, null, 2) + '\n' },
+    // `vite/client` is required, not cosmetic: the web entrypoint reads `import.meta.env`, so
+    // without it the generated baseline cannot pass its own typecheck.
+    { id: 'template-root-tsconfig', title: 'Web app TypeScript configuration', path: 'tsconfig.json', content: JSON.stringify({ compilerOptions: { target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', jsx: 'react-jsx', strict: true, noEmit: true, skipLibCheck: true, types: ['node', 'vite/client'] }, include: ['apps/web/src', 'apps/api/src', 'vite.config.ts', 'eslint.config.js'] }, null, 2) + '\n' },
+    { id: 'template-eslint-config', title: 'ESLint flat configuration', path: 'eslint.config.js', content: `import eslint from '@eslint/js';\nimport globals from 'globals';\nimport tseslint from 'typescript-eslint';\n\nexport default tseslint.config(\n  { ignores: ['**/dist/**', '**/node_modules/**'] },\n  eslint.configs.recommended,\n  ...tseslint.configs.recommended,\n  // typescript-eslint disables no-undef for TypeScript, but plain .mjs tooling scripts still need\n  // the Node globals declared or \`console\` and \`process\` are reported as undefined.\n  { files: ['scripts/**/*.mjs'], languageOptions: { globals: globals.node } },\n);\n` },
+    { id: 'template-smoke-script', title: 'Post-build smoke check', path: 'scripts/smoke.mjs', content: `import { readFile } from 'node:fs/promises';\n\n// The deployed artifact is the built bundle, not the source. This asserts the build produced an\n// entry document and that it still carries the meta tag the API base URL is injected into.\nconst entry = 'apps/web/dist/index.html';\nconst html = await readFile(entry, 'utf8').catch(() => {\n  throw new Error('smoke: ' + entry + ' is missing. Run the build before the smoke check.');\n});\nif (!html.includes('name="api-base-url"')) {\n  throw new Error('smoke: ' + entry + ' lost the api-base-url meta tag, so the API URL cannot be injected.');\n}\nconsole.log('smoke: ' + entry + ' is present and injectable.');\n` },
+    { id: 'template-vite-config', title: 'Vite React configuration', path: 'vite.config.ts', content: `import { defineConfig } from 'vite';\nimport react from '@vitejs/plugin-react';\n\nexport default defineConfig({ plugins: [react()] });\n` },
+    { id: 'template-readme', title: 'Web app template README', path: 'README.md', content: `# ${markdown(blueprint.metadata.name)}\n\n${templateHeader}\n\nThis is the Agent-Dev fixed Web app Golden Path. The web app deploys to Cloudflare Pages and the Hono API deploys to Vercel Functions.\n\n## Local commands\n\n- \`npm install\` (first materialization; creates the lock file)\n- \`npm run quality\`\n- \`npm run dev\`\n\n\`package-lock.json\` is committed by the first install, and CI runs \`npm ci\` against it.\n\n## Environment\n\nUse \`config/env.contract.yaml\` as the source of truth. Never commit secret values.\n` },
+    { id: 'template-web-package', title: 'Web application package', path: 'apps/web/package.json', content: JSON.stringify({ name: 'web', private: true, type: 'module', scripts: { dev: 'vite', build: 'vite build' }, dependencies: { react: '^19.1.0', 'react-dom': '^19.1.0' }, devDependencies: { '@vitejs/plugin-react': '^4.4.1', vite: '^7.3.6', typescript: '^5.8.3' } }, null, 2) + '\n' },
+    { id: 'template-web-index', title: 'Vite web entry', path: 'apps/web/index.html', content: `<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="api-base-url" content="%VITE_API_BASE_URL%" />${analyticsSnippet(blueprint)}<title>Agent-Dev Web app</title></head>
+  <body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body>
+</html>
+` },
+    { id: 'template-web-main', title: 'Web application entrypoint', path: 'apps/web/src/main.tsx', content: `import React from 'react';\nimport { createRoot } from 'react-dom/client';\nimport './styles.css';\n\nconst apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? '';\n\nfunction App() {\n  const [apiStatus, setApiStatus] = React.useState('checking');\n  React.useEffect(() => {\n    if (!apiBaseUrl) return setApiStatus('not configured');\n    fetch(\`\${apiBaseUrl}/api/health\`)\n      .then(response => response.json())\n      .then(body => setApiStatus(body.status ?? 'unknown'))\n      .catch(() => setApiStatus('unreachable'));\n  }, []);\n  return <main><p className="eyebrow">Agent-Dev Web app</p><h1>${markdown(blueprint.metadata.name)}</h1><p>${markdown(blueprint.metadata.productIntent || 'Your product baseline is ready for the next feature.')}</p><span className="status">API {apiBaseUrl || 'unset'} health: {apiStatus}</span></main>;\n}\n\ncreateRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);\n` },
+    { id: 'template-web-styles', title: 'Web application styles', path: 'apps/web/src/styles.css', content: ':root { font-family: Inter, system-ui, sans-serif; color: #1d2823; background: #f6f7f3; } body { margin: 0; min-width: 320px; } main { max-width: 720px; margin: 16vh auto; padding: 32px; } h1 { font-size: clamp(32px, 7vw, 64px); margin: 0 0 16px; } p { line-height: 1.6; } .eyebrow { color: #286b43; font-size: 12px; font-weight: 700; text-transform: uppercase; } .status { display: inline-block; margin-top: 20px; padding: 8px 10px; border-radius: 4px; color: #286b43; background: #e5f2e8; font-size: 13px; }\n' },
+    { id: 'template-api-package', title: 'API application package', path: 'apps/api/package.json', content: JSON.stringify({ name: 'api', private: true, type: 'module', scripts: { dev: 'tsx src/index.ts' }, dependencies: { '@hono/node-server': '^1.14.1', hono: '^4.7.7' }, devDependencies: { tsx: '^4.19.3', typescript: '^5.8.3' } }, null, 2) + '\n' },
+    { id: 'template-api-index', title: 'Hono API entrypoint', path: 'apps/api/src/index.ts', content: `import { serve } from '@hono/node-server';\nimport { Hono } from 'hono';\nimport { cors } from 'hono/cors';\nimport { handle } from 'hono/vercel';\n\nexport const app = new Hono();\n\napp.use('/api/*', cors({ origin: process.env.ALLOWED_ORIGIN ?? '*' }));\napp.get('/api/health', context => context.json({ service: '${markdown(blueprint.metadata.name)}', status: 'ok' }));\n\n// Vercel treats a default export as the legacy \`(req, res)\` signature and discards a returned\n// Response, so the fetch-style handler must be exported per HTTP method instead.\nconst handler = handle(app);\nexport const GET = handler;\nexport const POST = handler;\nexport const OPTIONS = handler;\n\nif (!process.env.VERCEL && !process.env.VITEST) serve({ fetch: app.fetch, port: Number(process.env.PORT ?? 8787) });\n` },
+    { id: 'template-api-test', title: 'API health unit test', path: 'apps/api/src/health.test.ts', content: `import { describe, expect, it } from 'vitest';\nimport { app } from './index.js';\n\ndescribe('health endpoint', () => {\n  it('reports the service by name so a deployment can be told apart from a stray one', async () => {\n    const response = await app.request('/api/health');\n    expect(response.status).toBe(200);\n    await expect(response.json()).resolves.toEqual({ service: '${markdown(blueprint.metadata.name)}', status: 'ok' });\n  });\n});\n` },
+    { id: 'template-api-vercel', title: 'Vercel API configuration', path: 'apps/api/vercel.json', content: JSON.stringify({ version: 2, builds: [{ src: 'src/index.ts', use: '@vercel/node' }], routes: [{ src: '/api/(.*)', dest: '/src/index.ts' }] }, null, 2) + '\n' },
+    { id: 'template-cloudflare', title: 'Cloudflare Pages configuration', path: 'wrangler.toml', content: `# ${templateHeader}\nname = "${blueprint.metadata.name.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-')}-web"\ncompatibility_date = "2026-01-01"\npages_build_output_dir = "apps/web/dist"\n` },
+    // Agent-Dev commits the agent's work with `git add -A`, and the provider CLIs drop their own
+    // state into the workspace, so anything not listed here ends up in the product's first PR.
+    // `node_modules` without a trailing slash: an agent may shortcut a test run with a symlink to
+    // an existing dependency directory, and the directory-only pattern would let the link stage.
+    { id: 'template-gitignore', title: 'Product git ignore rules', path: '.gitignore', content: 'node_modules\ndist/\n.env\n.env.*\n!.env.example\n.agent-dev/\n.vercel/\n.wrangler/\n' },
+    { id: 'template-quality-workflow', title: 'GitHub quality workflow', path: '.github/workflows/quality.yml', content: qualityWorkflow() },
+  ];
+}
+
+// Landing pages are a single static site: no backend workspace, no workspace package manager. It
+// builds to Cloudflare Pages and the quality gate validates the static markup in-place (no browser).
+function buildLandingPage(blueprint: ProductBlueprint): GeneratedArtifact[] {
+  const templateHeader = `Generated from ProductBlueprint revision ${blueprint.metadata.revision}.`;
+  const safeName = blueprint.metadata.name.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'agent-dev-landing';
+  const layout = blueprint.metadata.customInstructions?.trim() || blueprint.metadata.productIntent || 'Your product, distilled to one page.';
+
+  return [
+    // Plain static site, no workspace tooling. `npm run build` copies src/ to dist/ and asserts the
+    // markup carries a <main> landmark; `npm run quality` runs that build as the verification gate.
+    { id: 'template-root-package', title: 'Landing page package', path: 'package.json', content: JSON.stringify({ name: safeName, private: true, type: 'module', scripts: { build: 'node scripts/build.mjs', lint: 'node scripts/build.mjs --check', quality: qualityScript(blueprint) } }, null, 2) + '\n' },
+    { id: 'template-build-script', title: 'Static build / inject script', path: 'scripts/build.mjs', content: `import { mkdir, copyFile } from 'node:fs/promises';\n\n// Landing pages are static: this copies the src tree to dist and validates the entry document.\n// Analytics IDs are injected from the environment contract at deploy time, never committed.\nawait mkdir('dist', { recursive: true });\nfor (const file of ['index.html', 'styles.css', 'app.js']) {\n  await copyFile('src/' + file, 'dist/' + file).catch(() => {});\n}\nconst { readFile } = await import('node:fs/promises');\nconst html = await readFile('dist/index.html', 'utf8');\nif (!html.includes('<main')) throw new Error('build: index.html must contain a <main> landmark for SEO/a11y.');\nconsole.log('build: static site prepared at dist/');\n` },
+    { id: 'template-readme', title: 'Landing page README', path: 'README.md', content: `# ${markdown(blueprint.metadata.name)}\n\n${templateHeader}\n\nThis is the Agent-Dev landing-page Golden Path. A single static site deploys to Cloudflare Pages.\n\n## Local commands\n\n- \`npm run build\` (prepare static output)\n- \`npm run quality\`\n\n## Environment\n\nUse \`config/env.contract.yaml\` as the source of truth. Never commit secret values.\n` },
+    { id: 'template-index', title: 'Landing page entry', path: 'src/index.html', content: `<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n    <meta name="description" content="${markdown(layout)}" />\n    <title>${markdown(blueprint.metadata.name)}</title>\n    <link rel="stylesheet" href="styles.css" />\n  </head>\n  <body>\n    <main>\n      <p class="eyebrow">${markdown(blueprint.metadata.name)}</p>\n      <h1>${markdown(blueprint.metadata.name)}</h1>\n      <p class="subhead">${markdown(layout)}</p>\n      <a class="cta" href="#get-started">Get started</a>\n    </main>\n    ${analyticsSnippet(blueprint)}\n    <script src="app.js"></script>\n  </body>\n</html>\n` },
+    {  id: 'template-styles', title: 'Landing page styles', path: 'src/styles.css', content: ':root { font-family: Inter, system-ui, sans-serif; color: #1d2823; background: #f6f7f3; } body { margin: 0; } main { max-width: 720px; margin: 18vh auto; padding: 32px; } h1 { font-size: clamp(36px, 8vw, 72px); margin: 0 0 16px; } .eyebrow { color: #286b43; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; } .subhead { font-size: 20px; line-height: 1.5; color: #4a5c52; } .cta { display: inline-block; margin-top: 24px; padding: 12px 20px; border-radius: 6px; background: #286b43; color: #fff; text-decoration: none; font-weight: 600; }\n' },
+    { id: 'template-app-js', title: 'Landing page script', path: 'src/app.js', content: `// No framework needed for a landing page. Keep it dependency-free so it loads fast and scores well.\nconst params = new URLSearchParams(location.search);\ndocument.querySelectorAll('[data-param]').forEach(el => {\n  const key = el.getAttribute('data-param');\n  if (params.has(key)) el.textContent = params.get(key);\n});\n` },
+    { id: 'template-cloudflare', title: 'Cloudflare Pages configuration', path: 'wrangler.toml', content: `# ${templateHeader}\nname = "${safeName}"\ncompatibility_date = "2026-01-01"\npages_build_output_dir = "dist"\n` },
+    { id: 'template-forms-gitignore', title: 'Landing page git ignore rules', path: '.gitignore', content: 'node_modules\ndist/\n.env\n.env.*\n!.env.example\n.agent-dev/\n.wrangler/\n' },
+    { id: 'template-quality-workflow', title: 'GitHub quality workflow', path: '.github/workflows/quality.yml', content: qualityWorkflow() },
+  ];
+}
+
+// Browser extensions (Manifest V3) are the next staged product type (multi-product-delivery-plan.md,
+// Stage C). They ship a real, locally-buildable MV3 scaffold (Vite + @crxjs/vite-plugin) plus a
+// web-store publishing handoff. They intentionally do NOT plug into the v0.1 Cloudflare/Vercel/
+// Supabase cloud pipeline — store submission is a manual step outside Agent-Dev v0.1.
+function buildBrowserExtension(blueprint: ProductBlueprint): GeneratedArtifact[] {
+  const productName = blueprint.metadata.name;
+  const intent = blueprint.metadata.productIntent || 'No product intent provided.';
+  const slug = productName.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'agent-dev-extension';
+
+  return [
+    { id: 'ext-manifest-config', title: 'Extension manifest (MV3)', path: 'manifest.config.ts', content: `import { defineManifest } from '@crxjs/vite-plugin';\n\nexport default defineManifest({\n  manifest_version: 3,\n  name: ${JSON.stringify(productName)},\n  version: '0.1.0',\n  description: ${JSON.stringify(intent)},\n  action: {\n    default_popup: 'popup.html',\n  },\n  // Store submission requires raster icons; add public/icons/icon128.png and reference it here.\n  background: {\n    service_worker: 'src/background.ts',\n  },\n  content_scripts: [\n    {\n      matches: ['<all_urls>'],\n      js: ['src/content.ts'],\n    },\n  ],\n  options_page: 'options.html',\n  permissions: ['storage', 'activeTab'],\n  host_permissions: ['<all_urls>'],\n});\n` },
+    { id: 'ext-vite-config', title: 'Vite + crx config', path: 'vite.config.ts', content: `import { defineConfig } from 'vite';\nimport { crx } from '@crxjs/vite-plugin';\nimport manifest from './manifest.config';\n\nexport default defineConfig({\n  plugins: [crx({ manifest })],\n  build: {\n    outDir: 'dist',\n  },\n});\n` },
+    { id: 'ext-package', title: 'Extension package', path: 'package.json', content: JSON.stringify({ name: slug, private: true, version: '0.1.0', type: 'module', scripts: { dev: 'vite', typecheck: 'tsc --noEmit', build: 'vite build', quality: qualityScript(blueprint), preview: 'vite preview' }, devDependencies: { '@crxjs/vite-plugin': '^2.0.0-beta.27', '@types/chrome': '^0.0.270', '@types/node': '^22.15.3', typescript: '^5.6.3', vite: '^5.4.10' } }, null, 2) + '\n' },
+    { id: 'ext-tsconfig', title: 'Extension tsconfig', path: 'tsconfig.json', content: JSON.stringify({ compilerOptions: { target: 'ES2022', lib: ['ES2022', 'DOM', 'DOM.Iterable'], module: 'ESNext', moduleResolution: 'bundler', strict: true, noEmit: true, resolveJsonModule: true, skipLibCheck: true, types: ['chrome', 'node'] }, include: ['src', 'manifest.config.ts', 'vite.config.ts'] }, null, 2) + '\n' },
+    { id: 'ext-popup-html', title: 'Popup HTML', path: 'popup.html', content: `<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1" />\n    <link rel="stylesheet" href="src/popup.css" />\n    <title>${markdown(productName)}</title>\n  </head>\n  <body>\n    <main class="popup">\n      <h1>${markdown(productName)}</h1>\n      <p class="hint">Generated by Agent-Dev. Edit <code>src/popup.ts</code> to build your popup UI.</p>\n    </main>\n    <script type="module" src="/src/popup.ts"></script>\n  </body>\n</html>\n` },
+    { id: 'ext-popup-ts', title: 'Popup entry', path: 'src/popup.ts', content: `const root = document.querySelector<HTMLElement>('.popup');\nif (root) {\n  // TODO: build your popup UI here.\n  console.log('[${productName}] popup loaded');\n}\n` },
+    { id: 'ext-popup-css', title: 'Popup styles', path: 'src/popup.css', content: `:root { color-scheme: light dark; }\n* { box-sizing: border-box; }\nbody { margin: 0; font-family: system-ui, sans-serif; }\n.popup { width: 320px; padding: 16px; }\n.popup h1 { font-size: 16px; margin: 0 0 8px; }\n.hint { color: #666; font-size: 13px; }\n` },
+    { id: 'ext-options-html', title: 'Options HTML', path: 'options.html', content: `<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1" />\n    <title>${markdown(productName)} — Options</title>\n  </head>\n  <body>\n    <main class="options">\n      <h1>${markdown(productName)} — Options</h1>\n      <p class="hint">Generated by Agent-Dev. Edit <code>src/options.ts</code> to persist settings (chrome.storage.local).</p>\n    </main>\n    <script type="module" src="/src/options.ts"></script>\n  </body>\n</html>\n` },
+    { id: 'ext-options-ts', title: 'Options entry', path: 'src/options.ts', content: `// Options page entry point. Persist settings with chrome.storage.local.\nconsole.log('[${productName}] options loaded');\n` },
+    { id: 'ext-background-ts', title: 'Background service worker', path: 'src/background.ts', content: `// MV3 background service worker — extension lifecycle and cross-tab messaging.\nchrome.runtime.onInstalled.addListener(() => {\n  console.log('[${productName}] installed');\n});\n` },
+    { id: 'ext-content-ts', title: 'Content script', path: 'src/content.ts', content: `// Content script injected into matched pages.\nconsole.log('[${productName}] content script active on', window.location.href);\n` },
+    { id: 'ext-readme', title: 'Extension README', path: 'README.md', content: `# ${markdown(productName)}\n\nBrowser extension (Manifest V3) generated by Agent-Dev.\n\n## Structure\n- \`manifest.config.ts\` — MV3 manifest (built into \`dist/manifest.json\`)\n- \`popup.html\` / \`src/popup.ts\` — toolbar popup UI\n- \`options.html\` / \`src/options.ts\` — options page\n- \`src/background.ts\` — service worker (lifecycle, messaging)\n- \`src/content.ts\` — content script injected into pages\n\n## Develop\n1. \`npm install\`\n2. \`npm run dev\` (Vite watch build to \`dist/\`)\n3. Open \`chrome://extensions\`, enable **Developer mode**, click **Load unpacked**, select \`dist/\`\n4. Edit source; click the extension's **Reload** to pick up changes\n\n## Build\n\`npm run build\` → \`dist/\`\n\n## Publish (manual, outside v0.1 pipeline)\n- Add raster icons (\`public/icons/icon128.png\` and friends) and reference them from \`manifest.config.ts\`; stores reject submissions without them.\n- Chrome: package \`dist/\`, submit to the Chrome Web Store (developer account + review required).\n- Firefox: port via \`webextension-polyfill\` and submit to Firefox Add-ons.\nStore submission and review are not automated by Agent-Dev v0.1.\n\n## Intent\n${markdown(intent)}\n` },
+    { id: 'ext-gitignore', title: 'Extension git ignore rules', path: '.gitignore', content: 'node_modules\ndist/\n.env\n.env.*\n!.env.example\n.agent-dev/\n' },
+    { id: 'ext-quality-workflow', title: 'GitHub quality workflow', path: '.github/workflows/quality.yml', content: qualityWorkflow() },
+  ];
+}
+
+function buildDesktop(blueprint: ProductBlueprint): GeneratedArtifact[] {
+  return blueprint.spec.product.desktopShell === 'electron'
+    ? buildDesktopElectron(blueprint)
+    : buildDesktopTauri(blueprint);
+}
+
+function buildDesktopTauri(blueprint: ProductBlueprint): GeneratedArtifact[] {
+  const productName = blueprint.metadata.name;
+  const intent = blueprint.metadata.productIntent || 'No product intent provided.';
+  const slug = productName.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'agent-dev-desktop';
+  // Cargo package names may not start with a digit and are used as the Rust crate name.
+  const crateName = (/^[0-9]/.test(slug) ? `app-${slug}` : slug).replaceAll('-', '_');
+
+  return [
+    { id: 'desktop-package', title: 'Desktop package', path: 'package.json', content: JSON.stringify({ name: slug, private: true, version: '0.1.0', type: 'module', scripts: { dev: 'tauri dev', 'dev:web': 'vite', typecheck: 'tsc --noEmit', build: 'vite build', 'rust-check': 'node scripts/ensure-icon.mjs && cargo check --manifest-path src-tauri/Cargo.toml', quality: qualityScript(blueprint), bundle: 'tauri build' }, devDependencies: { '@tauri-apps/cli': '^2.1.0', '@types/node': '^22.15.3', typescript: '^5.6.3', vite: '^5.4.10' }, dependencies: { '@tauri-apps/api': '^2.1.0' } }, null, 2) + '\n' },
+    { id: 'desktop-tsconfig', title: 'Desktop tsconfig', path: 'tsconfig.json', content: JSON.stringify({ compilerOptions: { target: 'ES2022', lib: ['ES2022', 'DOM', 'DOM.Iterable'], module: 'ESNext', moduleResolution: 'bundler', strict: true, noEmit: true, skipLibCheck: true, types: ['node'] }, include: ['src', 'vite.config.ts'] }, null, 2) + '\n' },
+    { id: 'desktop-vite-config', title: 'Vite config', path: 'vite.config.ts', content: `import { defineConfig } from 'vite';\n\n// Tauri drives this dev server, so the port has to be fixed and failures must be loud.\nexport default defineConfig({\n  clearScreen: false,\n  server: {\n    port: 1420,\n    strictPort: true,\n  },\n  build: {\n    outDir: 'dist',\n    target: 'es2022',\n  },\n});\n` },
+    { id: 'desktop-index-html', title: 'Webview HTML', path: 'index.html', content: `<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1" />\n    <link rel="stylesheet" href="/src/styles.css" />\n    <title>${markdown(productName)}</title>\n  </head>\n  <body>\n    <main class="shell">\n      <h1>${markdown(productName)}</h1>\n      <p class="intent">${markdown(intent)}</p>\n      <p class="version">Rust core version: <strong data-version>loading…</strong></p>\n    </main>\n    <script type="module" src="/src/main.ts"></script>\n  </body>\n</html>\n` },
+    { id: 'desktop-main-ts', title: 'Webview entry', path: 'src/main.ts', content: `import { invoke } from '@tauri-apps/api/core';\n\n// Real IPC round trip to the Rust core, so a broken command surfaces immediately.\nconst target = document.querySelector<HTMLElement>('[data-version]');\n\ninvoke<string>('app_version')\n  .then(version => {\n    if (target) target.textContent = version;\n  })\n  .catch(error => {\n    if (target) target.textContent = 'unavailable';\n    console.error('[${productName}] app_version failed', error);\n  });\n` },
+    { id: 'desktop-styles', title: 'Webview styles', path: 'src/styles.css', content: `:root { color-scheme: light dark; }\n* { box-sizing: border-box; }\nbody { margin: 0; font-family: system-ui, sans-serif; }\n.shell { padding: 32px; max-width: 720px; }\n.shell h1 { font-size: 22px; margin: 0 0 12px; }\n.intent { color: #666; line-height: 1.6; }\n.version { margin-top: 24px; font-size: 14px; }\n` },
+    { id: 'desktop-cargo-toml', title: 'Rust crate manifest', path: 'src-tauri/Cargo.toml', content: `[package]\nname = "${crateName}"\nversion = "0.1.0"\nedition = "2021"\nrust-version = "1.77"\n\n[lib]\nname = "${crateName}_lib"\npath = "src/lib.rs"\n\n[[bin]]\nname = "${crateName}"\npath = "src/main.rs"\n\n[build-dependencies]\ntauri-build = { version = "2", features = [] }\n\n[dependencies]\ntauri = { version = "2", features = [] }\nserde = { version = "1", features = ["derive"] }\nserde_json = "1"\n` },
+    { id: 'desktop-build-rs', title: 'Rust build script', path: 'src-tauri/build.rs', content: 'fn main() {\n    tauri_build::build()\n}\n' },
+    { id: 'desktop-lib-rs', title: 'Rust core', path: 'src-tauri/src/lib.rs', content: `#[tauri::command]\nfn app_version() -> String {\n    env!("CARGO_PKG_VERSION").to_string()\n}\n\npub fn run() {\n    tauri::Builder::default()\n        .invoke_handler(tauri::generate_handler![app_version])\n        .run(tauri::generate_context!())\n        .expect("failed to start ${productName}");\n}\n` },
+    { id: 'desktop-main-rs', title: 'Rust entry point', path: 'src-tauri/src/main.rs', content: `// Keeps the extra console window from appearing in Windows release builds.\n#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]\n\nfn main() {\n    ${crateName}_lib::run()\n}\n` },
+    { id: 'desktop-tauri-conf', title: 'Tauri config', path: 'src-tauri/tauri.conf.json', content: JSON.stringify({ $schema: 'https://schema.tauri.app/config/2', productName, version: '0.1.0', identifier: `io.agent-dev.${slug}`, build: { frontendDist: '../dist', devUrl: 'http://localhost:1420', beforeDevCommand: 'npm run dev:web', beforeBuildCommand: 'npm run build' }, app: { windows: [{ title: productName, width: 960, height: 640, resizable: true }], security: { csp: null } }, bundle: { active: true, targets: 'all', icon: ['icons/icon.png'] } }, null, 2) + '\n' },
+    { id: 'desktop-icon-script', title: 'Placeholder icon generator', path: 'scripts/ensure-icon.mjs', content: "// Tauri's generate_context! macro fails to compile without src-tauri/icons/icon.png,\n// so this writes a plain placeholder when none exists. Replace it before shipping:\n// `npx tauri icon path/to/your-icon.png` generates the full platform icon set.\nimport { existsSync, mkdirSync, writeFileSync } from 'node:fs';\nimport { dirname, join } from 'node:path';\nimport { fileURLToPath } from 'node:url';\nimport { deflateSync } from 'node:zlib';\n\nconst root = dirname(fileURLToPath(import.meta.url));\nconst target = join(root, '..', 'src-tauri', 'icons', 'icon.png');\nif (existsSync(target)) process.exit(0);\n\nconst size = 512;\nconst rgba = [0x1f, 0x2a, 0x44, 0xff];\nconst scanlines = Buffer.concat(\n  Array.from({ length: size }, () => Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: size }, () => rgba).flat())])),\n);\n\nconst crcTable = Array.from({ length: 256 }, (_, n) => {\n  let c = n;\n  for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;\n  return c >>> 0;\n});\nfunction crc32(buffer) {\n  let c = 0xffffffff;\n  for (const byte of buffer) c = crcTable[(c ^ byte) & 0xff] ^ (c >>> 8);\n  return (c ^ 0xffffffff) >>> 0;\n}\nfunction chunk(type, data) {\n  const length = Buffer.alloc(4);\n  length.writeUInt32BE(data.length);\n  const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);\n  const crc = Buffer.alloc(4);\n  crc.writeUInt32BE(crc32(body));\n  return Buffer.concat([length, body, crc]);\n}\n\nconst ihdr = Buffer.alloc(13);\nihdr.writeUInt32BE(size, 0);\nihdr.writeUInt32BE(size, 4);\nihdr[8] = 8; // bit depth\nihdr[9] = 6; // colour type RGBA\n\nmkdirSync(dirname(target), { recursive: true });\nwriteFileSync(target, Buffer.concat([\n  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),\n  chunk('IHDR', ihdr),\n  chunk('IDAT', deflateSync(scanlines)),\n  chunk('IEND', Buffer.alloc(0)),\n]));\nconsole.log('icon: wrote placeholder src-tauri/icons/icon.png (replace before packaging)');\n" },
+    { id: 'desktop-gitignore', title: 'Desktop git ignore rules', path: '.gitignore', content: 'node_modules\ndist/\nsrc-tauri/target/\nsrc-tauri/gen/\n.env\n.env.*\n!.env.example\n.agent-dev/\n' },
+    { id: 'desktop-readme', title: 'Desktop README', path: 'README.md', content: `# ${markdown(productName)}\n\nDesktop application (Tauri v2) generated by Agent-Dev.\n\n## Structure\n- \`index.html\` / \`src/main.ts\` — webview UI (Vite + TypeScript)\n- \`src-tauri/src/lib.rs\` — Rust core and Tauri commands (\`app_version\` is a working example)\n- \`src-tauri/tauri.conf.json\` — window, build and bundle configuration\n\n## Prerequisites\n- Node.js 22+\n- Rust toolchain (\`rustup\`), plus the platform webview prerequisites listed at https://tauri.app/start/prerequisites/\n\n## Develop\n1. \`npm install\`\n2. \`npm run dev\` — Tauri starts the Vite dev server and opens the native window\n\n## Quality gate\n\`npm run quality\` → ${blueprint.spec.quality.required.join(' → ')}\n\n\`rust-check\` runs \`cargo check\`, which needs the Rust toolchain on the machine and in CI.\n\n## Package (manual, outside v0.1 pipeline)\n- \`scripts/ensure-icon.mjs\` writes a plain placeholder \`src-tauri/icons/icon.png\` when none exists, because \`tauri::generate_context!\` cannot compile without one. Replace it with real artwork (\`npx tauri icon path/to/icon.png\` generates the full platform set) before packaging.\n- \`npm run bundle\` produces the installer for the OS you run it on; cross-OS installers need a matching runner.\n- macOS code signing + notarization (Apple Developer ID) and Windows code signing are manual and require certificates Agent-Dev never handles.\n- Auto-update distribution is not configured; wire up \`tauri-plugin-updater\` and your own release hosting if you need it.\n\n## Intent\n${markdown(intent)}\n` },
+    // `rust-cache` needs `workspaces`: the Cargo workspace is `src-tauri`, not the repository root,
+    // and the action's default would look for a manifest that is not there and cache nothing. It has
+    // to run after the toolchain is installed, because it keys the cache on the resolved rustc version.
+    { id: 'desktop-quality-workflow', title: 'GitHub quality workflow', path: '.github/workflows/quality.yml', content: qualityWorkflow(`      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install Linux webview dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+`) },
+    distributionDoc(blueprint, [
+      '## macOS',
+      '1. Enroll in the Apple Developer Program and create a **Developer ID Application** certificate.',
+      '2. Export it, then set `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD` and `APPLE_SIGNING_IDENTITY`',
+      '   before `npm run bundle`.',
+      '3. Notarize with `APPLE_ID`, `APPLE_PASSWORD` (app-specific) and `APPLE_TEAM_ID`. Without',
+      '   notarization Gatekeeper refuses the app on other machines.',
+      '',
+      '## Windows',
+      '1. Buy a code-signing certificate (EV avoids the SmartScreen reputation warm-up).',
+      '2. Configure `bundle.windows.certificateThumbprint` in `src-tauri/tauri.conf.json`, or sign the',
+      '   produced installer with `signtool` afterwards.',
+      '',
+      '## Icons',
+      '`scripts/ensure-icon.mjs` writes a flat placeholder so the Rust build can compile. Replace it',
+      'before packaging: `npx tauri icon path/to/icon.png` generates the full platform icon set.',
+      '',
+      '## Auto-update (optional)',
+      'Add `tauri-plugin-updater`, generate a signing key pair (`npx tauri signer generate`), keep the',
+      'private key out of the repository and host the update manifest yourself.',
+      '',
+      '## Stores (optional)',
+      '- Mac App Store requires a sandboxed build with entitlements and App Store Connect review.',
+      '- Microsoft Store requires an MSIX package and a Partner Center account.',
+    ]),
+  ];
+}
+
+// Signing certificates, store accounts and review queues are human-owned by design: Agent-Dev
+// never handles them, so every packaged product type ships the exact manual checklist instead.
+function distributionDoc(blueprint: ProductBlueprint, lines: string[]): GeneratedArtifact {
+  return {
+    id: 'distribution-guide',
+    title: 'Distribution and signing guide',
+    path: 'generated/DISTRIBUTION.md',
+    content: [
+      `# ${markdown(blueprint.metadata.name)} distribution`,
+      '',
+      `Generated from ProductBlueprint revision ${blueprint.metadata.revision}.`,
+      '',
+      'Every step below is manual: it needs credentials, paid accounts or human review that Agent-Dev',
+      'does not hold and will not automate.',
+      '',
+      ...lines,
+    ].join('\n') + '\n',
+  };
+}
+
+function buildDesktopElectron(blueprint: ProductBlueprint): GeneratedArtifact[] {
+  const productName = blueprint.metadata.name;
+  const intent = blueprint.metadata.productIntent || 'No product intent provided.';
+  const slug = productName.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'agent-dev-desktop';
+
+  return [
+    { id: 'electron-package', title: 'Desktop package (Electron)', path: 'package.json', content: JSON.stringify({ name: slug, private: true, version: '0.1.0', description: intent, main: 'dist-electron/main.js', scripts: { 'dev:renderer': 'vite', 'build:main': 'tsc -p tsconfig.main.json', 'build:renderer': 'vite build', build: 'npm run build:main && npm run build:renderer', typecheck: 'tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.main.json', start: 'npm run build && electron .', quality: qualityScript(blueprint), bundle: 'npm run build && electron-builder' }, devDependencies: { '@types/node': '^22.15.3', electron: '^33.2.0', 'electron-builder': '^25.1.8', typescript: '^5.6.3', vite: '^5.4.10' } }, null, 2) + '\n' },
+    // The renderer is browser code and the main process is Node code; one tsconfig cannot describe
+    // both without letting Node globals leak into the renderer (or the reverse).
+    { id: 'electron-tsconfig-renderer', title: 'Renderer tsconfig', path: 'tsconfig.json', content: JSON.stringify({ compilerOptions: { target: 'ES2022', lib: ['ES2022', 'DOM', 'DOM.Iterable'], module: 'ESNext', moduleResolution: 'bundler', strict: true, noEmit: true, skipLibCheck: true, types: [] }, include: ['src', 'vite.config.mts'] }, null, 2) + '\n' },
+    { id: 'electron-tsconfig-main', title: 'Main process tsconfig', path: 'tsconfig.main.json', content: JSON.stringify({ compilerOptions: { target: 'ES2022', lib: ['ES2022'], module: 'CommonJS', moduleResolution: 'node', strict: true, skipLibCheck: true, outDir: 'dist-electron', types: ['node'] }, include: ['electron'] }, null, 2) + '\n' },
+    // `.mts`, not `.ts`: the main process needs CommonJS, so package.json cannot declare
+    // "type": "module", and Vite would then load its own config through the deprecated CJS API.
+    { id: 'electron-vite-config', title: 'Vite config', path: 'vite.config.mts', content: `import { defineConfig } from 'vite';\n\n// Relative base is required: Electron loads the built renderer over file://, where absolute\n// asset paths resolve against the filesystem root and every chunk 404s.\nexport default defineConfig({\n  base: './',\n  build: {\n    outDir: 'dist',\n    target: 'es2022',\n  },\n  server: {\n    port: 1420,\n    strictPort: true,\n  },\n});\n` },
+    { id: 'electron-main', title: 'Electron main process', path: 'electron/main.ts', content: `import { app, BrowserWindow, ipcMain } from 'electron';\nimport { join } from 'node:path';\n\nipcMain.handle('app-version', () => app.getVersion());\n\nfunction createWindow() {\n  const window = new BrowserWindow({\n    width: 960,\n    height: 640,\n    title: ${JSON.stringify(productName)},\n    webPreferences: {\n      preload: join(__dirname, 'preload.js'),\n      // The renderer stays sandboxed: it reaches the main process only through the preload\n      // bridge, never through Node APIs of its own.\n      contextIsolation: true,\n      nodeIntegration: false,\n    },\n  });\n\n  const devServer = process.env.VITE_DEV_SERVER_URL;\n  if (devServer) {\n    void window.loadURL(devServer);\n  } else {\n    void window.loadFile(join(__dirname, '..', 'dist', 'index.html'));\n  }\n}\n\nvoid app.whenReady().then(() => {\n  createWindow();\n  app.on('activate', () => {\n    if (BrowserWindow.getAllWindows().length === 0) createWindow();\n  });\n});\n\napp.on('window-all-closed', () => {\n  if (process.platform !== 'darwin') app.quit();\n});\n` },
+    { id: 'electron-preload', title: 'Electron preload bridge', path: 'electron/preload.ts', content: `import { contextBridge, ipcRenderer } from 'electron';\n\ncontextBridge.exposeInMainWorld('desktop', {\n  appVersion: () => ipcRenderer.invoke('app-version') as Promise<string>,\n});\n` },
+    { id: 'electron-index-html', title: 'Renderer HTML', path: 'index.html', content: `<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1" />\n    <link rel="stylesheet" href="/src/styles.css" />\n    <title>${markdown(productName)}</title>\n  </head>\n  <body>\n    <main class="shell">\n      <h1>${markdown(productName)}</h1>\n      <p class="intent">${markdown(intent)}</p>\n      <p class="version">Main process version: <strong data-version>loading…</strong></p>\n    </main>\n    <script type="module" src="/src/main.ts"></script>\n  </body>\n</html>\n` },
+    // The bridge type lives in its own ambient file: `declare global` is only legal inside a
+    // module, and the renderer entry has no imports of its own.
+    { id: 'electron-renderer-types', title: 'Preload bridge types', path: 'src/desktop.d.ts', content: `interface Window {\n  desktop: { appVersion: () => Promise<string> };\n}\n` },
+    { id: 'electron-renderer-main', title: 'Renderer entry', path: 'src/main.ts', content: `// Real IPC round trip through the preload bridge, so a broken channel surfaces immediately.\nconst target = document.querySelector<HTMLElement>('[data-version]');\n\nwindow.desktop\n  .appVersion()\n  .then(version => {\n    if (target) target.textContent = version;\n  })\n  .catch((error: unknown) => {\n    if (target) target.textContent = 'unavailable';\n    console.error('[${productName}] app-version failed', error);\n  });\n` },
+    { id: 'electron-styles', title: 'Renderer styles', path: 'src/styles.css', content: `:root { color-scheme: light dark; }\n* { box-sizing: border-box; }\nbody { margin: 0; font-family: system-ui, sans-serif; }\n.shell { padding: 32px; max-width: 720px; }\n.shell h1 { font-size: 22px; margin: 0 0 12px; }\n.intent { color: #666; line-height: 1.6; }\n.version { margin-top: 24px; font-size: 14px; }\n` },
+    { id: 'electron-builder-config', title: 'electron-builder configuration', path: 'electron-builder.yml', content: `appId: io.agent-dev.${slug}\nproductName: ${yamlQuoted(productName)}\nfiles:\n  - dist/**\n  - dist-electron/**\n  - package.json\ndirectories:\n  output: release\nmac:\n  target: dmg\n  category: public.app-category.productivity\n  # Signing and notarization need an Apple Developer ID certificate and an app-specific\n  # password. Left off so an unsigned local bundle is possible; see generated/DISTRIBUTION.md.\n  identity: null\nwin:\n  target: nsis\nlinux:\n  target: AppImage\n` },
+    { id: 'electron-gitignore', title: 'Desktop git ignore rules', path: '.gitignore', content: 'node_modules\ndist/\ndist-electron/\nrelease/\n.env\n.env.*\n!.env.example\n.agent-dev/\n' },
+    { id: 'electron-readme', title: 'Desktop README', path: 'README.md', content: `# ${markdown(productName)}\n\nDesktop application (Electron) generated by Agent-Dev.\n\n## Structure\n- \`electron/main.ts\` — main process, window creation, \`app-version\` IPC handler\n- \`electron/preload.ts\` — the only bridge the renderer gets (\`contextIsolation: true\`)\n- \`index.html\` / \`src/main.ts\` — renderer UI (Vite + TypeScript)\n- \`electron-builder.yml\` — installer configuration\n\n## Develop\n1. \`npm install\`\n2. \`npm run dev:renderer\` (Vite on port 1420)\n3. In a second shell: \`VITE_DEV_SERVER_URL=http://localhost:1420 npm run build:main && npx electron .\`\n\nOr build once and run the packaged renderer: \`npm start\`.\n\n## Quality gate\n\`npm run quality\` → ${blueprint.spec.quality.required.join(' → ')}\n\n## Package\n\`npm run bundle\` writes an unsigned installer to \`release/\`. Signing, notarization and\ndistribution are manual — see \`generated/DISTRIBUTION.md\`.\n\n## Intent\n${markdown(intent)}\n` },
+    { id: 'electron-quality-workflow', title: 'GitHub quality workflow', path: '.github/workflows/quality.yml', content: qualityWorkflow() },
+    distributionDoc(blueprint, [
+      '## macOS',
+      '1. Enroll in the Apple Developer Program and create a **Developer ID Application** certificate.',
+      '2. Export it to the build machine keychain, then set `CSC_LINK` / `CSC_KEY_PASSWORD` and remove',
+      '   `mac.identity: null` from `electron-builder.yml`.',
+      '3. Notarize with an app-specific password: set `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`,',
+      '   `APPLE_TEAM_ID` and add `mac.notarize: true`. Unnotarized builds are blocked by Gatekeeper.',
+      '',
+      '## Windows',
+      '1. Buy a code-signing certificate (OV or EV; EV avoids the SmartScreen reputation warm-up).',
+      '2. Provide it through `CSC_LINK` / `CSC_KEY_PASSWORD`, or use an HSM/cloud signing provider.',
+      '',
+      '## Auto-update (optional)',
+      'Add `electron-updater` plus a `publish` block in `electron-builder.yml` and host the release feed',
+      'yourself. Updates must be signed with the same certificate as the installer.',
+      '',
+      '## Stores (optional)',
+      '- Mac App Store needs a different target (`mas`), sandbox entitlements and App Store Connect review.',
+      '- Microsoft Store needs an `appx`/`msix` target and a Partner Center account.',
+    ]),
+  ];
+}
+
+function buildMobile(blueprint: ProductBlueprint): GeneratedArtifact[] {
+  const productName = blueprint.metadata.name;
+  const intent = blueprint.metadata.productIntent || 'No product intent provided.';
+  const slug = productName.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'agent-dev-mobile';
+  // iOS bundle identifiers and Android package names are dotted and reject hyphens.
+  const bundleId = `io.agentdev.${slug.replaceAll('-', '')}`;
+
+  return [
+    { id: 'mobile-package', title: 'Mobile package (Expo)', path: 'package.json', content: JSON.stringify({ name: slug, private: true, version: '0.1.0', main: 'expo-router/entry', scripts: { start: 'expo start', android: 'expo start --android', ios: 'expo start --ios', web: 'expo start --web', typecheck: 'tsc --noEmit', quality: qualityScript(blueprint) }, dependencies: { expo: '~52.0.0', 'expo-constants': '~17.0.0', 'expo-linking': '~7.0.0', 'expo-router': '~4.0.0', 'expo-status-bar': '~2.0.0', react: '18.3.1', 'react-native': '0.76.5', 'react-native-safe-area-context': '4.12.0', 'react-native-screens': '~4.4.0' }, devDependencies: { '@babel/core': '^7.25.0', '@types/react': '~18.3.12', typescript: '~5.6.3' } }, null, 2) + '\n' },
+    { id: 'mobile-app-json', title: 'Expo app configuration', path: 'app.json', content: JSON.stringify({ expo: { name: productName, slug, version: '0.1.0', orientation: 'portrait', scheme: slug.replaceAll('-', ''), userInterfaceStyle: 'automatic', newArchEnabled: true, ios: { supportsTablet: true, bundleIdentifier: bundleId }, android: { package: bundleId, edgeToEdgeEnabled: true }, plugins: ['expo-router'] } }, null, 2) + '\n' },
+    { id: 'mobile-tsconfig', title: 'Mobile tsconfig', path: 'tsconfig.json', content: JSON.stringify({ extends: 'expo/tsconfig.base', compilerOptions: { strict: true }, include: ['**/*.ts', '**/*.tsx', '.expo/types/**/*.ts', 'expo-env.d.ts'] }, null, 2) + '\n' },
+    { id: 'mobile-babel-config', title: 'Babel configuration', path: 'babel.config.js', content: `module.exports = function (api) {\n  api.cache(true);\n  return { presets: ['babel-preset-expo'] };\n};\n` },
+    { id: 'mobile-layout', title: 'Root navigator', path: 'app/_layout.tsx', content: `import { Stack } from 'expo-router';\nimport { StatusBar } from 'expo-status-bar';\n\nexport default function RootLayout() {\n  return (\n    <>\n      <StatusBar style="auto" />\n      <Stack screenOptions={{ headerTitle: ${JSON.stringify(productName)} }} />\n    </>\n  );\n}\n` },
+    { id: 'mobile-home-screen', title: 'Home screen', path: 'app/index.tsx', content: `import { useState } from 'react';\nimport { Pressable, StyleSheet, Text, View } from 'react-native';\n\nexport default function HomeScreen() {\n  const [taps, setTaps] = useState(0);\n\n  return (\n    <View style={styles.screen}>\n      <Text style={styles.title}>${markdown(productName)}</Text>\n      <Text style={styles.intent}>${markdown(intent)}</Text>\n      <Pressable style={styles.button} onPress={() => setTaps(current => current + 1)}>\n        <Text style={styles.buttonLabel}>Tapped {taps} times</Text>\n      </Pressable>\n    </View>\n  );\n}\n\nconst styles = StyleSheet.create({\n  screen: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 16 },\n  title: { fontSize: 22, fontWeight: '600' },\n  intent: { fontSize: 15, color: '#666', textAlign: 'center', lineHeight: 22 },\n  button: { marginTop: 8, paddingHorizontal: 20, paddingVertical: 12, borderRadius: 10, backgroundColor: '#1f2a44' },\n  buttonLabel: { color: '#fff', fontSize: 15 },\n});\n` },
+    { id: 'mobile-eas-json', title: 'EAS build profiles', path: 'eas.json', content: JSON.stringify({ cli: { version: '>= 12.0.0' }, build: { development: { developmentClient: true, distribution: 'internal' }, preview: { distribution: 'internal' }, production: { autoIncrement: true } }, submit: { production: {} } }, null, 2) + '\n' },
+    { id: 'mobile-gitignore', title: 'Mobile git ignore rules', path: '.gitignore', content: 'node_modules\n.expo/\ndist/\nweb-build/\nios/\nandroid/\n*.keystore\n!debug.keystore\n.env\n.env.*\n!.env.example\n.agent-dev/\n' },
+    { id: 'mobile-readme', title: 'Mobile README', path: 'README.md', content: `# ${markdown(productName)}\n\nMobile application (Expo / React Native, expo-router) generated by Agent-Dev.\n\n## Structure\n- \`app/_layout.tsx\` — root stack navigator\n- \`app/index.tsx\` — home screen\n- \`app.json\` — Expo config (bundle identifier \`${bundleId}\`)\n- \`eas.json\` — EAS Build profiles\n\n## Prerequisites\nNode.js 22+, plus Xcode (iOS simulator) or Android Studio (emulator) for on-device runs.\n\n## Develop\n1. \`npm install\`\n2. \`npm start\` — then press \`i\` / \`a\`, or scan the QR code with Expo Go\n\n## Quality gate\n\`npm run quality\` → ${blueprint.spec.quality.required.join(' → ')}\n\nThis gate is static only. A device or simulator smoke run is manual: Agent-Dev has no simulator.\n\n## Ship\nNative binaries come from EAS Build (\`eas build -p ios\` / \`-p android\`). Store accounts, signing\ncredentials and review are manual — see \`generated/DISTRIBUTION.md\`.\n\n## Intent\n${markdown(intent)}\n` },
+    { id: 'mobile-quality-workflow', title: 'GitHub quality workflow', path: '.github/workflows/quality.yml', content: qualityWorkflow() },
+    distributionDoc(blueprint, [
+      '## Build service',
+      '1. `npm i -g eas-cli && eas login` (Expo account required).',
+      '2. `eas build:configure`, then `eas build -p android --profile preview` for an installable APK.',
+      '',
+      '## iOS (App Store)',
+      '1. Apple Developer Program membership ($99/yr) and an App Store Connect app record.',
+      '2. `eas build -p ios --profile production` — EAS can manage the distribution certificate and',
+      '   provisioning profile, but you must authorize it with your Apple ID.',
+      '3. `eas submit -p ios`, then complete App Review (privacy questionnaire, screenshots, rating).',
+      '',
+      '## Android (Play Store)',
+      '1. Google Play Console account (one-time $25) and a Play app record.',
+      '2. Keep the upload keystore safe — losing it means you cannot ship updates to the same listing.',
+      '3. `eas build -p android --profile production` then `eas submit -p android`; complete the data',
+      '   safety form and content rating before release.',
+      '',
+      '## Over-the-air updates (optional)',
+      '`expo-updates` + `eas update` ships JS-only changes without review. Native changes still need a',
+      'new store build.',
+    ]),
+  ];
+}
+
+function buildApiTool(blueprint: ProductBlueprint): GeneratedArtifact[] {
+  const productName = blueprint.metadata.name;
+  const intent = blueprint.metadata.productIntent || 'No product intent provided.';
+  const slug = productName.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'agent-dev-mcp';
+
+  return [
+    // `bin` plus the shebang in src/index.ts is what makes the built server runnable by an MCP
+    // client, which spawns it as a command rather than calling it over HTTP.
+    { id: 'mcp-package', title: 'MCP server package', path: 'package.json', content: JSON.stringify({ name: slug, private: true, version: '0.1.0', description: intent, type: 'module', bin: { [slug]: 'dist/index.js' }, files: ['dist'], scripts: { dev: 'tsx src/index.ts', lint: 'eslint .', typecheck: 'tsc --noEmit', unit: 'vitest run', build: 'tsc -p tsconfig.build.json', quality: qualityScript(blueprint), inspect: 'npx @modelcontextprotocol/inspector node dist/index.js' }, dependencies: { '@modelcontextprotocol/sdk': '^1.30.0', zod: '^4.4.3' }, devDependencies: { '@eslint/js': '^9.26.0', '@types/node': '^22.15.3', eslint: '^9.26.0', globals: '^16.0.0', tsx: '^4.19.4', typescript: '^5.8.3', 'typescript-eslint': '^8.32.0', vitest: '^3.1.3' } }, null, 2) + '\n' },
+    { id: 'mcp-tsconfig', title: 'MCP tsconfig', path: 'tsconfig.json', content: JSON.stringify({ compilerOptions: { target: 'ES2022', lib: ['ES2022'], module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, noEmit: true, skipLibCheck: true, types: ['node'] }, include: ['src', 'eslint.config.js'] }, null, 2) + '\n' },
+    { id: 'mcp-tsconfig-build', title: 'MCP build tsconfig', path: 'tsconfig.build.json', content: JSON.stringify({ extends: './tsconfig.json', compilerOptions: { noEmit: false, outDir: 'dist', declaration: false }, include: ['src'], exclude: ['src/**/*.test.ts'] }, null, 2) + '\n' },
+    { id: 'mcp-eslint-config', title: 'ESLint flat configuration', path: 'eslint.config.js', content: `import eslint from '@eslint/js';\nimport globals from 'globals';\nimport tseslint from 'typescript-eslint';\n\nexport default tseslint.config(\n  { ignores: ['dist/**', 'node_modules/**'] },\n  eslint.configs.recommended,\n  ...tseslint.configs.recommended,\n  { languageOptions: { globals: { ...globals.node } } },\n);\n` },
+    // Without its own config, vitest walks up the directory tree and may inherit a parent project's
+    // `include` pattern (e.g. `packages/**/test/**/*.test.ts`), which never matches `src/*.test.ts`.
+    // The inherited config then exits with "No test files found" and fails the quality gate.
+    { id: 'mcp-vitest-config', title: 'Vitest configuration', path: 'vitest.config.ts', content: `import { defineConfig } from 'vitest/config';\n\nexport default defineConfig({\n  test: {\n    include: ['src/**/*.test.ts'],\n  },\n});\n` },
+    // The server is built separately from the transport so tests can drive it over an in-memory
+    // pair. Wiring stdio into the same function would make every test spawn a process.
+    { id: 'mcp-server', title: 'MCP server and tools', path: 'src/server.ts', content: `import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';\nimport { z } from 'zod';\n\nexport function createServer() {\n  const server = new McpServer({ name: ${JSON.stringify(slug)}, version: '0.1.0' });\n\n  server.registerTool(\n    'summarize_text',\n    {\n      title: 'Summarize text',\n      description: 'Report word, sentence and character counts plus the most frequent words.',\n      inputSchema: {\n        text: z.string().min(1).describe('The text to analyze.'),\n        topWords: z.number().int().min(1).max(20).default(5).describe('How many frequent words to return.'),\n      },\n    },\n    ({ text, topWords }) => {\n      const words = text.toLowerCase().match(/[\\p{L}\\p{N}']+/gu) ?? [];\n      const sentences = text.split(/[.!?]+/).filter(part => part.trim().length > 0);\n      const counts = new Map<string, number>();\n      for (const word of words) counts.set(word, (counts.get(word) ?? 0) + 1);\n      const frequent = [...counts.entries()]\n        .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))\n        .slice(0, topWords)\n        .map(([word, count]) => \`\${word} (\${count})\`);\n\n      return {\n        content: [{\n          type: 'text' as const,\n          text: [\n            \`words: \${words.length}\`,\n            \`sentences: \${sentences.length}\`,\n            \`characters: \${text.length}\`,\n            \`frequent: \${frequent.join(', ') || 'none'}\`,\n          ].join('\\n'),\n        }],\n      };\n    },\n  );\n\n  return server;\n}\n` },
+    { id: 'mcp-entry', title: 'MCP stdio entry', path: 'src/index.ts', content: `#!/usr/bin/env node\nimport { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';\nimport { createServer } from './server.js';\n\n// stdout is the protocol channel: anything written there that is not a JSON-RPC message breaks\n// the client's parser, so diagnostics have to go to stderr.\nconst transport = new StdioServerTransport();\nawait createServer().connect(transport);\nconsole.error(\`[${productName}] MCP server ready on stdio\`);\n` },
+    { id: 'mcp-test', title: 'MCP server tests', path: 'src/server.test.ts', content: `import { Client } from '@modelcontextprotocol/sdk/client/index.js';\nimport { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';\nimport { beforeEach, describe, expect, it } from 'vitest';\nimport { createServer } from './server.js';\n\n// A real client over a linked transport pair: this exercises tool discovery and argument\n// validation the same way an MCP client does, which asserting on the callback alone would not.\nlet client: Client;\n\nbeforeEach(async () => {\n  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();\n  client = new Client({ name: 'test-client', version: '0.0.0' });\n  await Promise.all([createServer().connect(serverTransport), client.connect(clientTransport)]);\n});\n\ndescribe('mcp server', () => {\n  it('advertises its tools to a connected client', async () => {\n    const { tools } = await client.listTools();\n    expect(tools.map(tool => tool.name)).toContain('summarize_text');\n  });\n\n  it('answers a real tool call', async () => {\n    const result = await client.callTool({ name: 'summarize_text', arguments: { text: 'One two. Two three three.', topWords: 2 } });\n    const text = (result.content as { type: string; text: string }[])[0]!.text;\n    expect(text).toContain('words: 5');\n    expect(text).toContain('sentences: 2');\n    expect(text).toContain('three (2)');\n  });\n\n  it('rejects arguments the schema does not allow instead of running the tool', async () => {\n    const result = await client.callTool({ name: 'summarize_text', arguments: { text: '' } });\n    expect(result.isError).toBe(true);\n  });\n});\n` },
+    { id: 'mcp-gitignore', title: 'MCP git ignore rules', path: '.gitignore', content: 'node_modules\ndist/\n.env\n.env.*\n!.env.example\n.agent-dev/\n' },
+    { id: 'mcp-readme', title: 'MCP server README', path: 'README.md', content: `# ${markdown(productName)}\n\nModel Context Protocol server generated by Agent-Dev. It is consumed as a local process over\nstdio by an MCP client (Claude Desktop, Cursor), so there is no HTTP endpoint, no Cloudflare Pages\nproject and no Vercel deployment.\n\n## Tools\n| Name | Input | Description |\n| --- | --- | --- |\n| \`summarize_text\` | \`text\`, \`topWords\` (1-20, default 5) | Word/sentence/character counts and the most frequent words |\n\n## Develop\n1. \`npm install\`\n2. \`npm run dev\` — runs the server on stdio (it waits for a client; it is not a REPL)\n3. \`npm run build && npm run inspect\` — drive the built server through the MCP Inspector UI\n\n## Quality gate\n\`npm run quality\` → ${blueprint.spec.quality.required.join(' → ')}\n\nThe unit tests connect a real MCP \`Client\` over an in-memory transport pair, so tool discovery and\nargument validation are covered without spawning a process.\n\n## Register with a client\nAfter \`npm run build\`, add this to the client's MCP config (absolute path required — the client\nspawns the command with its own working directory):\n\n\`\`\`json\n{\n  "mcpServers": {\n    "${slug}": { "command": "node", "args": ["/absolute/path/to/${slug}/dist/index.js"] }\n  }\n}\n\`\`\`\n\n## Adding a tool\nRegister it in \`src/server.ts\` with a zod \`inputSchema\`; the schema is what the client sees and what\nrejects bad arguments. Keep diagnostics on stderr — stdout carries the protocol.\n\n## Intent\n${markdown(intent)}\n` },
+    { id: 'mcp-quality-workflow', title: 'GitHub quality workflow', path: '.github/workflows/quality.yml', content: qualityWorkflow() },
+    distributionDoc(blueprint, [
+      '## Register with a client (no publishing needed)',
+      '1. `npm run build`.',
+      '2. Add the server to the client config with an absolute path to `dist/index.js`:',
+      '   - Claude Desktop (macOS): `~/Library/Application Support/Claude/claude_desktop_config.json`',
+      '   - Cursor: `~/.cursor/mcp.json`',
+      '3. Restart the client. It spawns the command itself; there is no port and no URL to check.',
+      '',
+      '## Publish to npm (optional)',
+      '1. Remove `"private": true` from `package.json` and pick a real package name (scoped names need',
+      '   `npm publish --access public`).',
+      '2. `npm run quality && npm run build`, then `npm publish`. Only `dist/` ships (see `files`).',
+      '3. Consumers can then use `{ "command": "npx", "args": ["-y", "<package-name>"] }`.',
+      '',
+      '## Before exposing anything sensitive',
+      'Tools run with the privileges of the client that spawned them. Any tool that touches the file',
+      'system, network or credentials needs its own path/scope validation — the schema only checks',
+      'argument shape, not authorization.',
+    ]),
+  ];
+}
+
+// Tier0 独立站双用 L1（TF-01）：把 commerce-os 的 storefront 前台（Astro SSR + React 岛）固化为
+// 可复用模板骨架。结构与 commerce-os front/src 同构（首页/列表/详情/订单状态 + cart/order 岛 +
+// lib/api），但商品、主题、文案全部由 blueprint 配置化注入。行业差异由 spec.product.storefrontProfile
+// 切换：retail=品牌零售（本任务完整）；cross-border（TF-02）/subscription（TF-03）先落占位钩子。
+type StorefrontProfile = 'retail' | 'cross-border' | 'subscription';
+function storefrontProfileBits(profile: StorefrontProfile): {
+  priceNote: string;
+  heroExtra: string;
+  marker: string;
+} {
+  switch (profile) {
+    case 'cross-border':
+      // TF-02：多币种展示真实落地。价格按 SKU 自带 currency 渲染；首页挂币种切换器（展示用，
+      // 汇率为占位）。价格货币化占位 = 真实收款/汇率换算待 Stripe 与汇率源接入，当前只做展示层。
+      return {
+        priceNote:
+          '<div class="currency-switcher" data-currencies="CNY,USD,EUR">币种切换（展示占位，汇率未货币化）</div>\n'
+          + '    <p class="price-placeholder">价格按 SKU 原币种展示；真实汇率换算与多币种收款待支付通道接入（价格货币化占位）。</p>',
+        heroExtra: '<p class="badge">跨境 · 多币种展示</p>',
+        marker: 'profile-cross-border',
+      };
+    case 'subscription':
+      // TF-03：订阅周期订单占位完整落地。展示订阅方案卡（月/季）与结算时的「周期扣费」占位语义；
+      // 真实周期订单/续费扣款待计费与支付通道（对齐 agent-world 订阅 gate），当前只做占位结构。
+      return {
+        priceNote:
+          '<div class="subscription-plans">'
+          + '<div class="plan"><h3>月度订阅</h3><p>每月自动续订（周期订单占位，未接通续费扣款）</p></div>'
+          + '<div class="plan"><h3>季度订阅</h3><p>每季度自动续订（周期订单占位，未接通续费扣款）</p></div>'
+          + '</div>\n'
+          + '    <p class="recurring-placeholder">周期订单为占位语义：结算时标记 recurring=true，真实续费/退订与扣款待计费通道接入。</p>',
+        heroExtra: '<p class="badge">订阅 · 周期订单</p>',
+        marker: 'profile-subscription',
+      };
+    case 'retail':
+    default:
+      return { priceNote: '', heroExtra: '', marker: 'profile-retail' };
+  }
+}
+
+function buildStorefront(blueprint: ProductBlueprint): GeneratedArtifact[] {
+  const header = `Generated from ProductBlueprint revision ${blueprint.metadata.revision}.`;
+  const brand = markdown(blueprint.metadata.name);
+  const intent = markdown(blueprint.metadata.productIntent || '精选好物，一站选购。');
+  const slug = blueprint.metadata.name.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'agent-dev-storefront';
+  const profile: StorefrontProfile = blueprint.spec.product.storefrontProfile;
+  const bits = storefrontProfileBits(profile);
+  // TF-04：模板→Blueprint 的配置化输入（主题/文案/种子商品）。
+  const sfConfig = blueprint.spec.storefrontConfig;
+  // TF-02：cross-border 额外注入多币种展示工具（汇率为占位，真实货币化待支付通道）。
+  const apiExtras = profile === 'cross-border'
+    ? '\n// Multi-currency display (TF-02). Rates are display placeholders until a real FX source and\n// a monetized payment provider are wired — prices are NOT converted for charging here.\nexport const SUPPORTED_CURRENCIES = [\'CNY\', \'USD\', \'EUR\'] as const;\nconst PLACEHOLDER_RATES: Record<string, number> = { CNY: 1, USD: 0.14, EUR: 0.13 };\n\nexport function convertPrice(price: number, from: string, to: string): number {\n  const fromRate = PLACEHOLDER_RATES[from] ?? 1;\n  const toRate = PLACEHOLDER_RATES[to] ?? 1;\n  return (price / fromRate) * toRate;\n}\n'
+    : profile === 'subscription'
+      ? '\n// Subscription plans (TF-03). Recurring order semantics are placeholders: checkout marks\n// recurring=true, but real renewal/cancellation billing waits for the monetized billing gate.\nexport interface SubscriptionPlan { id: string; cycle: \'monthly\' | \'quarterly\'; amountMicros: number; currency: string; }\nexport const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [];\n\nexport function isRecurringOrder(planId: string | null): boolean {\n  // Placeholder: any selected subscription plan id marks the order recurring until billing lands.\n  return Boolean(planId);\n}\n'
+      : '';
+
+  return [
+    {
+      id: 'template-root-package',
+      title: 'Storefront package',
+      path: 'package.json',
+      content: JSON.stringify({
+        name: slug,
+        private: true,
+        type: 'module',
+        engines: { node: '>=22.0.0' },
+        scripts: {
+          dev: 'astro dev',
+          build: 'node scripts/build.mjs',
+          smoke: 'node scripts/smoke.mjs',
+          eval: 'node scripts/eval-run.mjs --baseline',
+          quality: qualityScript(blueprint),
+        },
+        dependencies: {
+          '@astrojs/vercel': '^8.0.0',
+          '@astrojs/react': '^4.0.0',
+          astro: '^5.0.0',
+          react: '^19.0.0',
+          'react-dom': '^19.0.0',
+        },
+      }, null, 2) + '\n',
+    },
+    {
+      id: 'template-storefront-build',
+      title: 'Storefront skeleton build script',
+      path: 'scripts/build.mjs',
+      // The gate must go green without installing Astro: this assembles the isomorphic SSR page set into
+      // dist/ and asserts the homepage carries the brand + profile marker. A real `astro build` runs at
+      // deploy time (GATE-L1); the scaffold ships the .astro sources for that.
+      content: `import { mkdir, readFile, writeFile } from 'node:fs/promises';\nimport { dirname, join } from 'node:path';\n\n// Skeleton build: copy the SSR page sources into dist/ and assert the isomorphic set is complete.\n// This is the template quality gate, not the Astro production build (that runs at deploy time).\nconst profile = ${JSON.stringify(profile)};\nconst pages = ['index.astro', 'catalog.astro', 'catalog/[id].astro', 'orders/[cartId].astro'];\nfor (const page of pages) {\n  const src = join('src/pages', page);\n  const content = await readFile(src, 'utf8');\n  const dest = join('dist/pages', page);\n  await mkdir(dirname(dest), { recursive: true });\n  await writeFile(dest, content);\n}\nconst home = await readFile('dist/pages/index.astro', 'utf8');\nif (!home.includes('profile:' + profile)) {\n  throw new Error('build: homepage is missing the storefront profile marker for ' + profile);\n}\nconsole.log('build: storefront skeleton (' + profile + ') assembled at dist/pages');\n`,
+    },
+    {
+      id: 'template-storefront-smoke',
+      title: 'Storefront profile smoke check',
+      path: 'scripts/smoke.mjs',
+      content: `import { readFile } from 'node:fs/promises';\n\n// Smoke asserts the generated profile actually surfaced in the homepage. This is what the contract\n// test for TF-02/TF-03 (multi-currency / subscription) pins on.\nconst profile = ${JSON.stringify(profile)};\nconst home = await readFile('dist/pages/index.astro', 'utf8').catch(() => {\n  throw new Error('smoke: dist/pages/index.astro missing — run the build first.');\n});\nconst marker = 'profile:' + profile;\nif (!home.includes(marker)) {\n  throw new Error('smoke: homepage missing profile marker ' + marker);\n}\nconsole.log('smoke: ' + marker + ' present on homepage.');\n`,
+    },
+    {
+      id: 'template-storefront-eval',
+      title: 'Storefront baseline eval runner',
+      path: 'scripts/eval-run.mjs',
+      // The platform Quality Gate parses the final EVAL_SUMMARY line (fallback: an `eval-score:` line)
+      // into eval-report.json. The gate verdict itself follows the command exit code — a missing or
+      // malformed summary is recorded as "absent" evidence and never softens the verdict (FR5-4).
+      content: `import { readFile } from 'node:fs/promises';\nimport { join } from 'node:path';\n\n// Baseline eval for the storefront skeleton (invoked via \`npm run eval\`). The --baseline flag is the\n// zeus-style invocation and the only mode this scaffold ships. Replace these cases with the product's\n// own suite — the machine contract to keep is the final EVAL_SUMMARY line (or an \`eval-score: <0-1>\`\n// line), which the Agent-Dev Quality Gate parses into eval-report.json.\nconst knownFlags = ['--baseline'];\nconst unknown = process.argv.slice(2).filter((arg) => !knownFlags.includes(arg));\nif (unknown.length > 0) {\n  console.error('eval: unknown arguments ' + unknown.join(', ') + ' — usage: node scripts/eval-run.mjs [--baseline]');\n  process.exit(2);\n}\nconst profile = ${JSON.stringify(profile)};\nconst pagesRoot = 'dist/pages';\nconst started = Date.now();\nconst readPage = (path) => readFile(join(pagesRoot, path), 'utf8').catch(() => null);\nconst home = await readPage('index.astro');\nif (home === null) {\n  console.error('eval: dist/pages/index.astro missing — run the build first (npm run build).');\n  process.exit(2);\n}\nconst catalog = await readPage('catalog.astro');\nconst detail = await readPage(join('catalog', '[id].astro'));\nconst order = await readPage(join('orders', '[cartId].astro'));\nconst cases = [\n  { id: 'homepage-profile-marker', pass: home.includes('profile:' + profile) },\n  { id: 'homepage-navigation', pass: home.includes('<nav>') },\n  { id: 'catalog-page-assembled', pass: catalog !== null && catalog.includes('profile:' + profile) },\n  { id: 'detail-page-assembled', pass: detail !== null },\n  { id: 'order-page-assembled', pass: order !== null },\n];\nlet failed = 0;\nfor (const item of cases) {\n  if (!item.pass) failed += 1;\n  console.log('eval: ' + (item.pass ? 'PASS' : 'FAIL') + ' ' + item.id);\n}\nconst total = cases.length;\nconst score = Math.round(((total - failed) / total) * 100) / 100;\nconst passed = failed === 0;\nconst durationMs = Date.now() - started;\nconsole.log('eval-score: ' + score);\nconsole.log('EVAL_SUMMARY ' + JSON.stringify({ score, passed, durationMs, cases: total, failed }));\nif (!passed) process.exit(1);\n`,
+    },
+    {
+      id: 'template-storefront-astro-config',
+      title: 'Astro SSR configuration',
+      path: 'astro.config.mjs',
+      content: `import { defineConfig } from 'astro/config';\nimport vercel from '@astrojs/vercel';\nimport react from '@astrojs/react';\n\nexport default defineConfig({\n  output: 'server',\n  adapter: vercel(),\n  integrations: [react()],\n});\n`,
+    },
+    {
+      id: 'template-storefront-tsconfig',
+      title: 'Storefront TypeScript configuration',
+      path: 'tsconfig.json',
+      content: JSON.stringify({ compilerOptions: { target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', jsx: 'react-jsx', strict: true, skipLibCheck: true, types: ['node'] }, include: ['src'] }, null, 2) + '\n',
+    },
+    {
+      id: 'template-storefront-vercel',
+      title: 'Vercel SSR configuration',
+      path: 'vercel.json',
+      content: JSON.stringify({ version: 2, buildCommand: 'astro build' }, null, 2) + '\n',
+    },
+    {
+      id: 'template-storefront-env-example',
+      title: 'Storefront environment example',
+      path: 'config/env.example',
+      content: `# commerce-os storefront API base (SSR-only; never ships to the browser).\nCOMMERCE_API_BASE_URL=http://127.0.0.1:8787\n`,
+    },
+    {
+      id: 'template-storefront-api-lib',
+      title: 'Storefront server-side API client',
+      path: 'src/lib/api.ts',
+      content: `// Server-side API client (SSR only). The browser never sees COMMERCE_API_BASE_URL.\nconst API_BASE = process.env.COMMERCE_API_BASE_URL ?? 'http://127.0.0.1:8787';\n\nexport interface CatalogSku { id: string; skuCode: string; price: number; currency: string; specs: Record<string, unknown>; }\nexport interface CatalogItem { productId: string; title: string; skus: CatalogSku[]; listedAt: string; }\n\nexport async function fetchCatalog(): Promise<CatalogItem[]> {\n  try {\n    const res = await fetch(\`\${API_BASE}/api/v1/storefront/catalog\`, { signal: AbortSignal.timeout(3000) });\n    if (!res.ok) return [];\n    const data = (await res.json()) as { catalog?: CatalogItem[] };\n    return data.catalog ?? [];\n  } catch { return []; }\n}\n\nexport async function fetchCatalogItem(id: string): Promise<CatalogItem | null> {\n  try {\n    const res = await fetch(\`\${API_BASE}/api/v1/storefront/catalog/\${id}\`, { signal: AbortSignal.timeout(3000) });\n    if (!res.ok) return null;\n    const data = (await res.json()) as { item?: CatalogItem };\n    return data.item ?? null;\n  } catch { return null; }\n}\n\nexport function formatPrice(price: number, currency: string): string {\n  return new Intl.NumberFormat('zh-CN', { style: 'currency', currency, minimumFractionDigits: 2 }).format(price);\n}\n\nexport function lowestPrice(item: CatalogItem): number {\n  return item.skus.reduce((min, s) => Math.min(min, s.price), Number.POSITIVE_INFINITY);\n}\n${apiExtras}`,
+    },
+    {
+      id: 'template-storefront-index',
+      title: 'Storefront homepage',
+      path: 'src/pages/index.astro',
+      content: `---\nimport { fetchCatalog, lowestPrice, formatPrice } from '../lib/api';\nconst catalog = await fetchCatalog();\nconst featured = catalog.slice(0, 6);\n---\n<html lang="zh" data-storefront-profile="${profile}">\n  <head>\n    <meta charset="utf-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1" />\n    <title>${brand} · 首页</title>\n  </head>\n  <body>\n    <!-- profile:${profile} -->\n    <header><span class="brand">${brand}</span><nav><a href="/">首页</a><a href="/catalog">全部商品</a></nav></header>\n    <section class="hero"><h1>${brand}</h1><p>${markdown(sfConfig.tagline || intent)}</p>${bits.heroExtra}</section>\n    ${bits.priceNote}\n    {featured.length > 0 ? (\n      <div class="grid">\n        {featured.map((item) => (\n          <a class="card" href={\`/catalog/\${item.productId}\`}>\n            <h3>{item.title}</h3>\n            <div class="price">{formatPrice(lowestPrice(item), item.skus[0]?.currency ?? 'CNY')} 起</div>\n          </a>\n        ))}\n      </div>\n    ) : (\n      <div class="empty">暂无在售商品</div>\n    )}\n    <footer>${brand} · Astro SSR · data: commerce-os /api/v1/storefront/catalog</footer>\n  </body>\n</html>\n`,
+    },
+    {
+      id: 'template-storefront-catalog',
+      title: 'Storefront catalog list page',
+      path: 'src/pages/catalog.astro',
+      content: `---\nimport { fetchCatalog, lowestPrice, formatPrice } from '../lib/api';\nconst catalog = await fetchCatalog();\n---\n<html lang="zh" data-storefront-profile="${profile}">\n  <head><meta charset="utf-8" /><title>${brand} · 全部商品</title></head>\n  <body>\n    <!-- profile:${profile} -->\n    <header><span class="brand">${brand}</span><nav><a href="/">首页</a><a href="/catalog">全部商品</a></nav></header>\n    <h1>全部商品</h1>\n    <div class="grid">\n      {catalog.map((item) => (\n        <a class="card" href={\`/catalog/\${item.productId}\`}>\n          <h3>{item.title}</h3>\n          <div class="price">{formatPrice(lowestPrice(item), item.skus[0]?.currency ?? 'CNY')} 起</div>\n        </a>\n      ))}\n    </div>\n  </body>\n</html>\n`,
+    },
+    {
+      id: 'template-storefront-detail',
+      title: 'Storefront product detail page',
+      path: 'src/pages/catalog/[id].astro',
+      content: `---\nimport { fetchCatalogItem, formatPrice } from '../../lib/api';\nconst { id } = Astro.params;\nconst item = id ? await fetchCatalogItem(id) : null;\n---\n<html lang="zh" data-storefront-profile="${profile}">\n  <head><meta charset="utf-8" /><title>${brand} · 商品详情</title></head>\n  <body>\n    <!-- profile:${profile} -->\n    <header><span class="brand">${brand}</span><nav><a href="/">首页</a><a href="/catalog">全部商品</a></nav></header>\n    {item ? (\n      <article>\n        <h1>{item.title}</h1>\n        <ul>\n          {item.skus.map((sku) => (\n            <li>{sku.skuCode} — {formatPrice(sku.price, sku.currency)}</li>\n          ))}\n        </ul>\n      </article>\n    ) : (<p>商品不存在或未上架。</p>)}\n  </body>\n</html>\n`,
+    },
+    {
+      id: 'template-storefront-order-status',
+      title: 'Storefront order status page',
+      path: 'src/pages/orders/[cartId].astro',
+      content: `---\nconst { cartId } = Astro.params;\n---\n<html lang="zh" data-storefront-profile="${profile}">\n  <head><meta charset="utf-8" /><title>${brand} · 订单状态</title></head>\n  <body>\n    <!-- profile:${profile} -->\n    <header><span class="brand">${brand}</span></header>\n    <h1>订单状态</h1>\n    <p>订单 {cartId}：订单状态页与退款入口（接 commerce-os aftersale 域）。</p>\n  </body>\n</html>\n`,
+    },
+    {
+      id: 'template-storefront-cart-island',
+      title: 'Storefront cart island',
+      path: 'src/components/CartIsland.tsx',
+      content: `import { useState } from 'react';\n\n// 购物车 / 结算交互岛（匿名 cart token 会话）。D3 挂起态由结算页呈现。\nexport default function CartIsland() {\n  const [count, setCount] = useState(0);\n  return <button onClick={() => setCount((c) => c + 1)}>加入购物车（{count}）</button>;\n}\n`,
+    },
+    {
+      id: 'template-storefront-order-island',
+      title: 'Storefront order island',
+      path: 'src/components/OrderIsland.tsx',
+      content: `// 订单状态 / 退款请求交互岛（接 commerce-os aftersale 域，D2 审批后退款）。\nexport default function OrderIsland({ orderId }: { orderId: string }) {\n  return <p>订单 {orderId} 的状态与退款入口。</p>;\n}\n`,
+    },
+    {
+      id: 'template-storefront-profile-config',
+      title: 'Storefront profile and content config',
+      path: 'config/storefront.config.json',
+      content: JSON.stringify({
+        profile,
+        brand,
+        tagline: sfConfig.tagline || intent,
+        theme: { color: sfConfig.themeColor },
+        seedProducts: sfConfig.seedProducts,
+      }, null, 2) + '\n',
+    },
+    {
+      id: 'template-storefront-readme',
+      title: 'Storefront README',
+      path: 'README.md',
+      content: `# ${brand}\n\n${header}\n\nTier0 独立站双用 storefront 模板（profile = **${profile}**）。Astro SSR + React 岛，商品/订单/支付数据来自外部 commerce-os 内核，前端不自带后端与数据库。\n\n## Local commands\n\n- \`npm install\`\n- \`npm run build\`（装配 SSR 页面骨架）\n- \`npm run smoke\`（profile 标记冒烟）\n- \`npm run eval\`（基线评测，产出 EVAL_SUMMARY 分数摘要，供质量门解析进 eval-report.json）\n- \`npm run dev\`（真实 Astro dev）\n\n## Environment\n\n复制 \`config/env.example\` 为 \`.env\`，把 \`COMMERCE_API_BASE_URL\` 指向 commerce-os storefront API。浏览器产物不得携带任何服务端密钥。\n`,
+    },
+    {
+      id: 'template-storefront-gitignore',
+      title: 'Storefront git ignore rules',
+      path: '.gitignore',
+      content: 'node_modules\ndist/\n.env\n.env.*\n!.env.example\n.astro/\n.vercel/\n',
+    },
+    { id: 'template-storefront-quality-workflow', title: 'GitHub quality workflow', path: '.github/workflows/quality.yml', content: qualityWorkflow() },
+  ];
+}
+
+export function generateArtifacts(blueprint: ProductBlueprint): GeneratedArtifact[] {
+  const type = blueprint.spec.product.type;
+  let artifacts: GeneratedArtifact[];
+  switch (type) {
+    case 'web-app':
+      artifacts = [...buildGovernanceArtifacts(blueprint), ...buildWebSaaS(blueprint)];
+      break;
+    case 'landing-page':
+      artifacts = [...buildGovernanceArtifacts(blueprint), ...buildLandingPage(blueprint)];
+      break;
+    case 'browser-extension':
+      artifacts = [...buildGovernanceArtifacts(blueprint), ...buildBrowserExtension(blueprint)];
+      break;
+    case 'desktop':
+      artifacts = [...buildGovernanceArtifacts(blueprint), ...buildDesktop(blueprint)];
+      break;
+    case 'mobile':
+      artifacts = [...buildGovernanceArtifacts(blueprint), ...buildMobile(blueprint)];
+      break;
+    case 'api-tool':
+      artifacts = [...buildGovernanceArtifacts(blueprint), ...buildApiTool(blueprint)];
+      break;
+    case 'storefront':
+      artifacts = [...buildGovernanceArtifacts(blueprint), ...buildStorefront(blueprint)];
+      break;
+  }
+  // Two artifact ids carry a type-specific title (template-root-package, template-readme); every other
+  // id has the same title across all product types. The key encodes the type only when needed.
+  const variableTitleIds = new Set(['template-root-package', 'template-readme']);
+  for (const artifact of artifacts) {
+    artifact.titleKey = variableTitleIds.has(artifact.id)
+      ? `artifact.${artifact.id}.${type}`
+      : `artifact.${artifact.id}`;
+  }
+  return artifacts;
+}
+
+export function createDryRunPlan(blueprint: ProductBlueprint): DryRunPlan {
+  const artifacts = generateArtifacts(blueprint);
+  const manualActions = getManualActions(blueprint);
+  return {
+    blueprintRevision: blueprint.metadata.revision,
+    noExternalChanges: true,
+    summary: `This dry run prepares ${artifacts.length} generated artifacts and ${manualActions.length} manual actions. No cloud resource, credential or repository is changed.`,
+    summaryKey: 'dryRun.summary',
+    summaryParams: { artifactCount: artifacts.length, actionCount: manualActions.length },
+    automaticPreparation: [
+      'Validate the ProductBlueprint schema and selected module combination.',
+      'Generate the product standard, agent constraints, delivery workflow, environment contract and handoff preview.',
+      'Classify approval boundaries and manual actions before any provider plan is created.',
+    ],
+    automaticPreparationKeys: [
+      'dryRun.automaticPreparation.validateSchema',
+      'dryRun.automaticPreparation.generateArtifacts',
+      'dryRun.automaticPreparation.classifyBoundaries',
+    ],
+    manualActions,
+    artifacts,
+  };
+}
+
+export function createBaselinePlan(blueprint: ProductBlueprint): BaselinePlan {
+  // Only the providers this product type actually uses may gate approval. An MCP server is run as a
+  // local stdio process and a browser extension ships to a store, so demanding a Supabase org and a
+  // Vercel team for them blocked approval forever — and worse, a user who filled the fields in to get
+  // past it would have had three cloud projects created that the product never touches.
+  const providers = baselineProvidersFor(blueprint.spec.product.type);
+  const selections = ([
+    { provider: 'github' as const, id: 'github-repository' as const, title: 'GitHub repository', titleKey: 'baseline.resource.github.title', owner: blueprint.spec.sourceControl.owner, missingReason: 'Choose the GitHub owner or organization that will own the repository.', missingReasonKey: 'baseline.resource.github.missingReason' },
+    { provider: 'supabase' as const, id: 'supabase-project' as const, title: 'Supabase project', titleKey: 'baseline.resource.supabase.title', owner: blueprint.spec.data.organization, missingReason: 'Choose the Supabase organization and later confirm region and plan.', missingReasonKey: 'baseline.resource.supabase.missingReason' },
+    { provider: 'vercel' as const, id: 'vercel-api' as const, title: 'Vercel API project', titleKey: 'baseline.resource.vercel.title', owner: blueprint.spec.deployment.api.team, missingReason: 'Choose the Vercel team that will own the API project.', missingReasonKey: 'baseline.resource.vercel.missingReason' },
+    { provider: 'cloudflare' as const, id: 'cloudflare-pages' as const, title: 'Cloudflare Pages project', titleKey: 'baseline.resource.cloudflare.title', owner: blueprint.spec.deployment.web.account, missingReason: 'Choose the Cloudflare account that will own the Pages project.', missingReasonKey: 'baseline.resource.cloudflare.missingReason' },
+  ]).filter(s => providers.includes(s.provider));
+  const resources: BaselinePlanResource[] = selections.map(({ id, title, titleKey, owner, missingReason, missingReasonKey }) => ({
+    id,
+    title,
+    titleKey,
+    owner: owner || null,
+    status: owner ? 'requires-approval' : 'blocked',
+    reason: owner
+      ? `After approval, Agent-Dev may create the ${title.toLowerCase()} in ${owner}.`
+      : missingReason,
+    reasonKey: owner ? 'baseline.resource.reason.hasOwner' : missingReasonKey,
+    reasonParams: owner ? { title: title.toLowerCase(), owner } : undefined,
+  }));
+  const blocked = resources.filter(resource => resource.status === 'blocked');
+  return {
+    blueprintRevision: blueprint.metadata.revision,
+    noExternalChanges: true,
+    readyForApproval: blocked.length === 0,
+    summary: blocked.length === 0
+      ? 'All ownership targets are selected. Resource creation still requires one explicit approval and has not started.'
+      : `${blocked.length} ownership target${blocked.length === 1 ? ' is' : 's are'} still required before a baseline can be approved.`,
+    summaryKey: blocked.length === 0 ? 'baseline.summary.ready' : 'baseline.summary.blocked',
+    summaryParams: blocked.length === 0 ? undefined : { count: blocked.length },
+    resources,
+  };
+}

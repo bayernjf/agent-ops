@@ -1,0 +1,21 @@
+{
+  "name": "@agent-ops/storage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@agent-ops/blueprint": "*",
+    "@agent-ops/agent-runtime": "*",
+    "@agent-ops/workflow": "*",
+    "drizzle-orm": "^0.45.4",
+    "sql.js": "^1.13.0"
+  },
+  "devDependencies": {
+    "@types/sql.js": "^1.4.9"
+  }
+}

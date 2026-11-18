@@ -1,0 +1,222 @@
+import { describe, expect, it } from 'vitest';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { discoverAgentRuntimes, resolveExecutablePath, resolveProbeExecutable, runProbe } from '../src/index.js';
+
+describe('agent runtime catalog', () => {
+  // What is under test is the filter: a built-in this machine does not have is not returned at all,
+  // and one it does have comes back detected with its launch command. Walking the real PATH for that
+  // made the answer a fact about the machine — `every()` over an empty array passed on a runner with
+  // nothing installed — and cost up to eight sequential 5 s version probes against the 5 s a test is
+  // given, which is how this case timed out on a loaded machine. So PATH is a fixture directory
+  // holding exactly one built-in command.
+  //
+  // `detect()` caches per command, so this leaves the other seven built-in names cached as absent for
+  // the rest of this file. Every later case here probes a custom fixture command instead, which is
+  // what makes that safe; a case that expects a real built-in to be detected must not be added below.
+  it('returns only the built-in runtimes this machine has', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-catalog-built-in-'));
+    try {
+      await writeFile(join(directory, 'opencode'), '#!/bin/sh\necho fixture\n', 'utf8');
+      await chmod(join(directory, 'opencode'), 0o755);
+      const originalPath = process.env.PATH;
+      process.env.PATH = directory;
+      try {
+        const agents = await discoverAgentRuntimes();
+        expect(agents.map(agent => agent.id)).toEqual(['opencode']);
+        expect(agents[0]).toMatchObject({ source: 'built-in', detected: true, launchCommand: 'opencode' });
+        // The fixture is a POSIX script, so cmd.exe cannot run it on Windows. That is not a failure of
+        // discovery: PATH presence is the claim, and a version probe that cannot run must not hide an
+        // installed Agent. Where it can run, the version it produced is the fixture's own output.
+        if (process.platform !== 'win32') expect(agents[0]?.version).toBe('fixture');
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('supports minimal custom Agent configuration', async () => {
+    const agents = await discoverAgentRuntimes([{ name: 'Fixture Agent', launchCommand: 'node' }]);
+    expect(agents.at(-1)).toMatchObject({ id: 'custom-1', source: 'custom', name: 'Fixture Agent', launchCommand: 'node', detected: true });
+  });
+
+  it('keeps a PATH command visible when its version probe fails', async () => {
+    const agents = await discoverAgentRuntimes([{ name: 'Shell Fixture', launchCommand: 'sh' }]);
+    expect(agents.at(-1)).toMatchObject({ detected: true, name: 'Shell Fixture' });
+  });
+
+  // Two of the eight built-ins on this machine fail this exact way - one refuses to start under the
+  // ambient Node and prints its version requirement as the first line, another dies inside a bundled
+  // stack trace. Both used to appear in Studio with that sentence in place of a version number.
+  it('does not read an error line as a version number', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-catalog-error-'));
+    try {
+      await writeFile(
+        join(directory, 'agent-dev-error-first-line'),
+        '#!/bin/sh\necho "Example: Node.js >=22 is required (current: v20.20.2)." >&2\nexit 1\n',
+        'utf8',
+      );
+      await chmod(join(directory, 'agent-dev-error-first-line'), 0o755);
+      const originalPath = process.env.PATH;
+      process.env.PATH = directory;
+      try {
+        const agents = await discoverAgentRuntimes([{ name: 'Error Agent', launchCommand: 'agent-dev-error-first-line' }]);
+        expect(agents.at(-1)?.detected).toBe(true);
+        if (process.platform !== 'win32') {
+          expect(agents.at(-1)?.version).toBeNull();
+          expect(agents.at(-1)?.detail).toBe('Command found on local PATH; version probe failed.');
+        }
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // Discovery used to shell out to `which`, which does not exist on Windows, and the version probe
+  // used to spawn without a shell, which Node refuses to do for an npm .cmd shim (CVE-2024-27980).
+  // Together those made a Windows machine report every npm-installed Agent as absent or broken, so
+  // this fixture is placed on PATH by hand and both halves are asserted.
+  it('detects an installed Agent through PATH and PATHEXT without an external lookup binary', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-catalog-'));
+    try {
+      // An npm install leaves both shapes beside each other on Windows.
+      await writeFile(join(directory, 'agent-dev-fixture-cli'), '#!/bin/sh\necho fixture\n', 'utf8');
+      await writeFile(join(directory, 'agent-dev-fixture-cli.cmd'), '@echo off\r\necho fixture\r\n', 'utf8');
+      const originalPath = process.env.PATH;
+      process.env.PATH = directory;
+      try {
+        const resolved = resolveExecutablePath('agent-dev-fixture-cli');
+        expect(resolved).not.toBeNull();
+        // Handing cmd.exe the extensionless POSIX script is what made a probe hang until its
+        // timeout, so the shim with a Windows extension has to win there. Comparison ignores case
+        // on Windows because the candidate is spelled with the upper-case extension PATHEXT carries.
+        const expected = process.platform === 'win32'
+          ? join(directory, 'agent-dev-fixture-cli.cmd')
+          : join(directory, 'agent-dev-fixture-cli');
+        expect(process.platform === 'win32' ? resolved?.toLowerCase() : resolved).toBe(
+          process.platform === 'win32' ? expected.toLowerCase() : expected,
+        );
+
+        const agent = (await discoverAgentRuntimes([{ name: 'Fixture', launchCommand: 'agent-dev-fixture-cli' }])).at(-1);
+        expect(agent?.detected).toBe(true);
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a command that is genuinely off PATH as absent', async () => {
+    const originalPath = process.env.PATH;
+    process.env.PATH = '';
+    try {
+      expect(resolveExecutablePath('node')).toBeNull();
+      // Absence is now a completed fact rather than a retryable unknown, so the wording has to
+      // stay distinguishable from a probe that ran and merely failed.
+      const absent = (await discoverAgentRuntimes([{ name: 'Off Path', launchCommand: 'agent-dev-off-path-fixture' }])).at(-1);
+      expect(absent?.detected).toBe(false);
+      expect(absent?.detail).toBe('Command not found on local PATH.');
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
+  it('resolves an explicit path and answers null when it does not exist', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-catalog-path-'));
+    try {
+      const target = join(directory, 'explicit-cli');
+      await writeFile(target, '#!/bin/sh\necho fixture\n', 'utf8');
+      expect(resolveExecutablePath(target)).toBe(target);
+      expect(resolveExecutablePath(join(directory, 'no-such-cli'))).toBeNull();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // 2026-11-02 review P2-4: probes used spawnSync, so a hung CLI blocked the
+  // daemon's event loop for the whole 5 s budget. The probe must time out
+  // without blocking anything else running in the process.
+  it('times out a hung probe and leaves the event loop free while it waits', async () => {
+    let ticked = false;
+    const timer = setTimeout(() => {
+      ticked = true;
+    }, 20);
+    const started = Date.now();
+    const result = await runProbe(process.execPath, ['-e', 'setTimeout(() => {}, 10_000)'], {
+      encoding: 'utf8',
+      timeout: 150,
+    });
+    clearTimeout(timer);
+    expect(result.status).toBeNull();
+    expect(result.error).toBeDefined();
+    expect(ticked).toBe(true);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(result.stdout).toBe('');
+  });
+});
+
+// 2026-11-02 review P2-3: probes run with shell:true on Windows, so the raw
+// launchCommand string used to reach cmd.exe uninterpreted-safe only for its
+// arguments, never for the command itself. The probes now spawn the resolved
+// executable instead.
+describe('probe executable resolution (P2-3)', () => {
+  it('spawns the resolved executable and drops any shell tail in the configured command', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-probe-target-'));
+    try {
+      await writeFile(join(directory, 'probe-target-p2'), '#!/bin/sh\necho 9.9.9\n', 'utf8');
+      await chmod(join(directory, 'probe-target-p2'), 0o755);
+      const originalPath = process.env.PATH;
+      process.env.PATH = directory;
+      const spawned: string[] = [];
+      const recordingSpawn = (async (file: string) => {
+        spawned.push(file);
+        return { status: 0, stdout: '9.9.9\n', stderr: '', error: undefined };
+      }) as never;
+      try {
+        const agents = await discoverAgentRuntimes(
+          [{ name: 'Tail Fixture', launchCommand: 'probe-target-p2 & calc.exe' }],
+          recordingSpawn,
+        );
+        const custom = agents.at(-1);
+        expect(custom?.detected).toBe(true);
+        expect(spawned).toHaveLength(1);
+        expect(spawned[0]).toBe(join(directory, 'probe-target-p2'));
+        expect(spawned[0]).not.toContain('&');
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a resolved path containing cmd.exe metacharacters on win32 only', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-dev-probe-meta-'));
+    try {
+      await writeFile(join(directory, 'evil&tool-p2'), '#!/bin/sh\necho x\n', 'utf8');
+      await chmod(join(directory, 'evil&tool-p2'), 0o755);
+      const originalPath = process.env.PATH;
+      process.env.PATH = directory;
+      try {
+        // POSIX: no shell involved, the ampersand is a plain filename character.
+        expect(resolveProbeExecutable('evil&tool-p2', 'darwin')).toBe(join(directory, 'evil&tool-p2'));
+        // win32: the same path would be interpreted by cmd.exe — refuse it.
+        expect(resolveProbeExecutable('evil&tool-p2', 'win32')).toBeNull();
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('returns null for a command that resolves nowhere', () => {
+    expect(resolveProbeExecutable('definitely-not-a-real-command-p2')).toBeNull();
+  });
+});
