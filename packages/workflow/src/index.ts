@@ -1,5 +1,16 @@
 import { assign, createActor, createMachine } from 'xstate';
 
+export {
+  taskRunStates,
+  taskRunMachine,
+  createTaskRunActor,
+  restoreTaskRunActor,
+  type TaskRunState,
+  type TaskRunContext,
+  type TaskRunEvent,
+  type TaskRunSnapshot,
+} from './task-run.js';
+
 export const deliveryStates = [
   'DRAFT',
   'NEEDS_INPUT',
