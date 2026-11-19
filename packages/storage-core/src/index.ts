@@ -20,7 +20,7 @@ import type { TaskRunState } from '@agent-ops/workflow';
 import { tasks, runs, runEvents } from './schema.js';
 import { kernelMigrations, type Migration } from './migrations.js';
 import { ProfileStore } from './profiles-store.js';
-import { addWorktree, removeWorktree } from './worktree.js';
+import { addWorktree, pinWorktreeCommit, removeWorktree } from './worktree.js';
 import { assertWorktreeClean, commitWorktreeChanges, resetWorktree } from './commit.js';
 
 const require = createRequire(import.meta.url);
@@ -502,6 +502,7 @@ export class KernelStore {
     if (!task.worktreePath) throw new Error(`Task ${run.taskId} has no worktree.`);
 
     const commit = await commitWorktreeChanges(task.worktreePath, `task: accept ${task.title}`);
+    await pinWorktreeCommit(task.repo, task.id, commit.sha);
     await this.updateTaskStatus(run.taskId, 'done');
     return this.updateRunStatus(id, 'done', run.diffStat, run.artifacts, commit.sha);
   }

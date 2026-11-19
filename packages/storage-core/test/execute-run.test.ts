@@ -287,6 +287,13 @@ describe('KernelStore executeRun', () => {
       const head = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: task.worktreePath })).stdout.trim();
       expect(accepted.commitSha).toBe(head);
       expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: task.worktreePath })).stdout.trim()).toBe('');
+      expect(
+        (await execFileAsync('git', ['rev-parse', `refs/agent-ops/tasks/${task.id}`], { cwd: repo })).stdout.trim(),
+      ).toBe(accepted.commitSha);
+
+      await store.releaseTask(task.id);
+      expect(store.getTask(task.id)?.worktreePath).toBe('');
+      expect((await execFileAsync('git', ['cat-file', '-t', accepted.commitSha], { cwd: repo })).stdout.trim()).toBe('commit');
       await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
