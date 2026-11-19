@@ -47,9 +47,9 @@
 - [x] `server-core`：新增 `POST /api/runs/:id/cancel` 与 `GET /api/runs/:id/events`（SSE）。事件流先 replay，再订阅；terminal 事件写完即关闭；daemon 重启后从 SQLite 回放，不再返回空 `done`。
 - [x] Studio Task 看板：执行时用 fetch + ReadableStream 消费 SSE（EventSource 不能带 bearer token），运行中显示实时输出和取消按钮；取消/普通失败用独立 `cancelled` / `failed` 状态区分，标签为“已取消”。
 - [x] CLI MCP 新增 `agent_ops_cancel_run`，内核 task/run 工具共 12 个；取消说明从 “ends in failed” 改为 “ends in cancelled”。
-- [x] 测试：agent-runtime 16 例、storage-core `execute-run.test.ts` 13 例、server-core 8 例（含 SSE replay、HTTP 取消）、workflow 6 例（含 CANCEL 迁移）；全仓 44 文件 / 611 tests 绿，全仓 typecheck 0。
+- [x] 测试：agent-runtime 16 例、storage-core `execute-run.test.ts` 13 例、server-core 9 例（含 SSE replay、HTTP 取消、重启后 SSE 回放）、workflow 6 例（含 CANCEL 迁移）；全仓 44 文件 / 612 tests 绿，全仓 typecheck 0。
 - [x] 已知限制已关闭：`run_events` 只在内存 → 已落 SQLite；取消映射 `failed` → 已改为独立 `cancelled` 终态。
-- [x] 本轮提交：`bf477e3 feat(storage-core): persist run events across restarts`、`272e806 feat(workflow): add a terminal cancelled run state`。
+- [x] 本轮提交：`bf477e3 feat(storage-core): persist run events across restarts`、`272e806 feat(workflow): add a terminal cancelled run state`、`6e206ec test(server-core): cover SSE replay after daemon restart`。
 
 ## 技术债 — 已完成
 
