@@ -245,7 +245,7 @@ E0 基础闭环修复
 - `.env`/外部软链不被 commit。
 - `npm run typecheck` 0、相关测试绿。
 
-**完成记录（2026-11-20）**：`73026db feat(storage-core): close the task acceptance and commit loop`。accept 落 commit + `commit_sha`；release 脏 worktree 拒绝；reject 回到 `base_commit` 并可重跑；Task `acceptanceCriteria` / `priority` / `baseCommit` 经 migration `0010_task_closure` 落库并进入 prompt。全仓 typecheck 0、44 文件 / 614 tests 绿。真实模型 UI E2E 仍受登录阻塞，未计入 M0 完成证据。
+**完成记录（2026-11-20）**：`73026db feat(storage-core): close the task acceptance and commit loop`、`60ec8dd fix(storage-core): keep accepted commits reachable`。accept 落 commit + `commit_sha`，并 pin 到 `refs/agent-ops/tasks/<taskId>`；release 脏 worktree 拒绝；reject 回到 `base_commit` 并可重跑；Task `acceptanceCriteria` / `priority` / `baseCommit` 经 migration `0010_task_closure` 落库并进入 prompt。全仓 typecheck 0、44 文件 / 614 tests 绿。真实模型 UI E2E 仍受登录阻塞，未计入 M0 完成证据。
 
 ### M1 角色与串行（2026-11-27 → 2026-12-10）
 
