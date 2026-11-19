@@ -34,4 +34,10 @@ export const kernelMigrations: readonly Migration[] = [
       );
     `,
   },
+  {
+    id: '0008_run_artifacts',
+    sql: `
+      ALTER TABLE runs ADD COLUMN artifacts TEXT NOT NULL DEFAULT '{}';
+    `,
+  },
 ];

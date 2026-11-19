@@ -378,12 +378,27 @@ export type KernelTask = {
   updatedAt: string;
 };
 
+export type KernelRunArtifacts = {
+  output: string;
+  outputTruncated: boolean;
+  diff: string;
+  diffTruncated: boolean;
+  changedFiles: string[];
+  exitCode: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+};
+
 export type KernelRun = {
   id: string;
   taskId: string;
   agentId: string;
   status: KernelTaskState;
   diffStat: string;
+  artifacts?: KernelRunArtifacts;
   createdAt: string;
   updatedAt: string;
 };

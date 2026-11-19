@@ -6,6 +6,21 @@ import { apiFetch } from '../lib/api';
 
 type RunAction = 'execute' | 'accept' | 'reject';
 
+function formatDuration(durationMs: number): string {
+  return durationMs < 1000 ? `${durationMs} ms` : `${(durationMs / 1000).toFixed(1)} s`;
+}
+
+function hasEvidence(run: KernelRun): boolean {
+  const artifacts = run.artifacts;
+  return Boolean(artifacts && (
+    artifacts.output
+    || artifacts.diff
+    || artifacts.exitCode !== null
+    || artifacts.timedOut
+    || artifacts.changedFiles.length > 0
+  ));
+}
+
 /**
  * The kernel Task/Run board. It is a read-and-gate view over server-core's
  * `/api/tasks` and `/api/runs` control plane, kept parallel to the webapp
@@ -141,27 +156,50 @@ export function TasksView() {
                           <span aria-hidden="true" />
                         </div>
                         {taskRuns(task.id).map(run => (
-                          <div className="run-row" role="row" key={run.id}>
-                            <span className="run-agent">{run.agentId}</span>
-                            <span className={`state ${run.status}`}>{stateLabel(run.status)}</span>
-                            <span className="run-diff">{run.diffStat || '—'}</span>
-                            <span className="run-actions">
-                              {run.status === 'queued' && (
-                                <button className="secondary-button" type="button" onClick={() => void runAction(run, 'execute')} disabled={busyRunId === run.id}>
-                                  {t('tasks.execute')}
-                                </button>
-                              )}
-                              {run.status === 'review' && (
-                                <>
-                                  <button className="secondary-button" type="button" onClick={() => void runAction(run, 'accept')} disabled={busyRunId === run.id}>
-                                    <Check size={14} aria-hidden="true" /> {t('tasks.accept')}
+                          <div className="run-record" key={run.id}>
+                            <div className="run-row" role="row">
+                              <span className="run-agent">{run.agentId}</span>
+                              <span className={`state ${run.status}`}>{stateLabel(run.status)}</span>
+                              <span className="run-diff">{run.diffStat || '—'}</span>
+                              <span className="run-actions">
+                                {run.status === 'queued' && (
+                                  <button className="secondary-button" type="button" onClick={() => void runAction(run, 'execute')} disabled={busyRunId === run.id}>
+                                    {t('tasks.execute')}
                                   </button>
-                                  <button className="secondary-button" type="button" onClick={() => void runAction(run, 'reject')} disabled={busyRunId === run.id}>
-                                    <X size={14} aria-hidden="true" /> {t('tasks.reject')}
-                                  </button>
-                                </>
-                              )}
-                            </span>
+                                )}
+                                {run.status === 'review' && (
+                                  <>
+                                    <button className="secondary-button" type="button" onClick={() => void runAction(run, 'accept')} disabled={busyRunId === run.id}>
+                                      <Check size={14} aria-hidden="true" /> {t('tasks.accept')}
+                                    </button>
+                                    <button className="secondary-button" type="button" onClick={() => void runAction(run, 'reject')} disabled={busyRunId === run.id}>
+                                      <X size={14} aria-hidden="true" /> {t('tasks.reject')}
+                                    </button>
+                                  </>
+                                )}
+                              </span>
+                            </div>
+
+                            {hasEvidence(run) && (
+                              <details className="run-evidence">
+                                <summary>{t('tasks.evidence')}</summary>
+                                <div className="run-evidence-meta">
+                                  <span>{t('tasks.exitCode')}: {run.artifacts?.exitCode ?? '—'}</span>
+                                  <span>{t('tasks.duration')}: {formatDuration(run.artifacts?.durationMs ?? 0)}</span>
+                                  <span>{t('tasks.changedFiles')}: {run.artifacts?.changedFiles.length ?? 0}</span>
+                                  {run.artifacts?.timedOut && <span className="run-evidence-warning">{t('tasks.timedOut')}</span>}
+                                </div>
+                                {run.artifacts?.changedFiles.length ? (
+                                  <p className="run-evidence-files">{run.artifacts.changedFiles.join(', ')}</p>
+                                ) : null}
+                                <h4>{t('tasks.output')}</h4>
+                                <pre className="run-evidence-pre">{run.artifacts?.output || t('tasks.noOutput')}</pre>
+                                {run.artifacts?.outputTruncated && <p className="run-evidence-note">{t('tasks.outputTruncated')}</p>}
+                                <h4>{t('tasks.fullDiff')}</h4>
+                                <pre className="run-evidence-pre">{run.artifacts?.diff || t('tasks.noDiff')}</pre>
+                                {run.artifacts?.diffTruncated && <p className="run-evidence-note">{t('tasks.diffTruncated')}</p>}
+                              </details>
+                            )}
                           </div>
                         ))}
                       </div>
