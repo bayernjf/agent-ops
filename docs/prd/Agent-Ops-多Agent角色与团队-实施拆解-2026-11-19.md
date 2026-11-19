@@ -90,7 +90,7 @@ E0 基础闭环修复
 | E6 串行 Pipeline | 内核多角色串行流水线 | P0 | E1/E4 |
 | E7 Studio UI | 建任务、角色/团队页、逐文件审 | P1 | E4/E5/E6 |
 | E8 证据/审计 | 角色/团队/交接可回放 | P1 | E4/E5 |
-| E9 Adapter | Claude/OpenCode 稳定；Pi/DSH/自有 Harness 实验 | P0/P2 | E2/E3 |
+| E9 Adapter | Claude/OpenCode 稳定；Pi/DSH 实验；自有 Harness 不投入（PD-9） | P0/P2 | E2/E3 |
 | E10 Dogfood/发布 | 3–5 真实任务；文档/回归 | P1 | 全部 |
 
 ---
@@ -131,7 +131,7 @@ E0 基础闭环修复
 | F2-02 | Capability matrix | P0 | registry 元数据 | F2-01 | 非交互/流式/结构化/恢复/工具策略/worktree 安全可查询 | M |
 | F2-03 | 健康/版本/登录探测 | P1 | `doctor`/`catalog` | F2-01 | 每 Runtime 显示版本、auth hint、可用状态 | S |
 | F2-04 | 启动超时/preflight | P1 | registry/runner | F2-01 | OpenCode 等启动有 timeout 和明确错误 | M |
-| F2-05 | Adapter SDK | P2 | 新包/接口 | F2-02 | 自有 Harness 可按接口接入；内核不依赖 | L |
+| F2-05 | Adapter SDK | P2 | 新包/接口 | F2-02 | 第三方可按接口接入；自有 Harness 暂不投入（PD-9）；内核不依赖 | L |
 
 ### E3 Policy
 
@@ -207,7 +207,7 @@ E0 基础闭环修复
 | F9-04 | Hermes 收敛 | P0 | adapter | E2/E3 | 保持 verified；`--yolo` 受限 | S |
 | F9-05 | Pi 实验 | P2 | adapter | F2-05 | 只读/小任务可跑；能力标 experimental | L |
 | F9-06 | DSH 实验 | P2 | adapter | F2-05 | 小任务可跑；能力标 experimental | L |
-| F9-07 | 自有 Harness | P2 | adapter | F2-05 | 非交互 CLI/本地 JSON 可接入 | L |
+| F9-07 | 自有 Harness（暂不投入） | — | — | — | PD-9：先不自研；仅保留 adapter 契约 | — |
 | F9-08 | Aider/OpenClaw | P2 | 暂不投入 | 无 | 保持 candidate；不阻塞主线 | — |
 
 ### E10 Dogfood / 发布
@@ -298,7 +298,7 @@ E0 基础闭环修复
 |---|---|---|
 | 1 | F5-07 并行 worktree | 每角色独立 worktree |
 | 2 | F5-06 Coordinator | 拆任务/派活/汇总 |
-| 3 | F9-05/F9-06/F9-07 Pi/DSH/自有 Harness | 实验 adapter |
+| 3 | F9-05/F9-06 Pi/DSH 实验 adapter；自有 Harness 不投入 | 实验 adapter |
 | 4 | F4-04/F4-06 版本/成本/预算 | 证据/预算 |
 | 5 | F8-04 指标 | observability 接入 |
 | 6 | F1-07 Role 测试运行 | 角色 dry-run |
@@ -307,7 +307,7 @@ E0 基础闭环修复
 
 - 3 个角色并行、各自 worktree；冲突可见；有界并发。
 - Coordinator 可拆任务/汇总；人工保留审批。
-- Pi/DSH/自有 Harness 至少各跑通一个小任务，标 experimental。
+- Pi/DSH 至少各跑通一个小任务，标 experimental；自有 Harness 不要求。
 - 成本能记录则记录，不能则标 unknown。
 
 ### M4 稳定与发布（2027-01-15 → 2027-01-21）
@@ -374,7 +374,7 @@ interface RuntimeAdapter {
 ```
 
 - 内核不直接 import 具体 adapter；通过 registry 解析。
-- Pi/DSH/自有 Harness 作为 experimental adapter 注册，不阻塞主线。
+- Pi/DSH 作为 experimental adapter 注册，不阻塞主线；自有 Harness 不投入（PD-9）。
 
 ### 6.3 Policy 执行
 
@@ -390,7 +390,7 @@ interface RuntimeAdapter {
   - Codex：`--sandbox workspace-write` + 配置/包装；
   - OpenCode：driver 参数/配置；
   - Hermes：`--yolo` 仅用于低风险角色，或包装成受限执行；
-  - Pi/DSH/自有 Harness：按 capability 标注。
+  - Pi/DSH：按 capability 标注；自有 Harness 不投入（PD-9）。
 - 不支持工具策略的 Runtime，Role 创建时警告；只读角色禁止绑定该 Runtime，除非有 wrapper。
 
 ### 6.4 内核串行 Pipeline
@@ -544,7 +544,7 @@ npm --workspace @agent-ops/studio run build
 | 多用户/真人席位 | 需要第二个人共享看板/审批 |
 | 云/远程 daemon | 本机不能常开或需要移动触发 |
 | 桌面/移动端 | 日常使用需要通知/手机审批 |
-| 29+ adapter | 4 稳定 + 3 实验狗粮通过 |
+| 29+ adapter | 4 稳定 + 2 实验（Pi/DSH）狗粮通过 |
 | 完整 IDE/终端/浏览器 | 用户明确需要内置编辑/终端 |
 | 自动 merge/push/PR | 不做自动；最多显式“一键 PR” |
 | 自研 harness | 自有 Agent 内核产品立项 |
@@ -569,7 +569,7 @@ npm --workspace @agent-ops/studio run build
 | Q5 | 是否重命名 `AgentProfile` | 暂不；Role 作为上层，Profile 作为绑定 | owner |
 | Q6 | 团队 handoff 交付物格式 | commit SHA + artifact 路径 + 摘要 | 工程 |
 | Q7 | 是否把 `FeatureTaskPipeline` 完全迁出插件 | 先双读兼容，v0.3 再收敛 | 工程 |
-| Q8 | D7 支持面 | 4 稳定（Codex/Claude/OpenCode/Hermes）+ 3 实验（Pi/DSH/自有 Harness） | owner |
+| Q8 | D7 支持面 | 已拍板 2026-11-19：4 稳定（Codex/Claude/OpenCode/Hermes）+ 2 实验（Pi/DSH）；自有 Harness 不投入（PD-9） | 已拍板 |
 
 ---
 
@@ -578,3 +578,4 @@ npm --workspace @agent-ops/studio run build
 | 日期 | 变更 |
 |---|---|
 | 2026-11-19 | 初稿：E0–E10 拆解、M0–M4 里程碑、功能点验收、非目标触发条件 |
+| 2026-11-19 | 同步 PD-1～PD-9：自有 Harness 不投入；Pi/DSH 保留实验；Q8 关闭 |

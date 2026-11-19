@@ -11,7 +11,7 @@
 
 ## 0. 一句话结论
 
-Agent Ops 不再只是“单 Agent 的 Task/Run 控制面”，而是升级为**本地多 Agent 的角色与团队控制面**：把 Codex、Claude Code、OpenCode、Hermes、Pi、DeepSeek Harness 以及自有 Harness 统一接入，把每个 Agent 配置成可复用的角色，让多个角色在同一个任务上串行交接，后续再支持并行团队。
+Agent Ops 不再只是“单 Agent 的 Task/Run 控制面”，而是升级为**本地多 Agent 的角色与团队控制面**：把 Codex、Claude Code、OpenCode、Hermes、Pi、DeepSeek Harness 等外部 Harness 统一接入；自有 Harness 暂不投入（PD-9），把每个 Agent 配置成可复用的角色，让多个角色在同一个任务上串行交接，后续再支持并行团队。
 
 不是再做一个 Multica 克隆，不是新 harness，不是新 IDE。Agent Ops 负责“管人、派活、隔离、取证、验收”，执行仍交给本机现成的 Agent。
 
@@ -56,7 +56,7 @@ Agent Ops 的差异化：**本地优先 + BYO 订阅 + 角色/团队模型 + 证
 |---|---|---|
 | G1 | Role 成为一等概念 | 角色有职责、提示词、工具权限、Runtime 策略、验收标准 |
 | G2 | 同一个 Agent 可派生多个角色 | 同一 `baseAgentId`，不同 prompt/tool policy，独立会话 |
-| G3 | 不同 Agent 可进入同一团队 | Codex/Claude/OpenCode/Hermes/Pi/DSH/自有 Harness 统一 adapter |
+| G3 | 不同 Agent 可进入同一团队 | Codex/Claude/OpenCode/Hermes/Pi/DSH 统一 adapter；自有 Harness 不投入（PD-9） |
 | G4 | 任务可派给角色并交接 | Task → Role → Run → Handoff，产物可审计 |
 | G5 | 角色权限可执行 | `allowedTools/blockedTools` 不只声明，要进入实际执行路径 |
 | G6 | 人审闭环不丢改动 | accept 落 commit；reject 清理 worktree；release 有保护 |
@@ -249,7 +249,7 @@ Coordinator Role
 | FR-2.2 | P0 | 能力矩阵 | 至少描述：非交互、流式、结构化输出、会话恢复、工具策略、worktree 安全 |
 | FR-2.3 | P1 | 健康/版本/登录探测 | `doctor` 能显示每个 Runtime 的版本、auth hint、可用状态 |
 | FR-2.4 | P1 | 启动超时与错误提示 | OpenCode 等启动慢的 Runtime 有 preflight/timeout/明确错误 |
-| FR-2.5 | P2 | Adapter SDK | 自有 Harness/第三方按接口接入，不污染内核 |
+| FR-2.5 | P2 | Adapter SDK | 第三方（含 Pi/DSH）按接口接入；自有 Harness 暂不投入（PD-9），保留契约 |
 
 ### 6.3 工具权限（Policy）
 
@@ -322,7 +322,7 @@ Coordinator Role
 | FR-9.4 | P0 | Hermes | 保持 verified；限制 `--yolo` 使用面 |
 | FR-9.5 | P2 | Pi | 实验 adapter；先只读/小任务 |
 | FR-9.6 | P2 | DeepSeek Harness | 实验 adapter；能力矩阵标注 |
-| FR-9.7 | P2 | 自有 Harness | 实验 adapter；要求非交互 CLI 或本地 JSON 接口 |
+| FR-9.7 | — | 自有 Harness（暂不投入） | PD-9：先不自研；仅保留 adapter 契约，不排期 |
 | FR-9.8 | P2 | Aider/OpenClaw | 暂不投入；保持 candidate，不阻塞主线 |
 
 ---
@@ -350,7 +350,7 @@ Coordinator Role
 | **M0 基础闭环** | 2026-11-20 → 2026-11-26 | accept commit、release guard、reject reset、Task 验收标准/优先级、Run commit 证据 | 不丢改动；prompt 含验收标准；重跑干净；测试绿 |
 | **M1 角色与串行** | 2026-11-27 → 2026-12-10 | Role CRUD、Runtime Registry、工具权限、内核串行 Pipeline、Studio 任务创建 | 同一 Codex 3 角色 + Claude/Hermes 角色；串行 4 步跑通；审查者只读 |
 | **M2 团队与狗粮** | 2026-12-11 → 2026-12-24 | Team/Assignment/Handoff、逐文件审、团队视图、3–5 dogfood | 5 角色团队完成真实任务；证据完整；dogfood 报告 |
-| **M3 并行与扩展** | 2026-12-25 → 2027-01-14 | 并行 worktree、Coordinator、Pi/DSH/自有 Harness 实验、成本 | 3 角色并行；冲突可见；实验 adapter 可跑小任务 |
+| **M3 并行与扩展** | 2026-12-25 → 2027-01-14 | 并行 worktree、Coordinator、Pi/DSH 实验、成本；自有 Harness 不投入 | 3 角色并行；冲突可见；实验 adapter 可跑小任务 |
 | **M4 稳定与发布** | 2027-01-15 → 2027-01-21 | 文档同步、指标、打包、回归 | 文档无漂移；全门禁绿；可日常使用 |
 
 ---
@@ -407,7 +407,7 @@ Coordinator Role
 外部依赖：
 
 - D5：单机单用户（默认已按此实现，仍待 owner 确认）。
-- D7：Agent 支持节奏；建议“4 稳定 + 3 实验”（Codex/Claude/OpenCode/Hermes；Pi/DSH/自有 Harness 实验）。
+- D7：Agent 支持节奏；已拍板“4 稳定 + 2 实验”（Codex/Claude/OpenCode/Hermes；Pi/DSH 实验）；自有 Harness 不投入（PD-9）。
 - D7-gate：Claude Code 登录。
 - model-hub：后续成本/模型路由；本期不阻塞。
 
@@ -415,16 +415,19 @@ Coordinator Role
 
 ## 11. 决策记录
 
+> 2026-11-19 owner 拍板：**PD-1～PD-8 按建议全批**；PD-4 只 commit 不 push；PD-5 以 Claude 登录验证为 gate；PD-6 先单用户；PD-8 等 M2 狗粮通过再开并行。同日拍板 **PD-9：先不自研 Harness，先用现有 Harness**。
+
 | ID | 决策 | 结论 | 状态 |
 |---|---|---|---|
-| PD-1 | 是否新开产品 | 否；Agent Ops 升级 | 建议 |
-| PD-2 | 先串行还是先并行 | 先串行角色流水线，再并行团队 | 建议 |
-| PD-3 | Role 与 Profile 关系 | Role 是产品概念，Profile 是 Runtime 绑定；兼容共存 | 建议 |
-| PD-4 | accept 语义 | accept = commit + 记录 SHA；不 push/merge | 建议 |
-| PD-5 | 支持面 | Codex/Claude/OpenCode/Hermes 稳定；Pi/DSH/自有 Harness 实验 | 建议，待 D7 |
-| PD-6 | 单用户 | v0.2/v0.3 单机单用户 | 建议，待 D5 |
-| PD-7 | 自动 merge | 永不做自动 merge；只做显式人工动作 | 建议 |
-| PD-8 | 团队并行 | v0.3 起；每角色独立 worktree | 建议 |
+| PD-1 | 是否新开产品 | 否；Agent Ops 升级 | 已拍板 2026-11-19 |
+| PD-2 | 先串行还是先并行 | 先串行角色流水线，再并行团队 | 已拍板 2026-11-19 |
+| PD-3 | Role 与 Profile 关系 | Role 是产品概念，Profile 是 Runtime 绑定；兼容共存 | 已拍板 2026-11-19 |
+| PD-4 | accept 语义 | accept = commit + 记录 SHA；不 push/merge | 已拍板 2026-11-19 |
+| PD-5 | 支持面 | Codex/Claude/OpenCode/Hermes 稳定；Pi/DSH 实验；自有 Harness 不投入（PD-9） | 已拍板 2026-11-19（Claude 以登录验证为 gate） |
+| PD-6 | 单用户 | v0.2/v0.3 单机单用户 | 已拍板 2026-11-19 |
+| PD-7 | 自动 merge | 永不做自动 merge；只做显式人工动作 | 已拍板 2026-11-19 |
+| PD-8 | 团队并行 | v0.3 起；每角色独立 worktree | 已拍板 2026-11-19（M2 狗粮通过后开 M3） |
+| PD-9 | Harness 策略 | 先不自研 Harness；用现有 Harness 承载 Personal Agent：Pi Agent 优先，DeepSeek Harness 次之；Codex / Claude Code 保持稳定支持；自有薄 Harness 后续再权衡 | 已拍板 2026-11-19 |
 
 ---
 
@@ -437,7 +440,7 @@ Coordinator Role
 | 多用户/真人席位/权限/组织 | 目标是单人 + 一群 Agent；多人会引入权限/共享/审计复杂度 | 需要第二个人共享看板/审批时 |
 | 云端执行/远程 daemon | 本地 Agent、本地订阅、本地文件是核心优势 | 本机不能常开，或需要移动端触发时 |
 | 桌面/移动客户端 | Web + localhost 已够用；多端是重投入 | 日常使用需要通知/手机审批时 |
-| 29+ adapter 全量接入 | 广度会稀释稳定性；先 4 稳定 + 3 实验 | 4 个稳定 adapter 狗粮通过后 |
+| 29+ adapter 全量接入 | 广度会稀释稳定性；先 4 稳定 + 2 实验（Pi/DSH） | 4 个稳定 adapter 狗粮通过后 |
 | Tier 0 产品能力包（B 模式） | 先把 Agent Ops 自身闭环做稳；跨产品调用需要契约、权限、成本和版本治理 | Agent Ops v0.3 稳定 + 至少 1 个 Tier 0 产品有稳定 CLI/API/MCP + 能力包契约评审通过 |
 | 完整 IDE/终端/浏览器 | 不是控制面职责；会变成 Orca 重客户端 | 用户明确需要内置编辑/终端时 |
 | 自动 merge/push/PR | 人审闸门是产品边界；自动合并风险高 | 不做；最多做“一键创建 PR”显式动作 |
@@ -451,9 +454,9 @@ Coordinator Role
 | 插件市场/团队模板市场 | 先内置模板；市场需要治理 | 有第三方 adapter/模板贡献时 |
 | 企业 SSO/多租户 | 与单机单用户定位冲突 | 产品转向团队版时 |
 
-### 12.1 后续方向备忘：控制面 / 能力包 / 自有 Harness
+### 12.1 后续方向备忘：控制面 / 能力包 / Harness 策略
 
-> 本段是方向备忘，不改变 PD-1～PD-8，也不代表已立项；用于后续排迭代时判断“先做什么、后做什么”。
+> 本段是方向备忘，不改变 PD-1～PD-9，也不代表已立项；用于后续排迭代时判断“先做什么、后做什么”。2026-11-19 **PD-9** 已拍板：先不自研 Harness，先用现有 Harness。
 
 **一句话：Agent Ops 做控制面，Tier 0 产品做能力包，Harness 做可替换执行器。**
 
@@ -486,14 +489,14 @@ B 模式不直接集成产品代码，而是先定 **Capability Pack 契约**：
 
 这样产品迭代只影响能力包，不影响 Agent Ops 内核。
 
-#### 自有 Harness：可选 Runtime Adapter
+#### 自有 Harness：可选 Runtime Adapter（PD-9：暂不投入）
 
-定位：**自有 Harness 是 Agent Ops 的一个可选 Runtime Adapter，独立仓/独立版本，不是 `agent-ops` 核心的一部分。**
+定位：**自有 Harness 是 Agent Ops 的一个可选 Runtime Adapter，独立仓/独立版本，不是 `agent-ops` 核心的一部分。PD-9 已定先不自研；这里只保留未来契约，不进入 v0.2/v0.3。**
 
 现在不做的原因：
 
 - Codex / Claude Code / OpenCode / Hermes / DSH / Pi 仍在快速迭代，自研容易变成追版本。
-- DSH 是“一切皆插件”，Pi 是“薄内核 + 扩展”，两种哲学；基于它们做自有 Harness，应选一条 lineage，不要同时继承两套抽象。
+- DSH 是“一切皆插件”，Pi 是“薄内核 + 扩展”，两种哲学；若未来做自有 Harness，应选一条 lineage，不要同时继承两套抽象。
 - fork 前要先做许可证、商用边界、上游治理和升级路径评估；能做 adapter/plugin 就不要 fork。
 
 重新考虑的触发条件：
@@ -507,12 +510,12 @@ B 模式不直接集成产品代码，而是先定 **Capability Pack 契约**：
 
 1. **v0.2**：Agent Ops 做 Role + 串行 Pipeline；用 A 模式管理 Tier 0 产品开发任务。
 2. **v0.3**：Team / 并行稳定后，选 1 个 Tier 0 产品做 B 模式能力包试点。
-3. **并行观察**：DSH / Pi 作为实验 Runtime 接入，验证“同一角色可换 Runtime”。
-4. **最后**：满足上述四条触发条件后，再单独立项自有 Harness。
+3. **并行观察**：先接 Pi Agent，再评估 DeepSeek Harness；Codex / Claude Code 保持稳定支持。
+4. **自有 Harness**：PD-9 已定先不自研；后续满足上述四条触发条件再权衡。
 
 ### 12.2 Personal Agent：一种个人 Harness，不是第二套内核
 
-> 这是相邻赛道备忘，不是 v0.2/v0.3 承诺，也不改变 PD-1～PD-8。跨产品讨论见 [Tier0-个人上下文层与PersonalAgent-讨论备忘-2026-11-19.md](../../../bayjf/docs/tier0/Tier0-个人上下文层与PersonalAgent-讨论备忘-2026-11-19.md)。
+> 这是相邻赛道备忘，不是 v0.2/v0.3 承诺，也不改变 PD-1～PD-9。跨产品讨论见 [Tier0-个人上下文层与PersonalAgent-讨论备忘-2026-11-19.md](../../../bayjf/docs/tier0/Tier0-个人上下文层与PersonalAgent-讨论备忘-2026-11-19.md)。
 
 **一句话：Personal Agent 是一种 personal-purpose Harness，和 Codex / Pi Agent / Claude Code / Hermes / DSH 同一层；它以你为 principal，把 LLM 变成代表你行事的 Agent。LLM 是大脑，Harness 是身体/神经系统，Host 是入口，Agent Ops 是管理多个 Harness 的控制面。**
 
@@ -545,7 +548,7 @@ Work Learn / Zeus DataDomain（记忆 / 数据服务）
 
 所以 Personal Agent 不是“Codex 里的一种 agent”，也不是“Pi 上的一个实例”；它和 Codex/Pi 是同一层，区别在 principal、目标、记忆、权限和 loop。
 
-Personal Agent Harness 自带或外接 Host；具体是 Studio 的第二视图还是独立前端，v0.4 再定。Agent Ops 管理它，复用 Adapter 和 Evidence；但 Agent Ops 本身不是 Harness。
+长期形态是 Personal Agent Harness；当前实现策略按 PD-9：**先不自研，先用现有 Harness 承载**。Personal Agent 先复用现有 Harness 的入口（CLI / 桌面 / IDE），独立 Personal Host 后续再定。Agent Ops 管理它，复用 Adapter 和 Evidence；但 Agent Ops 本身不是 Harness。
 
 #### 现在不做
 
@@ -553,23 +556,32 @@ Personal Agent Harness 自带或外接 Host；具体是 Studio 的第二视图�
 - 不把 Personal Agent Harness 当成“聊天框”；它的核心是“它做完了，等你批”的收件箱体验。
 - 不把个人数据、账号、支付能力放进当前单用户工作控制面；先保持边界。
 
-#### v0.4 探索 Personal Agent Harness：2 周 spike
+#### v0.4 探索 Personal Agent：2 周 spike（先用现有 Harness）
 
 - 3 个角色：Chief of Staff / Researcher / Operator。
 - 3 个只读连接器：日历、邮件、浏览器。
 - 所有写操作进审批 Inbox；本机优先，数据不出机器。
-- 同一套个人上下文 / 权限可挂到不同 Harness（Codex / Pi / Claude Code / Hermes）；v0.4 先做其中一个。
+- 先用 Pi Agent 承载；再评估 DeepSeek Harness；Codex / Claude Code 保持稳定支持。
 - 先用 20 个真实个人任务验证，不承诺产品化。
 
 验收只看三件事：**能不能持续记住、能不能主动触发、能不能安全地等你批。**
 
-#### 需要继续讨论的问题
+#### 已拍板与待讨论（2026-11-19）
 
-1. Personal Agent Harness 是独立实现，还是基于 Codex / Pi 改？建议先做独立薄 Harness，借鉴它们的工具/模型适配经验，不 fork。
-2. 记忆/数据放哪：Zeus DataDomain / Work Learn SQLite / 新 store；如何导出、删除、审计。
+已拍板：
+
+- **唯一事实源：Zeus DataDomain。**
+- 配套分工（方向记录，边界待后续确认）：Work Learn 做对话采集/整理的生产者；Agent Ops 做行动证据的生产者；不再长第四套记忆库。
+- **Harness 策略（PD-9）：先不自研。** 先用现有 Harness；Pi Agent 优先，DeepSeek Harness 次之；Codex / Claude Code 保持稳定支持；自有薄 Harness 后续再权衡。
+
+仍待讨论：
+
+1. Work Learn 如何从“英语语料”泛化成“知识条目”，以及它与 DataDomain 的双写/导出策略。
+2. 先建模哪 5 个域：工作身份、目标/项目、沟通偏好、决策规则、工具/工作流。
 3. 触发器怎么接：cron、邮件、日历、文件变化、Webhook；先借 Hermes 的 cron 思路，不搬它的消息平台。
 4. 权限怎么真正落地：读可以、写要批、付款绝对要批；`allowedTools/blockedTools` 必须进入实际执行命令。
 5. 前台是 Chat 还是 Inbox：建议 Approval Inbox + Task Board，不做纯聊天壳。
+6. 移动端时机：先 Share Sheet / 语音备忘，不做自定义键盘。
 
 ---
 
@@ -591,5 +603,7 @@ Personal Agent Harness 自带或外接 Host；具体是 Studio 的第二视图�
 | 日期 | 变更 |
 |---|---|
 | 2026-11-19 | 初稿：确立 Agent Ops 多角色/团队方向；v0.2 串行、v0.3 并行；列出非目标与验收 |
-| 2026-11-19 | 补充 §12.1 后续方向备忘：控制面 / 能力包 / 自有 Harness 三层；明确自有 Harness 是可选 Runtime Adapter，未立项 |
+| 2026-11-19 | 补充 §12.1 后续方向备忘：控制面 / 能力包 / Harness 策略三层；明确自有 Harness 是可选 Runtime Adapter，未立项 |
 | 2026-11-19 | 补充 §12.2 Personal Agent 方向备忘：Personal Agent 是一种 personal-purpose Harness，与 Codex / Pi / Claude Code / Hermes / DSH 同层；Agent Ops 是控制面；v0.4 两周 spike |
+| 2026-11-19 | 拍板 PD-1～PD-8 按建议全批；新增 PD-9：先不自研 Harness，先用现有 Harness（Pi Agent 优先、DeepSeek Harness 次之、Codex / Claude Code 稳定支持） |
+| 2026-11-19 | 同步 §12.2：唯一事实源选 Zeus DataDomain；Personal Agent 先用现有 Harness 承载，v0.4 spike 不再自研 |
