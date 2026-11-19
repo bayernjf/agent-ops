@@ -1,10 +1,28 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 export { discoverAgentRuntimes, probeAgentCapabilities, resolveExecutablePath, resolveProbeExecutable, runProbe, type AgentDescriptor, type AgentCapability, type CustomAgentInput, type AgentSource, type CapabilityProbe, type ProbeSpawn, type ProbeResult } from './catalog.js';
+export {
+  type AgentAdapterStatus,
+  type RuntimeAdapter,
+  type RuntimeCapabilities,
+  RuntimeRegistry,
+  runtimeRegistry,
+  getRuntimeAdapter,
+  getAgentAdapterStatus,
+} from './runtime-registry.js';
+import { getRuntimeAdapter, getAgentAdapterStatus, type AgentAdapterStatus } from './runtime-registry.js';
+export {
+  type AgentRole,
+  type RoleApprovalMode,
+  type RoleRuntimePolicy,
+  type RoleRuntimeResolution,
+  roleRuntimePolicySchema,
+  agentRoleSchema,
+  agentRoleCreateSchema,
+  agentRoleUpdateSchema,
+  slugifyRoleName,
+  ensureUniqueRoleId,
+  resolveRoleRuntime,
+} from './roles.js';
 export {
   type AgentProfile,
   type AgentProfileOverrides,
@@ -135,53 +153,6 @@ export function probeCodexRuntime(): CodexRuntimeProbe {
   };
 }
 
-export type AgentAdapterStatus = 'verified' | 'candidate' | 'unsupported';
-
-type AgentAdapter = {
-  buildCommand: (prompt: string, workspacePath: string) => string[];
-  status: Exclude<AgentAdapterStatus, 'unsupported'>;
-};
-
-const AGENT_ADAPTERS: Record<string, AgentAdapter> = {
-  // Adapters with status 'verified' have passed a locally exercised execution contract.
-  // Candidate adapters are present but not yet verified end-to-end.
-  codex: { status: 'verified', buildCommand: (prompt, cwd) => ['codex', 'exec', '--json', '--ephemeral', '--sandbox', 'workspace-write', '--cd', cwd, prompt] },
-  // Claude Code has no `--cwd` flag; the working directory is set by the spawn cwd option.
-  // `--dangerously-skip-permissions` avoids interactive approval prompts in the isolated task workspace.
-  // `--output-format json` gives structured output parseable by the same runner as Codex.
-  'claude-code': { status: 'candidate', buildCommand: (prompt, _cwd) => ['claude', '-p', prompt, '--allowedTools', 'Read,Write,Edit,Bash', '--dangerously-skip-permissions', '--output-format', 'json'] },
-  // Aider has no `--cwd` flag; the working directory is set by the spawn cwd option.
-  // `--message` sends a single prompt, `--yes-always` auto-accepts all prompts.
-  aider: { status: 'candidate', buildCommand: (prompt, _cwd) => ['aider', '--message', prompt, '--yes-always'] },
-  // OpenCode 2.0 (`lildax`) dropped the v1 `-p --print` interface, so tasks run through the
-  // session-based driver script. The default model is the free `nemotron-3-ultra-free` from the
-  // built-in `opencode` provider: it is the strongest free model verified working on the Zen
-  // gateway (1M context / 128K output), avoiding the exhausted paid/plan quota that blocks Codex
-  // and the deprecated/rate-limited free models (`hy3-free`, `big-pickle`, `ling-3.0-flash-free`).
-  // Execution contract exercised locally: the driver wrote a file, ran `ls`, and exited 0.
-  opencode: { status: 'verified', buildCommand: (prompt, cwd) => {
-    const promptDir = join(tmpdir(), 'agent-ops-opencode');
-    mkdirSync(promptDir, { recursive: true });
-    const promptFile = join(promptDir, `${randomUUID()}.md`);
-    writeFileSync(promptFile, prompt);
-    const driver = fileURLToPath(new URL('../scripts/opencode2-driver.mjs', import.meta.url));
-    return ['node', driver, cwd, 'nemotron-3-ultra-free', 'opencode', `--prompt=${promptFile}`];
-  } },
-  // OpenClaw runs an embedded agent turn via `agent --local --agent main --message`. No `--cwd` flag;
-  // the working directory is set by the spawn cwd option. `--json` gives structured output.
-  openclaw: { status: 'candidate', buildCommand: (prompt, _cwd) => ['openclaw', 'agent', '--local', '--agent', 'main', '--message', prompt, '--json'] },
-  // CodeBuddy runs non-interactively via `-p`, with permissions bypassed because it executes inside
-  // an already-isolated task workspace. `--no-session-persistence` keeps each run stateless.
-  // Execution contract exercised locally: `codebuddy -p ... "READY"` returned the response and
-  // exited 0, and the child is captured through the same stdout/stderr runner as Codex.
-  codebuddy: { status: 'verified', buildCommand: (prompt, _cwd) => ['codebuddy', '-p', '--permission-mode', 'bypassPermissions', '--no-session-persistence', prompt] },
-  // Hermes one-shot mode: `-z PROMPT` prints only the final response to stdout.
-  // `--in DIR` sets the working directory, `--yolo` bypasses dangerous command approvals.
-  // Execution contract exercised locally: `hermes -z "Create hello.txt" --in /tmp --yolo`
-  // created the file with correct content and exited 0.
-  hermes: { status: 'verified', buildCommand: (prompt, cwd) => ['hermes', '-z', prompt, '--in', cwd, '--yolo'] },
-};
-
 export function buildAgentExecutionPlan(
   task: ApprovedTask,
   workspacePath: string,
@@ -197,9 +168,9 @@ export function buildAgentExecutionPlan(
   const prompt = profile?.overrides.systemPrompt
     ? `${basePrompt}\n\n---\n${profile.overrides.systemPrompt}`
     : basePrompt;
-  const adapter = AGENT_ADAPTERS[resolvedAgentId];
+  const adapter = getRuntimeAdapter(resolvedAgentId);
   if (!adapter) throw new Error(`Agent "${resolvedAgentId}" does not have a candidate execution adapter.`);
-  if (execute && adapter.status !== 'verified') throw new Error(`Agent "${resolvedAgentId}" has a candidate adapter but has not passed execution verification.`);
+  if (execute && adapter.status !== 'verified') throw new Error(`Agent "${resolvedAgentId}" has a candidate or experimental adapter but has not passed execution verification.`);
   return {
     mode: execute ? 'execute' : 'dry-run',
     taskId: task.id,
@@ -216,7 +187,7 @@ export function buildAgentExecutionPlan(
 }
 
 export function isAgentExecutable(agentId: string): boolean {
-  return AGENT_ADAPTERS[agentId]?.status === 'verified';
+  return getAgentAdapterStatus(agentId) === 'verified';
 }
 
 // Blueprint runtime providers are namespaced (`local-opencode`) to say the runtime lives on this
@@ -287,7 +258,14 @@ export async function resolveRuntimeExecutor(
   const agentId = profile?.baseAgentId ?? stripped;
   const adapterStatus = getAgentAdapterStatus(agentId);
   if (adapterStatus === 'verified') return { ok: true, requestedId, agentId, adapterStatus, profile };
-  return { ok: false, reason: adapterStatus === 'candidate' ? 'unverified-adapter' : 'no-adapter', requestedId, agentId, adapterStatus, profile };
+  return {
+    ok: false,
+    reason: adapterStatus === 'candidate' || adapterStatus === 'experimental' ? 'unverified-adapter' : 'no-adapter',
+    requestedId,
+    agentId,
+    adapterStatus,
+    profile,
+  };
 }
 
 /** Refusal sentence shared by every layer that rejects an executor, so the record and the API agree. */
@@ -295,13 +273,9 @@ export function describeRuntimeExecutorRejection(executor: RuntimeExecutor): str
   const subject = executor.profile
     ? `Profile "${executor.profile.name}" (base agent ${executor.agentId})`
     : `Agent "${executor.agentId}"`;
-  return executor.adapterStatus === 'candidate'
-    ? `${subject} has a candidate Adapter that has not passed non-interactive execution verification, so it cannot run this task.`
+  return executor.adapterStatus === 'candidate' || executor.adapterStatus === 'experimental'
+    ? `${subject} has a ${executor.adapterStatus} Adapter that has not passed non-interactive execution verification, so it cannot run this task.`
     : `${subject} has no execution Adapter at all, so it cannot run this task.`;
-}
-
-export function getAgentAdapterStatus(agentId: string): AgentAdapterStatus {
-  return AGENT_ADAPTERS[agentId]?.status ?? 'unsupported';
 }
 
 function buildTaskPrompt(task: ApprovedTask): string {
