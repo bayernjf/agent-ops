@@ -79,6 +79,7 @@ export type CodexExecutionResult = {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
   timedOut: boolean;
+  cancelled?: boolean;
   output: string;
   startedAt: string;
   completedAt: string;
@@ -322,11 +323,19 @@ function safeEnvironment() {
   return Object.fromEntries(SAFE_ENV_KEYS.flatMap(key => process.env[key] ? [[key, process.env[key] as string]] : []));
 }
 
-export type CodexProcessRunner = (command: string, arguments_: string[], options: {
+export type CodexOutputListener = (chunk: string, stream: 'stdout' | 'stderr') => void;
+
+export type CodexProcessOptions = {
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
-}) => Promise<CodexExecutionResult>;
+  /** Called for each raw stdout/stderr chunk as the child process produces it. */
+  onOutput?: CodexOutputListener;
+  /** Aborting this signal terminates the child process group and resolves with `cancelled: true`. */
+  signal?: AbortSignal;
+};
+
+export type CodexProcessRunner = (command: string, arguments_: string[], options: CodexProcessOptions) => Promise<CodexExecutionResult>;
 
 /**
  * Builds the runner for one platform. Exposed so the Windows refusal is testable on macOS/Linux CI;
@@ -340,6 +349,7 @@ export function runCodexProcessOnPlatform(platform: NodeJS.Platform): CodexProce
         exitCode: null,
         signal: null,
         timedOut: false,
+        cancelled: options.signal?.aborted,
         errorCode: WINDOWS_EXECUTION_UNSUPPORTED_CODE,
         output: describeWindowsExecutionUnsupported(command),
         startedAt: refusedAt,
@@ -351,29 +361,69 @@ export function runCodexProcessOnPlatform(platform: NodeJS.Platform): CodexProce
     const child: ChildProcess = spawn(command, arguments_, { cwd: options.cwd, env: options.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     let timedOut = false;
+    let cancelled = false;
     let exited = false;
-    const timeout = setTimeout(() => {
+    let timeout: NodeJS.Timeout | undefined;
+    let killTimer: NodeJS.Timeout | undefined;
+    const emit = (chunk: string, stream: 'stdout' | 'stderr') => {
+      if (!options.onOutput) return;
+      try {
+        options.onOutput(chunk, stream);
+      } catch {
+        // A listener must never break the child-process lifecycle.
+      }
+    };
+    const cleanup = () => {
+      if (timeout) clearTimeout(timeout);
+      if (killTimer) clearTimeout(killTimer);
+      options.signal?.removeEventListener('abort', onAbort);
+    };
+    const onAbort = () => {
+      if (exited || cancelled) return;
+      cancelled = true;
+      if (timeout) clearTimeout(timeout);
+      child.kill('SIGTERM');
+      // A child that ignores SIGTERM must not keep the cancellation hanging forever.
+      killTimer = setTimeout(() => {
+        if (!exited) child.kill('SIGKILL');
+      }, 5_000);
+      killTimer.unref();
+    };
+    child.stdout?.on('data', chunk => {
+      const text = String(chunk);
+      emit(text, 'stdout');
+      output = boundedAppend(output, text);
+    });
+    child.stderr?.on('data', chunk => {
+      const text = String(chunk);
+      emit(text, 'stderr');
+      output = boundedAppend(output, text);
+    });
+    child.once('error', error => {
+      exited = true;
+      cleanup();
+      resolve({ exitCode: null, signal: null, timedOut, cancelled, output: boundedAppend(output, error.message), startedAt, completedAt: new Date().toISOString() });
+    });
+    child.once('close', (exitCode, signal) => {
+      exited = true;
+      cleanup();
+      resolve({ exitCode, signal, timedOut, cancelled, output, startedAt, completedAt: new Date().toISOString() });
+    });
+    timeout = setTimeout(() => {
       timedOut = true;
       child.kill('SIGTERM');
       // `child.killed` only records that a signal was delivered, so it is already true here and can
       // never report whether the process actually died. An agent that keeps working through SIGTERM
       // has to be escalated against observed exit, otherwise the timeout bounds nothing.
-      setTimeout(() => {
+      killTimer = setTimeout(() => {
         if (!exited) child.kill('SIGKILL');
-      }, 5_000).unref();
+      }, 5_000);
+      killTimer.unref();
     }, options.timeoutMs);
-    child.stdout?.on('data', chunk => { output = boundedAppend(output, String(chunk)); });
-    child.stderr?.on('data', chunk => { output = boundedAppend(output, String(chunk)); });
-    child.once('error', error => {
-      exited = true;
-      clearTimeout(timeout);
-      resolve({ exitCode: null, signal: null, timedOut, output: boundedAppend(output, error.message), startedAt, completedAt: new Date().toISOString() });
-    });
-    child.once('close', (exitCode, signal) => {
-      exited = true;
-      clearTimeout(timeout);
-      resolve({ exitCode, signal, timedOut, output, startedAt, completedAt: new Date().toISOString() });
-    });
+    if (options.signal) {
+      if (options.signal.aborted) onAbort();
+      else options.signal.addEventListener('abort', onAbort, { once: true });
+    }
   });
 }
 
@@ -384,10 +434,25 @@ export const runCodexProcess: CodexProcessRunner = runCodexProcessOnPlatform(pro
 // work that was progressing normally and reported it as a failure.
 const DEFAULT_EXECUTION_TIMEOUT_MS = 900_000;
 
-export async function executeCodexPlan(plan: CodexExecutionPlan, runner: CodexProcessRunner = runCodexProcess, timeoutMs = DEFAULT_EXECUTION_TIMEOUT_MS) {
+export type ExecutePlanOptions = {
+  onOutput?: CodexOutputListener;
+  signal?: AbortSignal;
+};
+
+export async function executeCodexPlan(
+  plan: CodexExecutionPlan,
+  runner: CodexProcessRunner = runCodexProcess,
+  timeoutMs = DEFAULT_EXECUTION_TIMEOUT_MS,
+  options: ExecutePlanOptions = {},
+) {
   if (!plan.executionAllowed || plan.mode !== 'execute' || plan.noExternalChanges) {
     throw new Error('Agent execution requires an explicitly approved execute plan.');
   }
   const env = { ...safeEnvironment(), ...(plan.profileEnv ?? {}) };
-  return runner(plan.command[0], plan.command.slice(1), { cwd: plan.workspacePath, env, timeoutMs });
+  return runner(plan.command[0], plan.command.slice(1), {
+    cwd: plan.workspacePath,
+    env,
+    timeoutMs,
+    ...options,
+  });
 }
