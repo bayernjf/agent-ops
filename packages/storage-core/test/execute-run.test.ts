@@ -199,6 +199,10 @@ describe('KernelStore executeRun', () => {
       });
 
       const execution = store.executeRun(run.id, slowRunner);
+      const terminalStatuses: string[] = [];
+      store.subscribeRunEvents(run.id, event => {
+        if (event.type === 'cancelled') terminalStatuses.push(store.getRun(run.id)?.status ?? 'missing');
+      });
       for (let attempt = 0; attempt < 100 && store.getRun(run.id)?.status !== 'running'; attempt++) {
         await new Promise(resolve => setTimeout(resolve, 10));
       }
@@ -208,6 +212,7 @@ describe('KernelStore executeRun', () => {
       expect(executed.status).toBe('cancelled');
       expect(executed.artifacts).toMatchObject({ cancelled: true, output: 'stopped' });
       expect(store.getTask(task.id)?.status).toBe('cancelled');
+      expect(terminalStatuses).toEqual(['cancelled']);
       expect(store.getRunEvents(run.id).map(event => event.type))
         .toEqual(expect.arrayContaining(['started', 'stdout', 'cancelled']));
       await store.close();

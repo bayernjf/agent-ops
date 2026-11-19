@@ -426,18 +426,21 @@ export class KernelStore {
     const cancelled = result.cancelled === true || controller.signal.aborted;
     const evidence = await this.collectEvidence(task, result, cancelled);
     if (cancelled) {
-      this.emitRunEvent(id, 'cancelled');
       await this.updateTaskStatus(task.id, 'cancelled');
-      return this.updateRunStatus(id, 'cancelled', evidence.diffStat, evidence.artifacts);
+      const record = await this.updateRunStatus(id, 'cancelled', evidence.diffStat, evidence.artifacts);
+      this.emitRunEvent(id, 'cancelled');
+      return record;
     }
     if (result.exitCode === 0 && !result.timedOut) {
-      this.emitRunEvent(id, 'completed');
       await this.updateTaskStatus(task.id, 'review');
-      return this.updateRunStatus(id, 'review', evidence.diffStat, evidence.artifacts);
+      const record = await this.updateRunStatus(id, 'review', evidence.diffStat, evidence.artifacts);
+      this.emitRunEvent(id, 'completed');
+      return record;
     }
-    this.emitRunEvent(id, 'failed');
     await this.updateTaskStatus(task.id, 'failed');
-    return this.updateRunStatus(id, 'failed', evidence.diffStat, evidence.artifacts);
+    const record = await this.updateRunStatus(id, 'failed', evidence.diffStat, evidence.artifacts);
+    this.emitRunEvent(id, 'failed');
+    return record;
   }
 
   async acceptRun(id: string): Promise<RunRecord> {
