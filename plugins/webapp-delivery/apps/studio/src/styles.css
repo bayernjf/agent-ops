@@ -1840,11 +1840,14 @@ select option {
 
 .run-row {
   padding: 12px;
-  border-bottom: 1px solid var(--line);
   font-size: 13px;
 }
 
-.run-row:last-child { border-bottom: 0; }
+.run-record {
+  border-bottom: 1px solid var(--line);
+}
+
+.run-record:last-child { border-bottom: 0; }
 
 .run-agent { color: var(--text-1); }
 
@@ -1856,6 +1859,69 @@ select option {
 }
 
 .run-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+.run-evidence {
+  padding: 0 12px 14px;
+  border-top: 1px dashed var(--line);
+}
+
+.run-evidence summary {
+  padding: 10px 0;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.run-evidence-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.run-evidence-warning {
+  color: var(--status-fail);
+  font-weight: 700;
+}
+
+.run-evidence-files {
+  margin: 0 0 10px;
+  color: var(--text-2);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.run-evidence h4 {
+  margin: 12px 0 6px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.run-evidence-pre {
+  margin: 0;
+  padding: 10px;
+  max-height: 320px;
+  overflow: auto;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text-2);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.run-evidence-note {
+  margin: 6px 0 0;
+  color: var(--text-3);
+  font-size: 12px;
+}
 
 /* Task-run state colors: override the single `.state` run color for each lifecycle stage. */
 .state.queued { color: var(--status-pending) !important; background: color-mix(in srgb, var(--status-pending) 14%, var(--surface)); }
