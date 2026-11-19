@@ -35,6 +35,47 @@ function createKernelOrm(database: Database) {
 
 export type TaskPriority = 'low' | 'medium' | 'high';
 
+export type TaskPipelineStepInput = {
+  id?: string;
+  name: string;
+  roleId?: string;
+  profileId?: string;
+  agentId?: string;
+  prompt?: string;
+};
+
+export type TaskPipelineStep = {
+  id: string;
+  name: string;
+  roleId?: string;
+  profileId?: string;
+  agentId?: string;
+  prompt?: string;
+};
+
+export type TaskPipelineStepResult = {
+  stepId: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  runId?: string;
+  commitSha?: string;
+  output?: string;
+  error?: string;
+  startedAt?: string;
+  completedAt?: string;
+};
+
+export type TaskPipeline = {
+  steps: TaskPipelineStep[];
+  results: TaskPipelineStepResult[];
+  status: 'idle' | 'running' | 'completed' | 'failed';
+  startedAt?: string;
+  completedAt?: string;
+};
+
+export type TaskPipelineInput = {
+  steps: TaskPipelineStepInput[];
+};
+
 export type CreateTaskInput = {
   repo: string;
   baseRef: string;
@@ -46,6 +87,7 @@ export type CreateTaskInput = {
   priority?: TaskPriority;
   baseCommit?: string;
   roleId?: string;
+  pipeline?: TaskPipelineInput;
 };
 
 export type TaskRecord = {
@@ -60,12 +102,35 @@ export type TaskRecord = {
   priority: TaskPriority;
   baseCommit: string;
   roleId: string | null;
+  pipeline: TaskPipeline | null;
   status: TaskRunState;
   createdAt: string;
   updatedAt: string;
 };
 
-type TaskRow = Omit<TaskRecord, 'acceptanceCriteria' | 'roleId'> & { acceptanceCriteria: string; roleId: string };
+type TaskRow = Omit<TaskRecord, 'acceptanceCriteria' | 'roleId' | 'pipeline'> & {
+  acceptanceCriteria: string;
+  roleId: string;
+  pipeline: string;
+};
+
+function parseTaskPipeline(raw: string): TaskPipeline | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as TaskPipeline;
+    if (!parsed || !Array.isArray(parsed.steps)) return null;
+    const status = parsed.status === 'running' || parsed.status === 'completed' || parsed.status === 'failed' ? parsed.status : 'idle';
+    return {
+      steps: parsed.steps,
+      results: Array.isArray(parsed.results) ? parsed.results : [],
+      status,
+      startedAt: parsed.startedAt,
+      completedAt: parsed.completedAt,
+    };
+  } catch {
+    return null;
+  }
+}
 
 function toTaskRecord(row: TaskRow): TaskRecord {
   let acceptanceCriteria: string[] = [];
@@ -79,7 +144,7 @@ function toTaskRecord(row: TaskRow): TaskRecord {
   }
   const priority: TaskPriority =
     row.priority === 'low' || row.priority === 'high' ? row.priority : 'medium';
-  return { ...row, acceptanceCriteria, priority, roleId: row.roleId || null };
+  return { ...row, acceptanceCriteria, priority, roleId: row.roleId || null, pipeline: parseTaskPipeline(row.pipeline) };
 }
 
 export type RunArtifacts = {
@@ -145,6 +210,8 @@ export type RunRecord = {
   roleId: string | null;
   /** Adapter actually resolved at execution time; null before execution. */
   runtimeId: string | null;
+  /** Pipeline step or caller instruction appended to the task prompt; empty when none. */
+  instruction: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -235,6 +302,7 @@ export class KernelStore {
   protected readonly databasePath: string;
   protected migrations: readonly Migration[] = kernelMigrations;
   private readonly activeRuns = new Map<string, AbortController>();
+  private readonly activePipelines = new Set<string>();
   private readonly runEventListeners = new Map<string, Set<(event: RunEvent) => void>>();
   private nextRunEventSeq = 1;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -268,6 +336,50 @@ export class KernelStore {
     await this.persist();
   }
 
+  private async normalizePipeline(input: TaskPipelineInput | undefined): Promise<TaskPipeline | null> {
+    if (!input) return null;
+    if (!Array.isArray(input.steps) || input.steps.length === 0) throw new Error('A pipeline must have at least one step.');
+    const usedIds = new Set<string>();
+    const steps: TaskPipelineStep[] = [];
+    for (const [index, raw] of input.steps.entries()) {
+      const id = raw.id?.trim() || `step-${index + 1}`;
+      if (usedIds.has(id)) throw new Error(`Pipeline step id ${id} is duplicated.`);
+      usedIds.add(id);
+      const roleId = raw.roleId?.trim() || undefined;
+      const profileId = raw.profileId?.trim() || undefined;
+      const agentId = raw.agentId?.trim() || undefined;
+      if (!roleId && !profileId && !agentId) throw new Error(`Pipeline step ${id} must name a roleId, profileId, or agentId.`);
+
+      if (roleId) {
+        const role = await this.roles.getRole(roleId);
+        if (!role) throw new Error(`Role ${roleId} was not found.`);
+        if (!role.enabled) throw new Error(`Role ${roleId} is disabled.`);
+      }
+      if (profileId) {
+        const profile = await this.profiles.getProfile(profileId);
+        if (!profile) throw new Error(`Profile ${profileId} was not found.`);
+        if (roleId) {
+          const role = await this.roles.getRole(roleId);
+          const roleBase = role?.profileId
+            ? (await this.profiles.getProfile(role.profileId))?.baseAgentId
+            : role?.baseAgentId;
+          if (roleBase && roleBase !== profile.baseAgentId) {
+            throw new Error(`Pipeline step ${id} binds Role ${roleId} (${roleBase}) to Profile ${profileId} (${profile.baseAgentId}).`);
+          }
+        }
+      }
+      steps.push({
+        id,
+        name: raw.name.trim(),
+        ...(roleId ? { roleId } : {}),
+        ...(profileId ? { profileId } : {}),
+        ...(agentId ? { agentId } : {}),
+        ...(raw.prompt?.trim() ? { prompt: raw.prompt.trim() } : {}),
+      });
+    }
+    return { steps, results: [], status: 'idle' };
+  }
+
   async createTask(input: CreateTaskInput): Promise<TaskRecord> {
     const linkedRoleId = input.roleId?.trim() || undefined;
     if (linkedRoleId) {
@@ -275,6 +387,7 @@ export class KernelStore {
       if (!role) throw new Error(`Role ${linkedRoleId} was not found.`);
       if (!role.enabled) throw new Error(`Role ${linkedRoleId} is disabled.`);
     }
+    const pipeline = await this.normalizePipeline(input.pipeline);
     const now = new Date().toISOString();
     const record: TaskRecord = {
       id: randomUUID(),
@@ -288,6 +401,7 @@ export class KernelStore {
       priority: input.priority ?? 'medium',
       baseCommit: input.baseCommit ?? '',
       roleId: linkedRoleId ?? null,
+      pipeline,
       status: 'queued',
       createdAt: now,
       updatedAt: now,
@@ -296,6 +410,7 @@ export class KernelStore {
       ...record,
       acceptanceCriteria: JSON.stringify(record.acceptanceCriteria),
       roleId: record.roleId ?? '',
+      pipeline: record.pipeline ? JSON.stringify(record.pipeline) : '',
     }).run();
     await this.persist();
     return record;
@@ -375,7 +490,7 @@ export class KernelStore {
     return role;
   }
 
-  async createRun(taskId: string, agentId: string, roleId?: string): Promise<RunRecord> {
+  async createRun(taskId: string, agentId: string, roleId?: string, instruction?: string): Promise<RunRecord> {
     const task = this.getTask(taskId);
     if (!task) throw new Error(`Task ${taskId} was not found.`);
     const role = await this.resolveRunRole(task, roleId, agentId);
@@ -391,6 +506,7 @@ export class KernelStore {
       commitSha: '',
       roleId: role?.id ?? null,
       runtimeId: null,
+      instruction: instruction?.trim() ?? '',
       createdAt: now,
       updatedAt: now,
     };
@@ -404,6 +520,7 @@ export class KernelStore {
       commitSha: record.commitSha,
       roleId: record.roleId ?? '',
       runtimeId: '',
+      instruction: record.instruction,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
     }).run();
@@ -534,6 +651,7 @@ export class KernelStore {
       role: role ?? undefined,
       toolPolicy: role?.runtimePolicy,
       roleId: role?.id,
+      instruction: run.instruction || undefined,
     });
 
     const controller = new AbortController();
@@ -583,6 +701,114 @@ export class KernelStore {
     const record = await this.updateRunStatus(id, 'failed', evidence.diffStat, evidence.artifacts);
     this.emitRunEvent(id, 'failed');
     return record;
+  }
+
+  private async saveTaskPipeline(taskId: string, pipeline: TaskPipeline): Promise<void> {
+    const now = new Date().toISOString();
+    this.kernelOrm.update(tasks).set({ pipeline: JSON.stringify(pipeline), updatedAt: now }).where(eq(tasks.id, taskId)).run();
+    await this.persist();
+  }
+
+  private async resolvePipelineStepAgent(step: TaskPipelineStep): Promise<string> {
+    if (step.agentId) return step.agentId;
+    if (step.profileId) return step.profileId;
+    if (step.roleId) {
+      const role = await this.roles.getRole(step.roleId);
+      if (!role) throw new Error(`Role ${step.roleId} was not found.`);
+      if (!role.enabled) throw new Error(`Role ${step.roleId} is disabled.`);
+      if (role.profileId) return role.profileId;
+      if (role.baseAgentId) return role.baseAgentId;
+    }
+    throw new Error(`Pipeline step ${step.id} has no resolvable agent.`);
+  }
+
+  async executeTaskPipeline(id: string, runner?: CodexProcessRunner): Promise<TaskPipeline> {
+    if (this.activePipelines.has(id)) throw new Error(`Task ${id} already has a running pipeline.`);
+    this.activePipelines.add(id);
+    try {
+      const task = this.getTask(id);
+      if (!task) throw new Error(`Task ${id} was not found.`);
+      if (!task.pipeline || task.pipeline.steps.length === 0) throw new Error(`Task ${id} has no pipeline configured.`);
+      if (!task.worktreePath) throw new Error(`Task ${id} has no worktree. Provision it before executing its pipeline.`);
+      if (task.pipeline.status !== 'idle') {
+        throw new Error(`Task ${id} pipeline is ${task.pipeline.status}; only an idle pipeline can start. Retry hygiene is not implemented yet.`);
+      }
+
+      let pipeline: TaskPipeline = {
+        steps: task.pipeline.steps,
+        results: [],
+        status: 'running',
+        startedAt: new Date().toISOString(),
+      };
+      await this.saveTaskPipeline(id, pipeline);
+
+      for (const [index, step] of pipeline.steps.entries()) {
+        const startedAt = new Date().toISOString();
+        const updateResult = (result: TaskPipelineStepResult) => {
+          pipeline = {
+            ...pipeline,
+            results: [...pipeline.results.filter(existing => existing.stepId !== step.id), result],
+          };
+        };
+        updateResult({ stepId: step.id, status: 'running', startedAt });
+        await this.saveTaskPipeline(id, pipeline);
+
+        let runId: string | undefined;
+        try {
+          const agentId = await this.resolvePipelineStepAgent(step);
+          const instruction = `Pipeline step ${index + 1}/${pipeline.steps.length}: ${step.name}${step.prompt ? `\n\n${step.prompt}` : ''}`;
+          const run = await this.createRun(id, agentId, step.roleId, instruction);
+          runId = run.id;
+          updateResult({ stepId: step.id, status: 'running', runId, startedAt });
+          await this.saveTaskPipeline(id, pipeline);
+
+          const executed = await this.executeRun(run.id, runner);
+          if (executed.status !== 'review') {
+            updateResult({
+              stepId: step.id,
+              status: 'failed',
+              runId,
+              error: `Run ended in ${executed.status}, expected review.`,
+              startedAt,
+              completedAt: new Date().toISOString(),
+            });
+            pipeline = { ...pipeline, status: 'failed', completedAt: new Date().toISOString() };
+            await this.saveTaskPipeline(id, pipeline);
+            return pipeline;
+          }
+
+          const accepted = await this.acceptRun(run.id);
+          updateResult({
+            stepId: step.id,
+            status: 'completed',
+            runId,
+            commitSha: accepted.commitSha,
+            output: executed.artifacts.output.slice(0, 2000),
+            startedAt,
+            completedAt: new Date().toISOString(),
+          });
+          await this.saveTaskPipeline(id, pipeline);
+        } catch (error) {
+          updateResult({
+            stepId: step.id,
+            status: 'failed',
+            ...(runId ? { runId } : {}),
+            error: error instanceof Error ? error.message : String(error),
+            startedAt,
+            completedAt: new Date().toISOString(),
+          });
+          pipeline = { ...pipeline, status: 'failed', completedAt: new Date().toISOString() };
+          await this.saveTaskPipeline(id, pipeline);
+          return pipeline;
+        }
+      }
+
+      pipeline = { ...pipeline, status: 'completed', completedAt: new Date().toISOString() };
+      await this.saveTaskPipeline(id, pipeline);
+      return pipeline;
+    } finally {
+      this.activePipelines.delete(id);
+    }
   }
 
   async acceptRun(id: string): Promise<RunRecord> {

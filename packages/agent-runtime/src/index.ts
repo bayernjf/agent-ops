@@ -175,7 +175,7 @@ export function buildAgentExecutionPlan(
   task: ApprovedTask,
   workspacePath: string,
   agentId: string,
-  options: { execute?: boolean; profile?: AgentProfile; toolPolicy?: RuntimeToolPolicy; roleId?: string; role?: AgentRole } = {},
+  options: { execute?: boolean; profile?: AgentProfile; toolPolicy?: RuntimeToolPolicy; roleId?: string; role?: AgentRole; instruction?: string } = {},
 ): CodexExecutionPlan {
   const execute = options.execute === true;
   const profile = options.profile;
@@ -183,6 +183,7 @@ export function buildAgentExecutionPlan(
   // When a profile is provided, resolve the base agent from the profile.
   const resolvedAgentId = profile?.baseAgentId ?? agentId;
   const promptParts = [buildTaskPrompt(task)];
+  if (options.instruction?.trim()) promptParts.push(`---\nStep instruction:\n${options.instruction.trim()}`);
   if (role) promptParts.push(buildRolePromptSection(role));
   // Append profile system prompt after the task and Role prompts.
   if (profile?.overrides.systemPrompt) promptParts.push(`---\n${profile.overrides.systemPrompt}`);

@@ -27,6 +27,19 @@ export { daemonTokenPath, loadOrCreateDaemonToken, createTokenAuthMiddleware } f
 // layer) into a callable service. It has zero dependency on the webapp-delivery plugin,
 // so a daemon can serve this surface without mounting Project/Blueprint/Apply/Release.
 
+const pipelineStepSchema = z.object({
+  id: z.string().trim().min(1).max(100).optional(),
+  name: z.string().trim().min(1).max(100),
+  roleId: z.string().trim().min(1).max(100).optional(),
+  profileId: z.string().trim().min(1).max(100).optional(),
+  agentId: z.string().trim().min(1).max(100).optional(),
+  prompt: z.string().trim().max(10_000).optional(),
+}).refine(step => Boolean(step.roleId || step.profileId || step.agentId), 'A pipeline step needs a roleId, profileId, or agentId.');
+
+const pipelineSchema = z.object({
+  steps: z.array(pipelineStepSchema).min(1).max(20),
+});
+
 const createTaskSchema = z.object({
   repo: z.string().trim().min(1),
   baseRef: z.string().trim().min(1),
@@ -38,6 +51,7 @@ const createTaskSchema = z.object({
   priority: z.enum(['low', 'medium', 'high']).optional(),
   baseCommit: z.string().trim().optional(),
   roleId: z.string().trim().min(1).optional(),
+  pipeline: pipelineSchema.optional(),
 });
 
 const createRunSchema = z.object({
@@ -281,6 +295,20 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
   app.post('/api/tasks/:id/release', async (c) => {
     try {
       return c.json(await store.releaseTask(c.req.param('id')));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  app.get('/api/tasks/:id/pipeline', (c) => {
+    const task = store.getTask(c.req.param('id'));
+    if (!task) return c.json({ error: `Task ${c.req.param('id')} was not found.` }, 404);
+    return task.pipeline ? c.json(task.pipeline) : c.json({ error: `Task ${task.id} has no pipeline.` }, 404);
+  });
+
+  app.post('/api/tasks/:id/pipeline/execute', async (c) => {
+    try {
+      return c.json(await store.executeTaskPipeline(c.req.param('id'), options.runner));
     } catch (error) {
       return errorResponse(c, error);
     }

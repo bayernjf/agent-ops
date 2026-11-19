@@ -79,4 +79,16 @@ export const kernelMigrations: readonly Migration[] = [
       ALTER TABLE tasks ADD COLUMN role_id TEXT NOT NULL DEFAULT '';
     `,
   },
+  {
+    id: '0013_task_pipeline',
+    sql: `
+      ALTER TABLE tasks ADD COLUMN pipeline TEXT NOT NULL DEFAULT '';
+    `,
+  },
+  {
+    id: '0014_run_instruction',
+    sql: `
+      ALTER TABLE runs ADD COLUMN instruction TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];

@@ -429,6 +429,16 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
       acceptanceCriteria: z.array(z.string().trim().min(1).max(500)).max(20).optional().describe('Verifiable acceptance criteria.'),
       priority: z.enum(['low', 'medium', 'high']).optional().describe('Task priority; defaults to medium.'),
       roleId: z.string().trim().min(1).optional().describe('Optional Role that owns this task; see agent_ops_list_roles.'),
+      pipeline: z.object({
+        steps: z.array(z.object({
+          id: z.string().trim().min(1).max(100).optional(),
+          name: z.string().trim().min(1).max(100),
+          roleId: z.string().trim().min(1).max(100).optional(),
+          profileId: z.string().trim().min(1).max(100).optional(),
+          agentId: z.string().trim().min(1).max(100).optional(),
+          prompt: z.string().trim().max(10_000).optional(),
+        })).min(1).max(20),
+      }).optional().describe('Optional serial pipeline; each step needs roleId, profileId, or agentId.'),
     },
     annotations: ADDITIVE,
   }, args => callDaemon('POST', '/api/tasks', {
@@ -440,6 +450,7 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     ...(args.acceptanceCriteria ? { acceptanceCriteria: args.acceptanceCriteria } : {}),
     ...(args.priority ? { priority: args.priority } : {}),
     ...(args.roleId ? { roleId: args.roleId } : {}),
+    ...(args.pipeline ? { pipeline: args.pipeline } : {}),
   }).then(toResult));
 
   server.registerTool('agent_ops_provision_task', {
@@ -448,6 +459,13 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     inputSchema: taskIdSchema,
     annotations: ADDITIVE,
   }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/provision`).then(toResult));
+
+  server.registerTool('agent_ops_execute_pipeline', {
+    title: 'Execute pipeline',
+    description: 'Run a task pipeline serially. Each successful step is reviewed and committed before the next step starts. Synchronous and may take minutes.',
+    inputSchema: taskIdSchema,
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/pipeline/execute`).then(toResult));
 
   server.registerTool('agent_ops_release_task', {
     title: 'Release task',

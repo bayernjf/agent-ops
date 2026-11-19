@@ -15,6 +15,7 @@ export const tasks = sqliteTable('tasks', {
   priority: text('priority').notNull().default('medium'),
   baseCommit: text('base_commit').notNull().default(''),
   roleId: text('role_id').notNull().default(''),
+  pipeline: text('pipeline').notNull().default(''),
   status: text('status').notNull(),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
@@ -30,6 +31,7 @@ export const runs = sqliteTable('runs', {
   commitSha: text('commit_sha').notNull().default(''),
   roleId: text('role_id').notNull().default(''),
   runtimeId: text('runtime_id').notNull().default(''),
+  instruction: text('instruction').notNull().default(''),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 });
