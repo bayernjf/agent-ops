@@ -139,6 +139,50 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('serves and executes a task pipeline through the API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        await writeFile(join(options.cwd, 'pipeline.txt'), 'done\n', 'utf8');
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'ok',
+          startedAt: new Date(Date.now() - 10).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+      const app = createKernelApp(store, { runner });
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Pipeline over HTTP',
+        pipeline: { steps: [{ id: 'deliver', name: 'Deliver', agentId: 'codex' }] },
+      });
+      await store.provisionTask(task.id);
+
+      const read = await app.request(`/api/tasks/${task.id}/pipeline`);
+      expect(read.status).toBe(200);
+      expect((await read.json()) as object).toMatchObject({ status: 'idle' });
+
+      const executed = await app.request(`/api/tasks/${task.id}/pipeline/execute`, { method: 'POST' });
+      expect(executed.status).toBe(200);
+      expect((await executed.json()) as object).toMatchObject({
+        status: 'completed',
+        results: [{ stepId: 'deliver', status: 'completed' }],
+      });
+      expect(store.getTask(task.id)?.status).toBe('done');
+
+      const plain = await store.createTask({ repo, baseRef: 'main', title: 'No pipeline' });
+      expect((await app.request(`/api/tasks/${plain.id}/pipeline`)).status).toBe(404);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('rejects a task payload missing required fields with a 400', async () => {
     const { store, directory } = await openStore();
     try {

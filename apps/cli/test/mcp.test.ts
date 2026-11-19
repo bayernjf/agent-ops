@@ -130,6 +130,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_delete_role',
       'agent_ops_doctor',
       'agent_ops_dry_run',
+      'agent_ops_execute_pipeline',
       'agent_ops_execute_run',
       'agent_ops_get_acceptance',
       'agent_ops_get_apply',
@@ -425,10 +426,13 @@ describe('agent-ops MCP bridge', () => {
         acceptanceCriteria: ['The task and run tools reach the daemon.'],
         priority: 'high',
         roleId: role.role.id,
+        pipeline: {
+          steps: [{ id: 'mcp-step', name: 'MCP step', roleId: role.role.id, prompt: 'Do the work.' }],
+        },
       },
     });
     expect(created.isError).toBeUndefined();
-    const task = JSON.parse(textOf(created)) as { id: string; title: string; repo: string; baseRef: string; recipe: string; status: string; roleId: string | null; acceptanceCriteria: string[]; priority: string };
+    const task = JSON.parse(textOf(created)) as { id: string; title: string; repo: string; baseRef: string; recipe: string; status: string; roleId: string | null; acceptanceCriteria: string[]; priority: string; pipeline: { status: string; steps: { id: string; name: string; roleId?: string }[] } | null };
     expect(task.id).toBeTruthy();
     expect(task.title).toBe('MCP kernel probe');
     expect(task.status).toBe('queued');
@@ -436,6 +440,8 @@ describe('agent-ops MCP bridge', () => {
     expect(task.roleId).toBe(role.role.id);
     expect(task.acceptanceCriteria).toEqual(['The task and run tools reach the daemon.']);
     expect(task.priority).toBe('high');
+    expect(task.pipeline?.status).toBe('idle');
+    expect(task.pipeline?.steps[0]).toMatchObject({ id: 'mcp-step', name: 'MCP step', roleId: role.role.id });
 
     const listed = await client.callTool({ name: 'agent_ops_list_tasks', arguments: {} });
     const tasks = JSON.parse(textOf(listed)) as { id: string }[];
