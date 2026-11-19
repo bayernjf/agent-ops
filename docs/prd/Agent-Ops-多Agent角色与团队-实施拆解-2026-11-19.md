@@ -271,9 +271,11 @@ E0 基础闭环修复
 - 每步 commit SHA 可查；失败可暂停/重跑。
 - 至少 1 条真实模型 Run 从 UI 跑通（不再用确定性 runner 冒充）。
 
-**M1-A 完成记录（2026-11-20，部分）**：F1-01 Role schema、F1-02 `/api/roles` CRUD、F1-03 5 个 MCP role 工具、F1-04 RoleResolver、F1-05 同 Agent 多角色（RoleStore + Profile 解耦）、F2-01 Runtime Registry、F2-02 capability matrix 已落码；`RuntimeRegistry` 替换内核 `AGENT_ADAPTERS` switch，7 个默认 adapter 状态与能力可查询。Role 暂存 `agent-roles.json`（原子替换 + corrupted 拒写），candidate adapter 在 Role API 直接拒绝。F3、F4、F6、F7、F9 未完成，M1 整体仍未达退出标准。
+**M1-A 完成记录（2026-11-20，部分）**：F1-01 Role schema、F1-02 `/api/roles` CRUD、F1-03 5 个 MCP role 工具、F1-04 RoleResolver、F1-05 同 Agent 多角色（RoleStore + Profile 解耦）、F2-01 Runtime Registry、F2-02 capability matrix 已落码；`RuntimeRegistry` 替换内核 `AGENT_ADAPTERS` switch，7 个默认 adapter 状态与能力可查询。Role 暂存 `agent-roles.json`（原子替换 + corrupted 拒写），candidate adapter 在 Role API 直接拒绝。F4、F6、F7、F9 未完成，M1 整体仍未达退出标准。
 
 **F0-06 完成记录（2026-11-20）**：migration `0011_run_identity` 给 `runs` 增加 `role_id` / `runtime_id`；`RunRecord` 增加 `roleId` / `runtimeId`，旧 Run 空值映射为 `null`；`createRun` 可选 `roleId` 并校验 Role 存在，`executeRun` 写入实际 base adapter；server 与 MCP 透传 `roleId`；Studio Run 行展示 Role / Runtime / Commit。全仓 typecheck 0、47 文件 / 630 tests 绿。
+
+**F3-01/F3-02/F3-03 完成记录（2026-11-20）**：Role `allowedTools/blockedTools` 经 `resolveToolPolicy` 进入 `CodexExecutionPlan`；Codex 只读 allowlist 映射 `--sandbox read-only`，写 allowlist 标记 `coarse` 并告警；Claude Code 映射 `--allowedTools`；Hermes 等不支持工具策略的 Adapter 对受限 Role 直接拒绝，不再全放行。只读审查者在 Codex 上执行后 worktree clean。全仓 typecheck 0、48 文件 / 637 tests 绿。F3-04 工具审计、F3-05 统一策略层未做。
 
 ### M2 团队与狗粮（2026-12-11 → 2026-12-24）
 

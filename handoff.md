@@ -98,7 +98,19 @@
 - [x] Studio `KernelRun` 接入 `commitSha` / `roleId` / `runtimeId`；TasksView 的 Run 行展示实际 runtime，下方证据行展示 Role / Runtime / Commit，中英文 key 已补。
 - [x] 测试：storage role 落库/未知 Role、执行后 runtime 持久化、server roleId 回显/执行/accept commit、MCP roleId 透传；全仓 typecheck 0，47 文件 / 630 tests 绿。
 - [x] 本轮提交：`19d260a feat(storage-core): record run role and runtime`、`5020001 test(storage-core): cover run identity evidence`、`94465d4 docs(handoff): record the run identity baseline`。
-- [ ] F0-06 只做证据落库与展示；Role 与 run.agentId 的一致性校验、prompt 注入、Policy 生效仍归 F4/F3。
+- [ ] F0-06 只做证据落库与展示；Role 与 run.agentId 的一致性校验、prompt 注入仍归 F4。
+
+## F3 Policy 执行 — 已完成（2026-11-20）
+
+- [x] `RuntimeToolPolicy` 进入执行计划：`buildAgentExecutionPlan` 接收 Role 的 `allowedTools/blockedTools`，解析结果写入 `CodexExecutionPlan.toolPolicy`，包含 `readOnly`、`exact/coarse` 与告警。
+- [x] Codex 映射：纯只读 allowlist（如 Read/Grep/Glob）使用 `--sandbox read-only`，执行级 `exact`；含写工具的 allowlist 使用 `workspace-write`，标记 `coarse` 并提示 allowlist 只是 advisory，不能假装精确拦截。
+- [x] Claude Code 映射：allowlist 与 blocked 合并后写入 `--allowedTools`，`exact`；blocked 过滤掉被禁工具。
+- [x] 不支持工具策略的 Adapter（Hermes/OpenCode/CodeBuddy/Aider/OpenClaw）遇到受限 Role 直接拒绝执行，错误为 `cannot enforce a Role tool policy`；不再让受限角色落到 `--yolo` 全放行。
+- [x] `executeRun` 从 `run.roleId` 读回 Role 并传入执行计划；Role 被删除时明确抛 `Role <id> was not found.`。
+- [x] 只读审查者测试：Role `Read/Grep/Glob` 在 Codex 上生成 read-only 命令，runner 仅在非 read-only 时尝试写文件，执行后 worktree 保持 clean 且无泄漏文件。
+- [x] 测试：`tool-policy` 5、storage execute 新增 2；全仓 typecheck 0，48 文件 / 637 tests 绿。
+- [x] 本轮提交：`b11b8fb feat(runtime): enforce role tool policies`、`f1d9621 test(runtime): cover read-only policy enforcement`。
+- [ ] F3 只覆盖 F3-01/F3-02/F3-03；工具调用审计（F3-04）和跨 Runtime 统一策略层（F3-05）仍未做。`approvalMode` 仍由人工门禁消费，不由 Adapter 伪装执行。
 
 ## 技术债 — 已完成
 
