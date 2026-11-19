@@ -271,7 +271,7 @@ export function TasksView() {
                         {taskRuns(task.id).map(run => (
                           <div className="run-record" key={run.id}>
                             <div className="run-row" role="row">
-                              <span className="run-agent">{run.agentId}</span>
+                              <span className="run-agent" title={run.agentId}>{run.runtimeId ?? run.agentId}</span>
                               <span className={`state ${run.status}`}>{stateLabel(run.status)}</span>
                               <span className="run-diff">{run.diffStat || '—'}</span>
                               <span className="run-actions">
@@ -297,6 +297,14 @@ export function TasksView() {
                                 )}
                               </span>
                             </div>
+
+                            {(run.roleId || run.runtimeId || run.commitSha) && (
+                              <div className="run-evidence-meta run-identity">
+                                <span>{t('tasks.role')}: {run.roleId ?? '—'}</span>
+                                <span>{t('tasks.runtime')}: {run.runtimeId ?? '—'}</span>
+                                <span>{t('tasks.commit')}: {run.commitSha ? run.commitSha.slice(0, 10) : '—'}</span>
+                              </div>
+                            )}
 
                             {run.status === 'running' && (
                               <details className="run-evidence" open>

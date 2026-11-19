@@ -137,11 +137,19 @@ export type RunRecord = {
   diffStat: string;
   artifacts: RunArtifacts;
   commitSha: string;
+  /** Role selected for this run; null when the run was created without a Role. */
+  roleId: string | null;
+  /** Adapter actually resolved at execution time; null before execution. */
+  runtimeId: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
-type RunRow = Omit<RunRecord, 'artifacts'> & { artifacts: string };
+type RunRow = Omit<RunRecord, 'artifacts' | 'roleId' | 'runtimeId'> & {
+  artifacts: string;
+  roleId: string;
+  runtimeId: string;
+};
 
 function parseRunArtifacts(raw: string): RunArtifacts {
   const defaults = emptyRunArtifacts();
@@ -172,7 +180,12 @@ function parseRunArtifacts(raw: string): RunArtifacts {
 }
 
 function toRunRecord(row: RunRow): RunRecord {
-  return { ...row, artifacts: parseRunArtifacts(row.artifacts) };
+  return {
+    ...row,
+    roleId: row.roleId || null,
+    runtimeId: row.runtimeId || null,
+    artifacts: parseRunArtifacts(row.artifacts),
+  };
 }
 
 function boundedText(value: string, limit: number): { text: string; truncated: boolean } {
@@ -323,8 +336,12 @@ export class KernelStore {
     return { ...existing, worktreePath: '', updatedAt: now };
   }
 
-  async createRun(taskId: string, agentId: string): Promise<RunRecord> {
+  async createRun(taskId: string, agentId: string, roleId?: string): Promise<RunRecord> {
     if (!this.getTask(taskId)) throw new Error(`Task ${taskId} was not found.`);
+    const linkedRoleId = roleId?.trim() || undefined;
+    if (linkedRoleId && !(await this.roles.getRole(linkedRoleId))) {
+      throw new Error(`Role ${linkedRoleId} was not found.`);
+    }
     const now = new Date().toISOString();
     const artifacts = emptyRunArtifacts();
     const record: RunRecord = {
@@ -335,10 +352,24 @@ export class KernelStore {
       diffStat: '',
       artifacts,
       commitSha: '',
+      roleId: linkedRoleId ?? null,
+      runtimeId: null,
       createdAt: now,
       updatedAt: now,
     };
-    this.kernelOrm.insert(runs).values({ ...record, artifacts: JSON.stringify(artifacts) }).run();
+    this.kernelOrm.insert(runs).values({
+      id: record.id,
+      taskId: record.taskId,
+      agentId: record.agentId,
+      status: record.status,
+      diffStat: record.diffStat,
+      artifacts: JSON.stringify(artifacts),
+      commitSha: record.commitSha,
+      roleId: record.roleId ?? '',
+      runtimeId: '',
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    }).run();
     await this.persist();
     return record;
   }
@@ -425,6 +456,17 @@ export class KernelStore {
     };
   }
 
+  async updateRunRuntime(id: string, runtimeId: string): Promise<RunRecord> {
+    const existing = this.getRun(id);
+    if (!existing) throw new Error(`Run ${id} was not found.`);
+    const normalized = runtimeId.trim();
+    if (!normalized) throw new Error('Runtime id must not be empty.');
+    const now = new Date().toISOString();
+    this.kernelOrm.update(runs).set({ runtimeId: normalized, updatedAt: now }).where(eq(runs.id, id)).run();
+    await this.persist();
+    return { ...existing, runtimeId: normalized, updatedAt: now };
+  }
+
   async executeRun(id: string, runner?: CodexProcessRunner): Promise<RunRecord> {
     const run = this.getRun(id);
     if (!run) throw new Error(`Run ${id} was not found.`);
@@ -437,6 +479,7 @@ export class KernelStore {
 
     const resolved = await resolveRuntimeExecutor(run.agentId, profileId => this.profiles.getProfile(profileId));
     if (!resolved.ok) throw new Error(describeRuntimeExecutorRejection(resolved));
+    await this.updateRunRuntime(id, resolved.agentId);
 
     const approvedTask: ApprovedTask = {
       id: task.id,

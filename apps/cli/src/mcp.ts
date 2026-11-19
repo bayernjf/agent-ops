@@ -463,9 +463,13 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     inputSchema: {
       ...taskIdSchema,
       agentId: z.string().trim().min(1).describe('Agent id, e.g. "codex" or "claude-code"; see agent_ops_get_runtime.'),
+      roleId: z.string().trim().min(1).optional().describe('Optional Role id to record on the run; see agent_ops_list_roles.'),
     },
     annotations: ADDITIVE,
-  }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/runs`, { agentId: args.agentId }).then(toResult));
+  }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/runs`, {
+    agentId: args.agentId,
+    ...(args.roleId ? { roleId: args.roleId } : {}),
+  }).then(toResult));
 
   server.registerTool('agent_ops_get_run', {
     title: 'Get run',

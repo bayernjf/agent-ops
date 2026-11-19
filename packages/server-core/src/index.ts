@@ -41,6 +41,7 @@ const createTaskSchema = z.object({
 
 const createRunSchema = z.object({
   agentId: z.string().trim().min(1),
+  roleId: z.string().trim().min(1).optional(),
 });
 
 const customAgentSchema = z.object({
@@ -288,7 +289,7 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     const parsed = createRunSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'Invalid run payload.', details: parsed.error.issues }, 400);
     try {
-      return c.json(await store.createRun(c.req.param('id'), parsed.data.agentId), 201);
+      return c.json(await store.createRun(c.req.param('id'), parsed.data.agentId, parsed.data.roleId), 201);
     } catch (error) {
       return errorResponse(c, error);
     }

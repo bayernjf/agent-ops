@@ -27,6 +27,8 @@ export const runs = sqliteTable('runs', {
   diffStat: text('diff_stat').notNull().default(''),
   artifacts: text('artifacts').notNull().default('{}'),
   commitSha: text('commit_sha').notNull().default(''),
+  roleId: text('role_id').notNull().default(''),
+  runtimeId: text('runtime_id').notNull().default(''),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 });

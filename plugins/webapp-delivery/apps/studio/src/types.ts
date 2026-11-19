@@ -400,6 +400,9 @@ export type KernelRun = {
   status: KernelTaskState;
   diffStat: string;
   artifacts?: KernelRunArtifacts;
+  commitSha?: string;
+  roleId?: string | null;
+  runtimeId?: string | null;
   createdAt: string;
   updatedAt: string;
 };

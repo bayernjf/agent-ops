@@ -66,4 +66,11 @@ export const kernelMigrations: readonly Migration[] = [
       ALTER TABLE runs ADD COLUMN commit_sha TEXT NOT NULL DEFAULT '';
     `,
   },
+  {
+    id: '0011_run_identity',
+    sql: `
+      ALTER TABLE runs ADD COLUMN role_id TEXT NOT NULL DEFAULT '';
+      ALTER TABLE runs ADD COLUMN runtime_id TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];
