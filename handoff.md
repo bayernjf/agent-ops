@@ -29,7 +29,7 @@
 ## 内核产品面补充 — 已完成
 
 - [x] cli 的 MCP server 补 11 个内核 task/run 工具（`list/get/create/provision/release` task，`list/create/get/execute/accept/reject` run），对应 server-core `/api/tasks`、`/api/runs`；与 webapp 面工具并行、不替换
-- [x] delivery-server 组合内核路由：`createDaemonApp` 挂载 `createKernelApp`，webapp 模式 daemon 也暴露内核 task/run 控制面（外层 auth 中间件统一鉴权；health/doctor/runtime 重复路由保留 webapp 现有行为、遮蔽内核副本，去重列为后续技术债）
+- [x] delivery-server 组合内核路由：`createDaemonApp` 挂载 `createKernelApp`，webapp 模式 daemon 也暴露内核 task/run 控制面（外层 auth 中间件统一鉴权；health/doctor/runtime 由 webapp 路由拥有，内核侧以 `diagnostics: false` 不再挂载，见下“技术债 — 已完成”）
 - [x] mcp.test.ts 补内核 task/run 端到端测试（create_task→list/get→create_run→list/get→404），全量 44 文件 / 601 tests 绿
 
 ## 技术债 — 已完成
