@@ -66,6 +66,16 @@
 - [x] E2E 门禁：修复后全仓 44 文件 / 612 tests 绿，全仓 typecheck 0。
 - [ ] 真实模型 UI E2E 仍受登录阻塞：Claude Code 与 Codex 均返回 `Not logged in`，Claude adapter 仍是 `candidate`；OpenCode 本次 `serve --service` 启动超过 80 秒仍未产出，真实 Run 已从 UI 取消。当前 UI 完成路径使用确定性 E2E runner，不代表真实模型任务已验收。
 
+## M0 基础闭环 — 已完成（2026-11-20）
+
+- [x] `acceptRun` 真正落 commit：新增内核共享 `packages/storage-core/src/commit.ts`，accept 时 `git add -A`，拒绝 `.env` / 外部软链，提交后回写 `runs.commit_sha`；无改动时回写当前 HEAD，不伪造新提交。
+- [x] `releaseTask` 脏 worktree 拒绝：删除前先 `git status --porcelain`，有未提交改动即报错，不再让 `worktree remove --force` 吞掉未验收工作。
+- [x] `rejectRun` 重置 worktree：按 provision 时记录的 `base_commit` 执行 `reset --hard + clean -fdx`，上一轮 agent 提交、未跟踪文件和被忽略文件都不会进入下一轮。
+- [x] Task 增加 `acceptanceCriteria` / `priority` / `baseCommit`：migration `0010_task_closure`、storage schema、server `createTaskSchema` 三处同步；`executeRun` 把标准和优先级写入 agent prompt，不再写死空数组。
+- [x] 测试覆盖：accept 提交未提交改动、`.env` 拒提交、reject 回到 base 并可重跑、release 脏 worktree 拒绝、criteria/priority API 往返、prompt 含 priority；全仓 typecheck 0，44 文件 / 614 tests 绿。
+- [x] 本轮提交：`73026db feat(storage-core): close the task acceptance and commit loop`。
+- [ ] M0 的**真实模型**验收仍受登录阻塞，见上方“真实模型 UI E2E”；本轮闭环使用确定性 runner 与真实 git 临时仓验证，不把它冒充真实模型已验收。
+
 ## 技术债 — 已完成
 
 - [x] 去重 health/doctor/runtime 路由：`createKernelApp` 新增 `diagnostics` 开关（默认 `true`，独立内核模式不变），webapp 模式 daemon 以 `diagnostics: false` 只挂 task/run，health/doctor/runtime 继续由 webapp 路由拥有；不再依赖“后挂载遮蔽内核副本”。

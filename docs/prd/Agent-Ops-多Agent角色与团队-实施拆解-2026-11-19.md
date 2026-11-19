@@ -225,7 +225,7 @@ E0 基础闭环修复
 
 > 建议窗口，按实际评审调整；每个里程碑结束必须有可验收产物，不以“代码写完”作为完成。
 
-### M0 基础闭环（2026-11-20 → 2026-11-26）
+### M0 基础闭环（2026-11-20 → 2026-11-26）— 已完成 2026-11-20
 
 **目标**：先把“不丢改动、可重跑、验收标准可用”做对。
 
@@ -244,6 +244,8 @@ E0 基础闭环修复
 - reject 后重跑无上一轮残留。
 - `.env`/外部软链不被 commit。
 - `npm run typecheck` 0、相关测试绿。
+
+**完成记录（2026-11-20）**：`73026db feat(storage-core): close the task acceptance and commit loop`。accept 落 commit + `commit_sha`；release 脏 worktree 拒绝；reject 回到 `base_commit` 并可重跑；Task `acceptanceCriteria` / `priority` / `baseCommit` 经 migration `0010_task_closure` 落库并进入 prompt。全仓 typecheck 0、44 文件 / 614 tests 绿。真实模型 UI E2E 仍受登录阻塞，未计入 M0 完成证据。
 
 ### M1 角色与串行（2026-11-27 → 2026-12-10）
 
@@ -579,3 +581,4 @@ npm --workspace @agent-ops/studio run build
 |---|---|
 | 2026-11-19 | 初稿：E0–E10 拆解、M0–M4 里程碑、功能点验收、非目标触发条件 |
 | 2026-11-19 | 同步 PD-1～PD-9：自有 Harness 不投入；Pi/DSH 保留实验；Q8 关闭 |
+| 2026-11-20 | M0 完成：accept commit/SHA、release guard、reject reset、Task criteria/priority；614 tests 绿 |
