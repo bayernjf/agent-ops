@@ -49,8 +49,10 @@
 - [x] CLI MCP 新增 `agent_ops_cancel_run`，内核 task/run 工具共 12 个；取消说明从 “ends in failed” 改为 “ends in cancelled”。
 - [x] 测试：agent-runtime 16 例、storage-core `execute-run.test.ts` 13 例、server-core 9 例（含 SSE replay、HTTP 取消、重启后 SSE 回放）、workflow 6 例（含 CANCEL 迁移）；全仓 44 文件 / 612 tests 绿，全仓 typecheck 0。
 - [x] 已知限制已关闭：`run_events` 只在内存 → 已落 SQLite；取消映射 `failed` → 已改为独立 `cancelled` 终态。
-- [x] 本轮提交：`bf477e3 feat(storage-core): persist run events across restarts`、`272e806 feat(workflow): add a terminal cancelled run state`、`6e206ec test(server-core): cover SSE replay after daemon restart`。
-- [ ] Claude Code 端到端验证被本机登录阻塞：`claude 2.1.152` 已安装，但 `claude -p ...` 返回 `Not logged in · Please run /login`；adapter 仍是 `candidate`，需 owner 先完成 Claude Code 登录，再跑真实写任务并决定是否升 `verified`。
+- [x] 本轮提交：`bf477e3 feat(storage-core): persist run events across restarts`、`272e806 feat(workflow): add a terminal cancelled run state`、`6e206ec test(server-core): cover SSE replay after daemon restart`、`640a343 fix(storage-core): publish terminal events after status persists`、`ba30abb fix(studio): refresh task and run state after actions`。
+- [x] Studio UI E2E（2026-11-19，内置浏览器实测）：从 UI 完成 `queued → running → review → done`，并从 UI 取消真实 OpenCode Run 验证 `cancelled` 证据。过程中发现并修复两个真实缺陷：terminal SSE 事件早于状态落盘，导致“任务已取消、Run 仍在运行”；Tasks 刷新只刷任务不刷已展开 Run，导致状态长期陈旧。
+- [x] E2E 门禁：修复后全仓 44 文件 / 612 tests 绿，全仓 typecheck 0。
+- [ ] 真实模型 UI E2E 仍受登录阻塞：Claude Code 与 Codex 均返回 `Not logged in`，Claude adapter 仍是 `candidate`；OpenCode 本次 `serve --service` 启动超过 80 秒仍未产出，真实 Run 已从 UI 取消。当前 UI 完成路径使用确定性 E2E runner，不代表真实模型任务已验收。
 
 ## 技术债 — 已完成
 
