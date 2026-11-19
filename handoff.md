@@ -86,7 +86,19 @@
 - [x] CLI MCP 新增 5 个工具：`agent_ops_list_roles`、`agent_ops_get_role`、`agent_ops_create_role`、`agent_ops_update_role`、`agent_ops_delete_role`；`callDaemon` 支持 `DELETE`。
 - [x] 测试：`runtime-registry` 3、`roles` 7、`roles-store` 2、server role API 2、CLI role 流程；全仓 typecheck 0，47 文件 / 629 tests 绿。
 - [x] 本轮提交：`2f25b19 feat(runtime): register adapters and roles`、`9cca353 test(runtime): cover role resolution and registry`。
-- [ ] **M1-A 不是完整 M1**：F0-06 Run 证据 role/runtime、F3 Policy 映射到 adapter、F4 Task/Run role 绑定与 prompt、F6 串行 Pipeline、F7 Studio RolesView、F9 Claude/OpenCode 真实写任务均未完成；不能据此宣称 M1 完成。
+- [ ] **M1-A 不是完整 M1**：F3 Policy 映射到 adapter、F4 Task/Run role 绑定与 prompt、F6 串行 Pipeline、F7 Studio RolesView、F9 Claude/OpenCode 真实写任务均未完成；不能据此宣称 M1 完成。
+
+## F0-06 Run 证据 role/runtime/commit — 已完成（2026-11-20）
+
+- [x] migration `0011_run_identity`：`runs` 增加 `role_id` / `runtime_id`，默认空字符串，旧 Run 读取时映射为 `null`。
+- [x] `RunRecord` 增加 `roleId` / `runtimeId`；`createRun(taskId, agentId, roleId?)` 校验 Role 存在，未知 Role 抛 `Role <id> was not found.`。
+- [x] `executeRun` 解析出实际 adapter 后调用 `updateRunRuntime`，记录的是 base adapter（如请求 `local-codex` 落 `codex`），不是请求里的 profile 形式 id。
+- [x] `commitSha` 仍由 accept 写入；`RunRecord.commitSha` 保持空字符串表示未 accept，Studio 对空值显示 `—`。
+- [x] server `POST /api/tasks/:id/runs` 接受可选 `roleId`；MCP `agent_ops_create_run` 同步透传。
+- [x] Studio `KernelRun` 接入 `commitSha` / `roleId` / `runtimeId`；TasksView 的 Run 行展示实际 runtime，下方证据行展示 Role / Runtime / Commit，中英文 key 已补。
+- [x] 测试：storage role 落库/未知 Role、执行后 runtime 持久化、server roleId 回显/执行/accept commit、MCP roleId 透传；全仓 typecheck 0，47 文件 / 630 tests 绿。
+- [x] 本轮提交：`TBD feat(storage-core): record run role and runtime`、`TBD test(storage-core): cover run identity evidence`、`TBD docs(handoff): record the run identity baseline`（提交后回填真实 SHA）。
+- [ ] F0-06 只做证据落库与展示；Role 与 run.agentId 的一致性校验、prompt 注入、Policy 生效仍归 F4/F3。
 
 ## 技术债 — 已完成
 
