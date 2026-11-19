@@ -21,6 +21,7 @@ import { tasks, runs, runEvents } from './schema.js';
 import { kernelMigrations, type Migration } from './migrations.js';
 import { ProfileStore } from './profiles-store.js';
 import { addWorktree, removeWorktree } from './worktree.js';
+import { assertWorktreeClean, commitWorktreeChanges, resetWorktree } from './commit.js';
 
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
@@ -29,6 +30,8 @@ function createKernelOrm(database: Database) {
   return drizzle(database, { schema: { tasks, runs, runEvents } });
 }
 
+export type TaskPriority = 'low' | 'medium' | 'high';
+
 export type CreateTaskInput = {
   repo: string;
   baseRef: string;
@@ -36,6 +39,9 @@ export type CreateTaskInput = {
   objective?: string;
   recipe?: string;
   worktreePath?: string;
+  acceptanceCriteria?: string[];
+  priority?: TaskPriority;
+  baseCommit?: string;
 };
 
 export type TaskRecord = {
@@ -46,10 +52,30 @@ export type TaskRecord = {
   recipe: string;
   title: string;
   objective: string;
+  acceptanceCriteria: string[];
+  priority: TaskPriority;
+  baseCommit: string;
   status: TaskRunState;
   createdAt: string;
   updatedAt: string;
 };
+
+type TaskRow = Omit<TaskRecord, 'acceptanceCriteria'> & { acceptanceCriteria: string };
+
+function toTaskRecord(row: TaskRow): TaskRecord {
+  let acceptanceCriteria: string[] = [];
+  try {
+    const parsed = JSON.parse(row.acceptanceCriteria) as unknown;
+    if (Array.isArray(parsed)) {
+      acceptanceCriteria = parsed.filter((item): item is string => typeof item === 'string');
+    }
+  } catch {
+    acceptanceCriteria = [];
+  }
+  const priority: TaskPriority =
+    row.priority === 'low' || row.priority === 'high' ? row.priority : 'medium';
+  return { ...row, acceptanceCriteria, priority };
+}
 
 export type RunArtifacts = {
   /** Combined stdout/stderr from the agent process, capped before persistence. */
@@ -109,6 +135,7 @@ export type RunRecord = {
   status: TaskRunState;
   diffStat: string;
   artifacts: RunArtifacts;
+  commitSha: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -231,21 +258,29 @@ export class KernelStore {
       recipe: input.recipe ?? '',
       title: input.title,
       objective: input.objective ?? '',
+      acceptanceCriteria: input.acceptanceCriteria ?? [],
+      priority: input.priority ?? 'medium',
+      baseCommit: input.baseCommit ?? '',
       status: 'queued',
       createdAt: now,
       updatedAt: now,
     };
-    this.kernelOrm.insert(tasks).values(record).run();
+    this.kernelOrm.insert(tasks).values({
+      ...record,
+      acceptanceCriteria: JSON.stringify(record.acceptanceCriteria),
+    }).run();
     await this.persist();
     return record;
   }
 
   getTask(id: string): TaskRecord | undefined {
-    return this.kernelOrm.select().from(tasks).where(eq(tasks.id, id)).get() as TaskRecord | undefined;
+    const row = this.kernelOrm.select().from(tasks).where(eq(tasks.id, id)).get() as TaskRow | undefined;
+    return row ? toTaskRecord(row) : undefined;
   }
 
   listTasks(): TaskRecord[] {
-    return this.kernelOrm.select().from(tasks).all() as TaskRecord[];
+    const rows = this.kernelOrm.select().from(tasks).all() as TaskRow[];
+    return rows.map(toTaskRecord);
   }
 
   async updateTaskStatus(id: string, status: TaskRunState): Promise<TaskRecord> {
@@ -262,17 +297,22 @@ export class KernelStore {
     if (!existing) throw new Error(`Task ${id} was not found.`);
     if (existing.worktreePath) return existing;
     const path = join(this.dataDirectory, 'tasks', id, 'work');
-    await addWorktree(existing.repo, existing.baseRef, path);
+    const { headCommit } = await addWorktree(existing.repo, existing.baseRef, path);
     const now = new Date().toISOString();
-    this.kernelOrm.update(tasks).set({ worktreePath: path, updatedAt: now }).where(eq(tasks.id, id)).run();
+    this.kernelOrm.update(tasks).set({
+      worktreePath: path,
+      baseCommit: headCommit,
+      updatedAt: now,
+    }).where(eq(tasks.id, id)).run();
     await this.persist();
-    return { ...existing, worktreePath: path, updatedAt: now };
+    return { ...existing, worktreePath: path, baseCommit: headCommit, updatedAt: now };
   }
 
   async releaseTask(id: string): Promise<TaskRecord> {
     const existing = this.getTask(id);
     if (!existing) throw new Error(`Task ${id} was not found.`);
     if (!existing.worktreePath) return existing;
+    await assertWorktreeClean(existing.worktreePath);
     await removeWorktree(existing.repo, existing.worktreePath);
     const now = new Date().toISOString();
     this.kernelOrm.update(tasks).set({ worktreePath: '', updatedAt: now }).where(eq(tasks.id, id)).run();
@@ -291,6 +331,7 @@ export class KernelStore {
       status: 'queued',
       diffStat: '',
       artifacts,
+      commitSha: '',
       createdAt: now,
       updatedAt: now,
     };
@@ -358,6 +399,7 @@ export class KernelStore {
     status: TaskRunState,
     diffStat?: string,
     artifacts?: RunArtifacts,
+    commitSha?: string,
   ): Promise<RunRecord> {
     const existing = this.getRun(id);
     if (!existing) throw new Error(`Run ${id} was not found.`);
@@ -367,6 +409,7 @@ export class KernelStore {
       updatedAt: now,
       ...(diffStat !== undefined ? { diffStat } : {}),
       ...(artifacts !== undefined ? { artifacts: JSON.stringify(artifacts) } : {}),
+      ...(commitSha !== undefined ? { commitSha } : {}),
     }).where(eq(runs.id, id)).run();
     await this.persist();
     return {
@@ -375,6 +418,7 @@ export class KernelStore {
       updatedAt: now,
       ...(diffStat !== undefined ? { diffStat } : {}),
       ...(artifacts !== undefined ? { artifacts } : {}),
+      ...(commitSha !== undefined ? { commitSha } : {}),
     };
   }
 
@@ -391,7 +435,13 @@ export class KernelStore {
     const resolved = await resolveRuntimeExecutor(run.agentId, profileId => this.profiles.getProfile(profileId));
     if (!resolved.ok) throw new Error(describeRuntimeExecutorRejection(resolved));
 
-    const approvedTask: ApprovedTask = { id: task.id, title: task.title, objective: task.objective, acceptanceCriteria: [] };
+    const approvedTask: ApprovedTask = {
+      id: task.id,
+      title: task.title,
+      objective: task.objective,
+      acceptanceCriteria: task.acceptanceCriteria,
+      priority: task.priority,
+    };
     const plan = buildAgentExecutionPlan(approvedTask, task.worktreePath, resolved.agentId, { execute: true, profile: resolved.profile });
 
     const controller = new AbortController();
@@ -447,14 +497,24 @@ export class KernelStore {
     const run = this.getRun(id);
     if (!run) throw new Error(`Run ${id} was not found.`);
     if (run.status !== 'review') throw new Error(`Run ${id} cannot be accepted from status ${run.status}.`);
+    const task = this.getTask(run.taskId);
+    if (!task) throw new Error(`Task ${run.taskId} was not found.`);
+    if (!task.worktreePath) throw new Error(`Task ${run.taskId} has no worktree.`);
+
+    const commit = await commitWorktreeChanges(task.worktreePath, `task: accept ${task.title}`);
     await this.updateTaskStatus(run.taskId, 'done');
-    return this.updateRunStatus(id, 'done');
+    return this.updateRunStatus(id, 'done', run.diffStat, run.artifacts, commit.sha);
   }
 
   async rejectRun(id: string): Promise<RunRecord> {
     const run = this.getRun(id);
     if (!run) throw new Error(`Run ${id} was not found.`);
     if (run.status !== 'review') throw new Error(`Run ${id} cannot be rejected from status ${run.status}.`);
+    const task = this.getTask(run.taskId);
+    if (!task) throw new Error(`Task ${run.taskId} was not found.`);
+    if (task.worktreePath) {
+      await resetWorktree(task.worktreePath, task.baseCommit || undefined);
+    }
     await this.updateTaskStatus(run.taskId, 'queued');
     return this.updateRunStatus(id, 'queued');
   }
@@ -644,5 +704,7 @@ export class KernelStore {
 }
 
 export { ProfileStore, addWorktree, removeWorktree, kernelMigrations, type Migration };
+export { assertWorktreeClean, commitWorktreeChanges, resetWorktree, UnsafeCommitError } from './commit.js';
+export type { CommitWorktreeResult } from './commit.js';
 export type { CreateProfileInput, UpdateProfileInput, ProfileValidationResult } from './profiles-store.js';
 export type { WorktreeResult } from './worktree.js';

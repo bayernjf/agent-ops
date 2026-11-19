@@ -57,6 +57,7 @@ export type ApprovedTask = {
   title: string;
   objective: string;
   acceptanceCriteria: string[];
+  priority?: string;
 };
 
 export type CodexRuntimeProbe = {
@@ -307,6 +308,7 @@ function buildTaskPrompt(task: ApprovedTask): string {
   return [
     `Implement the approved feature task: ${task.title}`,
     `Objective: ${task.objective}`,
+    `Priority: ${task.priority ?? 'medium'}`,
     'Acceptance criteria:',
     ...task.acceptanceCriteria.map((criterion, index) => `${index + 1}. ${criterion}`),
     'Work only in this task workspace. Do not access secrets, production systems, or paths outside the workspace.',

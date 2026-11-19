@@ -15,6 +15,8 @@ describe('KernelStore task/run', () => {
         title: 'Rename bin',
         objective: 'Rename the CLI bin to agent-ops.',
         recipe: 'generic',
+        acceptanceCriteria: ['The CLI bin is renamed.', 'The help text uses the new name.'],
+        priority: 'high',
       });
       await store.close();
 
@@ -25,6 +27,8 @@ describe('KernelStore task/run', () => {
         baseRef: 'main',
         recipe: 'generic',
         status: 'queued',
+        priority: 'high',
+        acceptanceCriteria: ['The CLI bin is renamed.', 'The help text uses the new name.'],
       });
       expect(reopened.listTasks()).toHaveLength(1);
       await reopened.close();

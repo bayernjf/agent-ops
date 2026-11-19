@@ -104,12 +104,25 @@ describe('createKernelApp', () => {
       const created = await app.request('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo: '/tmp/repo', baseRef: 'main', title: 'Rename bin' }),
+        body: JSON.stringify({
+          repo: '/tmp/repo',
+          baseRef: 'main',
+          title: 'Rename bin',
+          acceptanceCriteria: ['The bin is renamed.', 'Help text is updated.'],
+          priority: 'high',
+        }),
       });
       expect(created.status).toBe(201);
-      const task = (await created.json()) as { id: string; status: string };
+      const task = (await created.json()) as {
+        id: string;
+        status: string;
+        acceptanceCriteria: string[];
+        priority: string;
+      };
       expect(task.id).toBeTruthy();
       expect(task.status).toBe('queued');
+      expect(task.acceptanceCriteria).toEqual(['The bin is renamed.', 'Help text is updated.']);
+      expect(task.priority).toBe('high');
 
       const list = await app.request('/api/tasks');
       expect(((await list.json()) as unknown[]).length).toBe(1);

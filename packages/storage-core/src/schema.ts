@@ -11,6 +11,9 @@ export const tasks = sqliteTable('tasks', {
   recipe: text('recipe').notNull().default(''),
   title: text('title').notNull(),
   objective: text('objective').notNull().default(''),
+  acceptanceCriteria: text('acceptance_criteria').notNull().default('[]'),
+  priority: text('priority').notNull().default('medium'),
+  baseCommit: text('base_commit').notNull().default(''),
   status: text('status').notNull(),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
@@ -23,6 +26,7 @@ export const runs = sqliteTable('runs', {
   status: text('status').notNull(),
   diffStat: text('diff_stat').notNull().default(''),
   artifacts: text('artifacts').notNull().default('{}'),
+  commitSha: text('commit_sha').notNull().default(''),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 });

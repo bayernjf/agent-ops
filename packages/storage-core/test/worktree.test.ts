@@ -57,11 +57,17 @@ describe('KernelStore task provisioning', () => {
 
       const provisioned = await store.provisionTask(task.id);
       expect(provisioned.worktreePath).toContain('tasks');
+      expect(provisioned.baseCommit).toMatch(/^[0-9a-f]{40}$/);
       await expect(exists(join(provisioned.worktreePath, 'README.md'))).resolves.toBe(true);
 
       // Provisioning twice is idempotent and does not create a second checkout.
       const again = await store.provisionTask(task.id);
       expect(again.worktreePath).toBe(provisioned.worktreePath);
+
+      // A dirty worktree cannot be released: --force would discard unaccepted work.
+      await writeFile(join(provisioned.worktreePath, 'DIRTY.md'), '# dirty\n', 'utf8');
+      await expect(store.releaseTask(task.id)).rejects.toThrow('uncommitted changes');
+      await rm(join(provisioned.worktreePath, 'DIRTY.md'), { force: true });
 
       const released = await store.releaseTask(task.id);
       expect(released.worktreePath).toBe('');

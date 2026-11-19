@@ -30,6 +30,9 @@ const createTaskSchema = z.object({
   objective: z.string().optional(),
   recipe: z.string().optional(),
   worktreePath: z.string().optional(),
+  acceptanceCriteria: z.array(z.string().trim().min(1).max(500)).max(20).optional(),
+  priority: z.enum(['low', 'medium', 'high']).optional(),
+  baseCommit: z.string().trim().optional(),
 });
 
 const createRunSchema = z.object({

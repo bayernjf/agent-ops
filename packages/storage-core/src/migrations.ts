@@ -57,4 +57,13 @@ export const kernelMigrations: readonly Migration[] = [
         ON run_events(run_id, seq);
     `,
   },
+  {
+    id: '0010_task_closure',
+    sql: `
+      ALTER TABLE tasks ADD COLUMN acceptance_criteria TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'medium';
+      ALTER TABLE tasks ADD COLUMN base_commit TEXT NOT NULL DEFAULT '';
+      ALTER TABLE runs ADD COLUMN commit_sha TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];
