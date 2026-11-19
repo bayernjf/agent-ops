@@ -124,8 +124,10 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_cancel_run',
       'agent_ops_create_feature_task',
       'agent_ops_create_project',
+      'agent_ops_create_role',
       'agent_ops_create_run',
       'agent_ops_create_task',
+      'agent_ops_delete_role',
       'agent_ops_doctor',
       'agent_ops_dry_run',
       'agent_ops_execute_run',
@@ -140,10 +142,12 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_get_quality_gate',
       'agent_ops_get_release',
       'agent_ops_get_release_plan',
+      'agent_ops_get_role',
       'agent_ops_get_run',
       'agent_ops_get_runtime',
       'agent_ops_get_task',
       'agent_ops_list_projects',
+      'agent_ops_list_roles',
       'agent_ops_list_runs',
       'agent_ops_list_tasks',
       'agent_ops_provision_task',
@@ -152,6 +156,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_request_release',
       'agent_ops_revise_blueprint',
       'agent_ops_submit_acceptance',
+      'agent_ops_update_role',
     ]);
     // Acceptance submissions are exposed by design; the approval acts never are.
     expect(names.some(name => name.includes('approve'))).toBe(false);
@@ -167,6 +172,42 @@ describe('agent-ops MCP bridge', () => {
     expect(byName.get('agent_ops_submit_acceptance')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
 
     expect(client.getServerVersion()).toMatchObject({ name: 'agent-ops', version: packageJson.version });
+  });
+
+  it('creates and manages a role through the daemon', async () => {
+    const client = await startBridge();
+
+    const created = await client.callTool({
+      name: 'agent_ops_create_role',
+      arguments: {
+        name: 'Reviewer',
+        baseAgentId: 'codex',
+        acceptanceCriteria: ['Read the diff without writes.'],
+        runtimePolicy: { allowedTools: ['Read'], blockedTools: ['Write', 'Edit'], approvalMode: 'strict' },
+      },
+    });
+    expect(created.isError).toBeFalsy();
+    const { role } = JSON.parse(textOf(created)) as { role: { id: string; name: string } };
+    expect(role).toMatchObject({ id: 'reviewer', name: 'Reviewer' });
+
+    const listed = await client.callTool({ name: 'agent_ops_list_roles', arguments: {} });
+    expect(listed.isError).toBeFalsy();
+    expect(textOf(listed)).toContain(role.id);
+
+    const single = await client.callTool({ name: 'agent_ops_get_role', arguments: { roleId: role.id } });
+    expect(single.isError).toBeFalsy();
+    expect(JSON.parse(textOf(single))).toMatchObject({ role: { name: 'Reviewer' } });
+
+    const updated = await client.callTool({
+      name: 'agent_ops_update_role',
+      arguments: { roleId: role.id, enabled: false },
+    });
+    expect(updated.isError).toBeFalsy();
+    expect(JSON.parse(textOf(updated))).toMatchObject({ role: { enabled: false } });
+
+    const deleted = await client.callTool({ name: 'agent_ops_delete_role', arguments: { roleId: role.id } });
+    expect(deleted.isError).toBeFalsy();
+    expect(JSON.parse(textOf(deleted))).toMatchObject({ deleted: true });
   });
 
   it('creates and reads a project through the daemon', async () => {

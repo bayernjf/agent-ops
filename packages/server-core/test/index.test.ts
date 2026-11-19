@@ -155,6 +155,84 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('creates, resolves, updates and deletes roles through the kernel API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+
+      const created = await app.request('/api/roles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Reviewer',
+          baseAgentId: 'codex',
+          acceptanceCriteria: ['Read the diff without writes.'],
+          runtimePolicy: { allowedTools: ['Read'], blockedTools: ['Write', 'Edit'], approvalMode: 'strict' },
+        }),
+      });
+      expect(created.status).toBe(201);
+      const role = (await created.json()) as { role: { id: string; name: string; runtimePolicy: object } };
+      expect(role.role).toMatchObject({
+        id: 'reviewer',
+        name: 'Reviewer',
+        runtimePolicy: { blockedTools: ['Write', 'Edit'], approvalMode: 'strict' },
+      });
+
+      const listed = await app.request('/api/roles');
+      expect(((await listed.json()) as { roles: unknown[] }).roles).toHaveLength(1);
+
+      const resolved = await app.request(`/api/roles/${role.role.id}/resolve`);
+      expect(resolved.status).toBe(200);
+      expect((await resolved.json()) as object).toMatchObject({
+        resolution: {
+          executable: true,
+          baseAgentId: 'codex',
+          adapterStatus: 'verified',
+        },
+      });
+
+      const updated = await app.request(`/api/roles/${role.role.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: false }),
+      });
+      expect(updated.status).toBe(200);
+      expect((await updated.json()) as object).toMatchObject({ role: { enabled: false } });
+
+      const deleted = await app.request(`/api/roles/${role.role.id}`, { method: 'DELETE' });
+      expect(deleted.status).toBe(200);
+      expect((await app.request(`/api/roles/${role.role.id}`)).status).toBe(404);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a role whose runtime is not verified or whose profile is missing', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const candidate = await app.request('/api/roles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Candidate', baseAgentId: 'claude-code' }),
+      });
+      expect(candidate.status).toBe(400);
+      expect(await candidate.text()).toContain('not verified');
+
+      const missingProfile = await app.request('/api/roles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Missing profile', profileId: 'does-not-exist' }),
+      });
+      expect(missingProfile.status).toBe(400);
+      expect(await missingProfile.text()).toContain('was not found');
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('provisions, executes, and accepts a run end to end', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-server-'));
     try {
