@@ -205,9 +205,9 @@ describe('KernelStore executeRun', () => {
       await store.cancelRun(run.id);
       const executed = await execution;
 
-      expect(executed.status).toBe('failed');
+      expect(executed.status).toBe('cancelled');
       expect(executed.artifacts).toMatchObject({ cancelled: true, output: 'stopped' });
-      expect(store.getTask(task.id)?.status).toBe('failed');
+      expect(store.getTask(task.id)?.status).toBe('cancelled');
       expect(store.getRunEvents(run.id).map(event => event.type))
         .toEqual(expect.arrayContaining(['started', 'stdout', 'cancelled']));
       await store.close();

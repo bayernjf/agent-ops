@@ -363,7 +363,7 @@ export type ProjectTab =
 // The kernel Task/Run control plane (server-core). Studio only renders these records; it never
 // derives state from them, so the shapes mirror `TaskRecord`/`RunRecord` from @agent-ops/storage-core
 // without pulling that package into the webapp plugin.
-export type KernelTaskState = 'queued' | 'running' | 'review' | 'done' | 'failed';
+export type KernelTaskState = 'queued' | 'running' | 'review' | 'done' | 'failed' | 'cancelled';
 
 export type KernelTask = {
   id: string;

@@ -770,6 +770,7 @@ export const zh = {
       review: '待审核',
       done: '已完成',
       failed: '失败',
+      cancelled: '已取消',
     },
   },
   standards: {

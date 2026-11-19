@@ -220,7 +220,7 @@ describe('createKernelApp', () => {
       expect((await cancelled.json()) as object).toMatchObject({ status: 'running' });
 
       const executed = (await (await execution).json()) as { status: string; artifacts: { cancelled: boolean } };
-      expect(executed.status).toBe('failed');
+      expect(executed.status).toBe('cancelled');
       expect(executed.artifacts.cancelled).toBe(true);
 
       await store.close();

@@ -419,7 +419,7 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
 
   server.registerTool('agent_ops_cancel_run', {
     title: 'Cancel run',
-    description: 'Cancel a currently running run. The run records cancelled evidence and ends in failed so it can be retried.',
+    description: 'Cancel a currently running run. The run records cancelled evidence and ends in cancelled.',
     inputSchema: runIdSchema,
     annotations: ADDITIVE,
   }, args => callDaemon('POST', `/api/runs/${encodeURIComponent(args.runId)}/cancel`).then(toResult));

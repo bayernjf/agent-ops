@@ -1929,3 +1929,4 @@ select option {
 .state.review { color: var(--accent-3) !important; background: color-mix(in srgb, var(--accent-3) 14%, var(--surface)); }
 .state.done { color: var(--status-ok) !important; background: color-mix(in srgb, var(--status-ok) 14%, var(--surface)); }
 .state.failed { color: var(--status-fail) !important; background: color-mix(in srgb, var(--status-fail) 14%, var(--surface)); }
+.state.cancelled { color: var(--status-pending) !important; background: color-mix(in srgb, var(--status-pending) 14%, var(--surface)); }

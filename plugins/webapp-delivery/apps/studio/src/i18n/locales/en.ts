@@ -788,6 +788,7 @@ export const en = {
       review: 'Review',
       done: 'Done',
       failed: 'Failed',
+      cancelled: 'Cancelled',
     },
   },
   standards: {

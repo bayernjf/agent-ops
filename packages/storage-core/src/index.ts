@@ -427,8 +427,8 @@ export class KernelStore {
     const evidence = await this.collectEvidence(task, result, cancelled);
     if (cancelled) {
       this.emitRunEvent(id, 'cancelled');
-      await this.updateTaskStatus(task.id, 'failed');
-      return this.updateRunStatus(id, 'failed', evidence.diffStat, evidence.artifacts);
+      await this.updateTaskStatus(task.id, 'cancelled');
+      return this.updateRunStatus(id, 'cancelled', evidence.diffStat, evidence.artifacts);
     }
     if (result.exitCode === 0 && !result.timedOut) {
       this.emitRunEvent(id, 'completed');
