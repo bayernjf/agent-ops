@@ -2,7 +2,7 @@
 
 | 文档 | 状态 | 用途 |
 |---|---|---|
-| `Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md` | Draft | 产品目标、Role/Team 模型、范围、非目标、里程碑、产品级验收 |
+| `Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md` | Draft | 产品目标、Role/Team 模型、范围、非目标、里程碑、产品级验收；§12.1 为 Tier 0 能力包 / 自有 Harness 方向备忘 |
 | `Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md` | Draft | Epic / 功能点 / 依赖 / 里程碑任务 / 测试策略 / 开放问题 |
 
 维护规则：

@@ -438,9 +438,10 @@ Coordinator Role
 | 云端执行/远程 daemon | 本地 Agent、本地订阅、本地文件是核心优势 | 本机不能常开，或需要移动端触发时 |
 | 桌面/移动客户端 | Web + localhost 已够用；多端是重投入 | 日常使用需要通知/手机审批时 |
 | 29+ adapter 全量接入 | 广度会稀释稳定性；先 4 稳定 + 3 实验 | 4 个稳定 adapter 狗粮通过后 |
+| Tier 0 产品能力包（B 模式） | 先把 Agent Ops 自身闭环做稳；跨产品调用需要契约、权限、成本和版本治理 | Agent Ops v0.3 稳定 + 至少 1 个 Tier 0 产品有稳定 CLI/API/MCP + 能力包契约评审通过 |
 | 完整 IDE/终端/浏览器 | 不是控制面职责；会变成 Orca 重客户端 | 用户明确需要内置编辑/终端时 |
 | 自动 merge/push/PR | 人审闸门是产品边界；自动合并风险高 | 不做；最多做“一键创建 PR”显式动作 |
-| 自研 harness / 模型推理 | Agent Ops 管执行，不做执行引擎 | 自有 Agent 内核产品立项时 |
+| 自研 harness / 模型推理 | Agent Ops 管执行，不做执行引擎；先验证外部 Runtime 是否足够 | Adapter 契约稳定 + 3 个外部 Runtime 狗粮通过 + 现有 Harness 无法表达角色/团队语义 + 接受长期维护 |
 | 角色长期记忆/技能库 | 先解决角色/团队/证据；记忆是下一层 | v0.4，角色/团队稳定后 |
 | Coordinator 自动派活 | 先手动派活，验证角色边界 | v0.3，串行 handoff 狗粮通过后 |
 | 并行多 worktree | 先串行，避免冲突/资源问题 | v0.3，worktree 冲突测试通过后 |
@@ -448,6 +449,65 @@ Coordinator Role
 | ACP/MCP 全协议 | 先 CLI 非交互；协议接入是扩展 | 有明确外部客户端需求时 |
 | 插件市场/团队模板市场 | 先内置模板；市场需要治理 | 有第三方 adapter/模板贡献时 |
 | 企业 SSO/多租户 | 与单机单用户定位冲突 | 产品转向团队版时 |
+
+### 12.1 后续方向备忘：控制面 / 能力包 / 自有 Harness
+
+> 本段是方向备忘，不改变 PD-1～PD-8，也不代表已立项；用于后续排迭代时判断“先做什么、后做什么”。
+
+**一句话：Agent Ops 做控制面，Tier 0 产品做能力包，Harness 做可替换执行器。**
+
+#### 三层边界
+
+| 层 | 职责 | 不做什么 |
+|---|---|---|
+| Agent Ops Core | Task / Run / Role / Team / Policy / Evidence | 不做模型推理，不做 IDE/终端 |
+| Runtime Adapter | 把 prompt 跑成一次执行；统一 detect / execute / cancel / evidence | 不做任务板、角色、审批 |
+| Capability Pack | 把 Tier 0 产品能力暴露为 CLI / HTTP / MCP | 不把产品内部实现 import 进核心 |
+
+这条边界的目的：Agent Ops 加多少 Agent、多少产品，都不会把核心撑成一个大单体。
+
+#### Tier 0 产品接入：先 A 后 B
+
+| 模式 | 含义 | 时点 |
+|---|---|---|
+| **A. 管理开发任务** | Agent Ops 在 Tier 0 产品各自仓库开 Task/Run/worktree，审 diff、验收 | **现在就能做**；纳入 M2 的 3–5 个 dogfood |
+| **B. 当能力调用** | 一个 Role 调用某个 Tier 0 产品的 CLI/API/MCP 来完成一件事 | **后置**；v0.3 稳定后先选 **1 个**产品试点，不一次性全接 |
+
+B 模式不直接集成产品代码，而是先定 **Capability Pack 契约**：
+
+- `manifest`：能力名、版本、owner、入口类型（CLI / HTTP / MCP）。
+- `io`：输入/输出 schema、错误码。
+- `permissions`：文件系统、网络、环境变量、凭据的最小权限。
+- `limits`：超时、取消、重试、幂等。
+- `evidence`：stdout/stderr、artifacts、exit code。
+- `cost`：时间/ token / 费用估算。
+- `health`：版本探测与可用性检查。
+
+这样产品迭代只影响能力包，不影响 Agent Ops 内核。
+
+#### 自有 Harness：可选 Runtime Adapter
+
+定位：**自有 Harness 是 Agent Ops 的一个可选 Runtime Adapter，独立仓/独立版本，不是 `agent-ops` 核心的一部分。**
+
+现在不做的原因：
+
+- Codex / Claude Code / OpenCode / Hermes / DSH / Pi 仍在快速迭代，自研容易变成追版本。
+- DSH 是“一切皆插件”，Pi 是“薄内核 + 扩展”，两种哲学；基于它们做自有 Harness，应选一条 lineage，不要同时继承两套抽象。
+- fork 前要先做许可证、商用边界、上游治理和升级路径评估；能做 adapter/plugin 就不要 fork。
+
+重新考虑的触发条件：
+
+1. Adapter 契约稳定，且至少 3 个外部 Runtime 已接入并狗粮通过。
+2. 现有 Harness 确实表达不了 Role/Team 语义（如角色权限、上下文隔离、handoff）。
+3. 需要本地优先的权限、证据、上下文隔离，外部 Harness 给不了。
+4. 接受长期维护成本和上游跟踪成本，而不只是“想试试”。
+
+#### 建议顺序
+
+1. **v0.2**：Agent Ops 做 Role + 串行 Pipeline；用 A 模式管理 Tier 0 产品开发任务。
+2. **v0.3**：Team / 并行稳定后，选 1 个 Tier 0 产品做 B 模式能力包试点。
+3. **并行观察**：DSH / Pi 作为实验 Runtime 接入，验证“同一角色可换 Runtime”。
+4. **最后**：满足上述四条触发条件后，再单独立项自有 Harness。
 
 ---
 
@@ -469,3 +529,4 @@ Coordinator Role
 | 日期 | 变更 |
 |---|---|
 | 2026-11-19 | 初稿：确立 Agent Ops 多角色/团队方向；v0.2 串行、v0.3 并行；列出非目标与验收 |
+| 2026-11-19 | 补充 §12.1 后续方向备忘：控制面 / 能力包 / 自有 Harness 三层；明确自有 Harness 是可选 Runtime Adapter，未立项 |
