@@ -417,6 +417,13 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: ADDITIVE,
   }, args => callDaemon('POST', `/api/runs/${encodeURIComponent(args.runId)}/execute`).then(toResult));
 
+  server.registerTool('agent_ops_cancel_run', {
+    title: 'Cancel run',
+    description: 'Cancel a currently running run. The run records cancelled evidence and ends in failed so it can be retried.',
+    inputSchema: runIdSchema,
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', `/api/runs/${encodeURIComponent(args.runId)}/cancel`).then(toResult));
+
   server.registerTool('agent_ops_accept_run', {
     title: 'Accept run',
     description: 'Accept a reviewed run, marking the task done.',

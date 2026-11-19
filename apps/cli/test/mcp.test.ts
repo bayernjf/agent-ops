@@ -121,6 +121,7 @@ describe('agent-ops MCP bridge', () => {
     const names = tools.map(tool => tool.name).sort();
     expect(names).toEqual([
       'agent_ops_accept_run',
+      'agent_ops_cancel_run',
       'agent_ops_create_feature_task',
       'agent_ops_create_project',
       'agent_ops_create_run',
