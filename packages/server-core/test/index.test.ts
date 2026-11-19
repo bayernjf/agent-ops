@@ -199,6 +199,32 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('replays terminal SSE events after the daemon store is reopened', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-server-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const databasePath = join(directory, 'agent-ops.sqlite');
+      const store = await KernelStore.open(databasePath);
+      const app = createKernelApp(store, { runner: fakeRunner(0) });
+
+      const task = await store.createTask({ repo, baseRef: 'main', title: 'Replay me' });
+      await store.provisionTask(task.id);
+      const run = await store.createRun(task.id, 'codex');
+      const executed = await app.request(`/api/runs/${run.id}/execute`, { method: 'POST' });
+      expect(executed.status).toBe(200);
+      await store.close();
+
+      const reopened = await KernelStore.open(databasePath);
+      const restarted = createKernelApp(reopened);
+      const events = await restarted.request(`/api/runs/${run.id}/events`);
+      expect(events.status).toBe(200);
+      expect(await events.text()).toContain('event: completed');
+      await reopened.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('cancels a running execution through the HTTP surface', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-server-'));
     try {
