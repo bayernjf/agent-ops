@@ -78,6 +78,14 @@ export function TasksView() {
 
   useEffect(() => { void loadTasks(); }, [loadTasks]);
 
+  // The header refresh button is the only manual recovery when an SSE stream misses a
+  // terminal frame. Reloading the task list alone left an expanded task showing its old
+  // Run status forever, so the expanded Run list has to be refreshed too.
+  const refreshTasks = useCallback(async () => {
+    await loadTasks();
+    if (expandedId) await loadRuns(expandedId);
+  }, [expandedId, loadRuns, loadTasks]);
+
   useEffect(() => () => {
     liveAbortRef.current?.abort();
   }, []);
@@ -128,6 +136,7 @@ export function TasksView() {
           if (event.type === 'completed' || event.type === 'failed' || event.type === 'cancelled') {
             finished = true;
             void loadRuns(run.taskId);
+            void loadTasks();
             break;
           }
         }
@@ -140,7 +149,7 @@ export function TasksView() {
       if (liveAbortRef.current === controller) liveAbortRef.current = null;
       controller.abort();
     }
-  }, [loadRuns, stopRunStream, t]);
+  }, [loadRuns, loadTasks, stopRunStream, t]);
 
   const toggleTask = (taskId: string) => {
     if (expandedId === taskId) {
@@ -172,6 +181,7 @@ export function TasksView() {
       const payload = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(payload?.error ?? t(`tasks.${action}Run` as KeyPath));
       await loadRuns(run.taskId);
+      await loadTasks();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t(`tasks.${action}Run` as KeyPath));
       if (isExecute) await loadRuns(run.taskId);
@@ -193,6 +203,7 @@ export function TasksView() {
       const payload = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(payload?.error ?? t('tasks.cancelRun'));
       await loadRuns(run.taskId);
+      await loadTasks();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('tasks.cancelRun'));
     } finally {
@@ -210,7 +221,7 @@ export function TasksView() {
             <h2><ListTodo size={18} aria-hidden="true" /> {t('tasks.title')}</h2>
             <p>{t('tasks.description')}</p>
           </div>
-          <button className="icon-button" type="button" onClick={() => void loadTasks()} aria-label={t('common.refresh')} title={t('common.refresh')}>
+          <button className="icon-button" type="button" onClick={() => void refreshTasks()} aria-label={t('common.refresh')} title={t('common.refresh')}>
             <RefreshCw size={18} />
           </button>
         </div>
