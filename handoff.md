@@ -1,6 +1,6 @@
 # Agent Ops — handoff
 
-> 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环），当前处于**运行证据链补强**阶段。
+> 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环），当前处于**运行证据链补强完成**阶段。
 > 迁移方案与执行记录见 `bayjf/docs/tier0/Tier0-agent-dev并入AgentOps-迁移方案-2026-11-18.md`。
 
 ## 迁移（move 阶段）— 已完成
@@ -43,12 +43,13 @@
 ## 运行取消与实时输出 — 已完成（2026-11-19）
 
 - [x] `agent-runtime`：进程 runner 新增 `onOutput` 流式回调与 `AbortSignal` 取消；取消先 SIGTERM，5 秒未退出升级 SIGKILL，结果带 `cancelled`；`executeCodexPlan` 第四参透传，原三参调用保持兼容。
-- [x] `storage-core`：`RunArtifacts` 新增 `cancelled`；新增内存 `RunEvent` 缓冲（500 条上限）与订阅接口；`executeRun` 登记 `activeRuns` 并 emit `started/stdout/stderr/completed/failed/cancelled`；新增 `cancelRun`，仅允许取消 running 且有活动句柄的 Run。
-- [x] `server-core`：新增 `POST /api/runs/:id/cancel` 与 `GET /api/runs/:id/events`（SSE）。事件流先 replay，再订阅；terminal 事件写完即关闭；daemon 重启后无内存事件时返回 `done` 帧而不是挂住。
-- [x] Studio Task 看板：执行时用 fetch + ReadableStream 消费 SSE（EventSource 不能带 bearer token），运行中显示实时输出和取消按钮；取消/普通失败都用 `artifacts.cancelled` 区分。
-- [x] CLI MCP 新增 `agent_ops_cancel_run`，内核 task/run 工具共 12 个。
-- [x] 测试：agent-runtime 16 例、storage-core `execute-run.test.ts` 12 例、server-core 8 例（含 SSE replay、HTTP 取消）；全仓 44 文件 / 609 tests 绿，Studio `tsc + vite build` 成功，全仓 typecheck 0。
-- [ ] 已知限制：`run_events` 只存在内存，daemon 重启后 SSE 不能回放；取消仍映射为 `failed`，没有独立 `cancelled` 生命周期状态。
+- [x] `storage-core`：`RunArtifacts` 新增 `cancelled`；`RunEvent` 落 SQLite `run_events`（migration `0009_run_events`），按 `seq` 保留每 Run 最近 500 条；`executeRun` 登记 `activeRuns` 并 emit `started/stdout/stderr/completed/failed/cancelled`；新增 `cancelRun`，仅允许取消 running 且有活动句柄的 Run。
+- [x] `server-core`：新增 `POST /api/runs/:id/cancel` 与 `GET /api/runs/:id/events`（SSE）。事件流先 replay，再订阅；terminal 事件写完即关闭；daemon 重启后从 SQLite 回放，不再返回空 `done`。
+- [x] Studio Task 看板：执行时用 fetch + ReadableStream 消费 SSE（EventSource 不能带 bearer token），运行中显示实时输出和取消按钮；取消/普通失败用独立 `cancelled` / `failed` 状态区分，标签为“已取消”。
+- [x] CLI MCP 新增 `agent_ops_cancel_run`，内核 task/run 工具共 12 个；取消说明从 “ends in failed” 改为 “ends in cancelled”。
+- [x] 测试：agent-runtime 16 例、storage-core `execute-run.test.ts` 13 例、server-core 8 例（含 SSE replay、HTTP 取消）、workflow 6 例（含 CANCEL 迁移）；全仓 44 文件 / 611 tests 绿，全仓 typecheck 0。
+- [x] 已知限制已关闭：`run_events` 只在内存 → 已落 SQLite；取消映射 `failed` → 已改为独立 `cancelled` 终态。
+- [x] 本轮提交：`bf477e3 feat(storage-core): persist run events across restarts`、`272e806 feat(workflow): add a terminal cancelled run state`。
 
 ## 技术债 — 已完成
 
