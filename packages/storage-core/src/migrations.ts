@@ -40,4 +40,21 @@ export const kernelMigrations: readonly Migration[] = [
       ALTER TABLE runs ADD COLUMN artifacts TEXT NOT NULL DEFAULT '{}';
     `,
   },
+  {
+    id: '0009_run_events',
+    sql: `
+      CREATE TABLE IF NOT EXISTS run_events (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        data TEXT,
+        at TEXT NOT NULL,
+        FOREIGN KEY(run_id) REFERENCES runs(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_run_events_run_seq
+        ON run_events(run_id, seq);
+    `,
+  },
 ];

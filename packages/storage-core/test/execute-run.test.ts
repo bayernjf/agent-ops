@@ -151,6 +151,30 @@ describe('KernelStore executeRun', () => {
     }
   });
 
+  it('replays run events after reopening the store and keeps seq monotonic', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const run = await store.createRun(task.id, 'codex');
+      await store.executeRun(run.id, fakeRunner(0));
+      const before = store.getRunEvents(run.id);
+      expect(before.map(event => event.type)).toEqual(['started', 'completed']);
+      await store.close();
+
+      const reopened = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      expect(reopened.getRunEvents(run.id).map(event => event.type)).toEqual(['started', 'completed']);
+      const nextRun = await reopened.createRun(task.id, 'codex');
+      await reopened.executeRun(nextRun.id, fakeRunner(0));
+      const nextEvents = reopened.getRunEvents(nextRun.id);
+      expect(nextEvents[0]?.seq).toBeGreaterThan(before.at(-1)?.seq ?? 0);
+      await reopened.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   it('cancels an active run and persists cancelled evidence', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
     try {

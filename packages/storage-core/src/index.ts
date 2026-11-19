@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { eq } from 'drizzle-orm';
+import { eq, asc } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/sql-js';
 import initSqlJs, { type Database } from 'sql.js';
 import {
@@ -17,7 +17,7 @@ import {
   type CodexProcessRunner,
 } from '@agent-ops/agent-runtime';
 import type { TaskRunState } from '@agent-ops/workflow';
-import { tasks, runs } from './schema.js';
+import { tasks, runs, runEvents } from './schema.js';
 import { kernelMigrations, type Migration } from './migrations.js';
 import { ProfileStore } from './profiles-store.js';
 import { addWorktree, removeWorktree } from './worktree.js';
@@ -26,7 +26,7 @@ const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
 
 function createKernelOrm(database: Database) {
-  return drizzle(database, { schema: { tasks, runs } });
+  return drizzle(database, { schema: { tasks, runs, runEvents } });
 }
 
 export type CreateTaskInput = {
@@ -189,9 +189,10 @@ export class KernelStore {
   protected readonly databasePath: string;
   protected migrations: readonly Migration[] = kernelMigrations;
   private readonly activeRuns = new Map<string, AbortController>();
-  private readonly runEvents = new Map<string, RunEvent[]>();
   private readonly runEventListeners = new Map<string, Set<(event: RunEvent) => void>>();
   private nextRunEventSeq = 1;
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  private persistChain: Promise<void> = Promise.resolve();
 
   protected constructor(sqlite: Database, databasePath: string) {
     this.sqlite = sqlite;
@@ -216,6 +217,7 @@ export class KernelStore {
   async initialize(): Promise<void> {
     this.sqlite.run('PRAGMA foreign_keys = ON;');
     this.runMigrations();
+    this.nextRunEventSeq = this.maxRunEventSeq() + 1;
     await this.persist();
   }
 
@@ -308,7 +310,25 @@ export class KernelStore {
   }
 
   getRunEvents(id: string): RunEvent[] {
-    return [...(this.runEvents.get(id) ?? [])];
+    const rows = this.kernelOrm
+      .select()
+      .from(runEvents)
+      .where(eq(runEvents.runId, id))
+      .orderBy(asc(runEvents.seq))
+      .all() as Array<{
+        runId: string;
+        seq: number;
+        type: string;
+        data: string | null;
+        at: string;
+      }>;
+    return rows.map(row => ({
+      runId: row.runId,
+      seq: row.seq,
+      type: row.type as RunEventType,
+      ...(row.data !== null ? { data: row.data } : {}),
+      at: row.at,
+    }));
   }
 
   subscribeRunEvents(id: string, listener: (event: RunEvent) => void): () => void {
@@ -378,7 +398,7 @@ export class KernelStore {
     this.activeRuns.set(id, controller);
     // A rejected run can be executed again under the same run id; stale terminal events
     // would make a new SSE subscriber close on the previous attempt.
-    this.runEvents.delete(id);
+    await this.clearRunEvents(id);
     await this.updateTaskStatus(task.id, 'running');
     await this.updateRunStatus(id, 'running');
     this.emitRunEvent(id, 'started');
@@ -438,10 +458,24 @@ export class KernelStore {
 
   private emitRunEvent(runId: string, type: RunEventType, data?: string): void {
     const event: RunEvent = { runId, type, seq: this.nextRunEventSeq++, at: new Date().toISOString(), ...(data !== undefined ? { data } : {}) };
-    const events = this.runEvents.get(runId) ?? [];
-    events.push(event);
-    if (events.length > RUN_EVENT_LIMIT) events.splice(0, events.length - RUN_EVENT_LIMIT);
-    this.runEvents.set(runId, events);
+    this.kernelOrm.insert(runEvents).values({
+      id: `${runId}:${event.seq}`,
+      runId,
+      seq: event.seq,
+      type: event.type,
+      data: data ?? null,
+      at: event.at,
+    }).run();
+    if (event.seq > RUN_EVENT_LIMIT) {
+      this.sqlite.run(
+        'DELETE FROM run_events WHERE run_id = ? AND seq <= ?;',
+        [runId, event.seq - RUN_EVENT_LIMIT],
+      );
+    }
+    // Output chunks can be frequent; debounce their writes. Lifecycle events are
+    // persisted immediately so a daemon restart cannot lose the terminal frame.
+    if (type === 'stdout' || type === 'stderr') this.schedulePersist();
+    else void this.persist().catch(() => {});
     for (const listener of this.runEventListeners.get(runId) ?? []) {
       try {
         listener(event);
@@ -449,6 +483,17 @@ export class KernelStore {
         // SSE clients disconnect; a listener must not break the execution path.
       }
     }
+  }
+
+  private async clearRunEvents(id: string): Promise<void> {
+    this.kernelOrm.delete(runEvents).where(eq(runEvents.runId, id)).run();
+    await this.persist();
+  }
+
+  private maxRunEventSeq(): number {
+    const result = this.sqlite.exec('SELECT COALESCE(MAX(seq), 0) FROM run_events;');
+    const value = result[0]?.values[0]?.[0];
+    return Number(value ?? 0);
   }
 
   private async collectEvidence(
@@ -537,8 +582,11 @@ export class KernelStore {
 
   async close(): Promise<void> {
     this.activeRuns.clear();
-    this.runEvents.clear();
     this.runEventListeners.clear();
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
     await this.persist();
     this.sqlite.close();
   }
@@ -561,7 +609,25 @@ export class KernelStore {
     }
   }
 
+  private schedulePersist(): void {
+    if (this.persistTimer) return;
+    const timer = setTimeout(() => {
+      this.persistTimer = null;
+      void this.persist().catch(() => {});
+    }, 200);
+    timer.unref?.();
+    this.persistTimer = timer;
+  }
+
   protected async persist(): Promise<void> {
+    // All writes share one atomic temp-file rename path; serialize them so a
+    // debounced output flush cannot race a status/artifact write.
+    const next = this.persistChain.then(() => this.writeDatabase());
+    this.persistChain = next.catch(() => undefined);
+    await next;
+  }
+
+  private async writeDatabase(): Promise<void> {
     await mkdir(dirname(this.databasePath), { recursive: true });
     // Atomic replace (2026-11-02 review P2-1): the daemon lives for days and a
     // single agent run can take 15 minutes, so an in-place write killed mid-way
