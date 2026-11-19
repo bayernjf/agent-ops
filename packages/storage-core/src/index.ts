@@ -51,15 +51,96 @@ export type TaskRecord = {
   updatedAt: string;
 };
 
+export type RunArtifacts = {
+  /** Combined stdout/stderr from the agent process, capped before persistence. */
+  output: string;
+  outputTruncated: boolean;
+  /** Full tracked diff plus patches for untracked files, capped before persistence. */
+  diff: string;
+  diffTruncated: boolean;
+  changedFiles: string[];
+  exitCode: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+};
+
+export const RUN_OUTPUT_LIMIT = 64_000;
+export const RUN_DIFF_LIMIT = 256_000;
+
+export function emptyRunArtifacts(): RunArtifacts {
+  return {
+    output: '',
+    outputTruncated: false,
+    diff: '',
+    diffTruncated: false,
+    changedFiles: [],
+    exitCode: null,
+    signal: null,
+    timedOut: false,
+    startedAt: '',
+    completedAt: '',
+    durationMs: 0,
+  };
+}
+
 export type RunRecord = {
   id: string;
   taskId: string;
   agentId: string;
   status: TaskRunState;
   diffStat: string;
+  artifacts: RunArtifacts;
   createdAt: string;
   updatedAt: string;
 };
+
+type RunRow = Omit<RunRecord, 'artifacts'> & { artifacts: string };
+
+function parseRunArtifacts(raw: string): RunArtifacts {
+  const defaults = emptyRunArtifacts();
+  try {
+    const parsed = JSON.parse(raw) as Partial<RunArtifacts> | null;
+    if (!parsed || typeof parsed !== 'object') return defaults;
+    return {
+      output: typeof parsed.output === 'string' ? parsed.output : defaults.output,
+      outputTruncated: parsed.outputTruncated === true,
+      diff: typeof parsed.diff === 'string' ? parsed.diff : defaults.diff,
+      diffTruncated: parsed.diffTruncated === true,
+      changedFiles: Array.isArray(parsed.changedFiles)
+        ? parsed.changedFiles.filter((file): file is string => typeof file === 'string')
+        : defaults.changedFiles,
+      exitCode: typeof parsed.exitCode === 'number' ? parsed.exitCode : null,
+      signal: typeof parsed.signal === 'string' ? parsed.signal : null,
+      timedOut: parsed.timedOut === true,
+      startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : '',
+      completedAt: typeof parsed.completedAt === 'string' ? parsed.completedAt : '',
+      durationMs: typeof parsed.durationMs === 'number' && Number.isFinite(parsed.durationMs)
+        ? Math.max(0, parsed.durationMs)
+        : 0,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function toRunRecord(row: RunRow): RunRecord {
+  return { ...row, artifacts: parseRunArtifacts(row.artifacts) };
+}
+
+function boundedText(value: string, limit: number): { text: string; truncated: boolean } {
+  if (value.length <= limit) return { text: value, truncated: false };
+  return {
+    text: `${value.slice(0, limit)}\n\n[truncated: ${value.length} characters total]`,
+    truncated: true,
+  };
+}
+
+function splitLines(value: string): string[] {
+  return value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+}
 
 /**
  * Opens the SQL.js database file, returning an empty in-memory database when the file does not
@@ -179,29 +260,38 @@ export class KernelStore {
   async createRun(taskId: string, agentId: string): Promise<RunRecord> {
     if (!this.getTask(taskId)) throw new Error(`Task ${taskId} was not found.`);
     const now = new Date().toISOString();
+    const artifacts = emptyRunArtifacts();
     const record: RunRecord = {
       id: randomUUID(),
       taskId,
       agentId,
       status: 'queued',
       diffStat: '',
+      artifacts,
       createdAt: now,
       updatedAt: now,
     };
-    this.kernelOrm.insert(runs).values(record).run();
+    this.kernelOrm.insert(runs).values({ ...record, artifacts: JSON.stringify(artifacts) }).run();
     await this.persist();
     return record;
   }
 
   getRun(id: string): RunRecord | undefined {
-    return this.kernelOrm.select().from(runs).where(eq(runs.id, id)).get() as RunRecord | undefined;
+    const row = this.kernelOrm.select().from(runs).where(eq(runs.id, id)).get() as RunRow | undefined;
+    return row ? toRunRecord(row) : undefined;
   }
 
   listRuns(taskId: string): RunRecord[] {
-    return this.kernelOrm.select().from(runs).where(eq(runs.taskId, taskId)).all() as RunRecord[];
+    const rows = this.kernelOrm.select().from(runs).where(eq(runs.taskId, taskId)).all() as RunRow[];
+    return rows.map(toRunRecord);
   }
 
-  async updateRunStatus(id: string, status: TaskRunState, diffStat?: string): Promise<RunRecord> {
+  async updateRunStatus(
+    id: string,
+    status: TaskRunState,
+    diffStat?: string,
+    artifacts?: RunArtifacts,
+  ): Promise<RunRecord> {
     const existing = this.getRun(id);
     if (!existing) throw new Error(`Run ${id} was not found.`);
     const now = new Date().toISOString();
@@ -209,9 +299,16 @@ export class KernelStore {
       status,
       updatedAt: now,
       ...(diffStat !== undefined ? { diffStat } : {}),
+      ...(artifacts !== undefined ? { artifacts: JSON.stringify(artifacts) } : {}),
     }).where(eq(runs.id, id)).run();
     await this.persist();
-    return { ...existing, status, updatedAt: now, ...(diffStat !== undefined ? { diffStat } : {}) };
+    return {
+      ...existing,
+      status,
+      updatedAt: now,
+      ...(diffStat !== undefined ? { diffStat } : {}),
+      ...(artifacts !== undefined ? { artifacts } : {}),
+    };
   }
 
   async executeRun(id: string, runner?: CodexProcessRunner): Promise<RunRecord> {
@@ -247,13 +344,13 @@ export class KernelStore {
       };
     }
 
+    const evidence = await this.collectEvidence(task, result);
     if (result.exitCode === 0 && !result.timedOut) {
-      const diffStat = await this.taskDiffStat(task);
       await this.updateTaskStatus(task.id, 'review');
-      return this.updateRunStatus(id, 'review', diffStat);
+      return this.updateRunStatus(id, 'review', evidence.diffStat, evidence.artifacts);
     }
     await this.updateTaskStatus(task.id, 'failed');
-    return this.updateRunStatus(id, 'failed');
+    return this.updateRunStatus(id, 'failed', evidence.diffStat, evidence.artifacts);
   }
 
   async acceptRun(id: string): Promise<RunRecord> {
@@ -272,15 +369,86 @@ export class KernelStore {
     return this.updateRunStatus(id, 'queued');
   }
 
-  private async taskDiffStat(task: TaskRecord): Promise<string> {
-    const { stdout: tracked } = await execFileAsync('git', ['diff', '--stat', task.baseRef], { cwd: task.worktreePath });
-    // `git diff --stat` ignores files the agent created but never staged, which is the
-    // common case for a non-interactive run. List those explicitly so the review surface
-    // reflects every change, not just the tracked ones.
-    const { stdout: untrackedList } = await execFileAsync('git', ['ls-files', '--others', '--exclude-standard'], { cwd: task.worktreePath });
-    const untrackedStat = untrackedList.trim().split('\n').filter(Boolean)
-      .map(name => ` ${name} | untracked`).join('\n');
-    return [tracked.trim(), untrackedStat].filter(Boolean).join('\n');
+  private async collectEvidence(
+    task: TaskRecord,
+    result: CodexExecutionResult,
+  ): Promise<{ diffStat: string; artifacts: RunArtifacts }> {
+    const cwd = task.worktreePath;
+    const trackedStat = await this.gitOutput(cwd, ['diff', '--stat', task.baseRef]);
+    const trackedNames = await this.gitOutput(cwd, ['diff', '--name-only', task.baseRef]);
+    // `git diff` ignores files the agent created but never staged, which is the common
+    // case for a non-interactive run. Capture their patches explicitly so the review
+    // surface reflects every change, not just the tracked ones.
+    const untrackedNames = splitLines(
+      await this.gitOutput(cwd, ['ls-files', '--others', '--exclude-standard']),
+    );
+    const changedFiles = [...new Set([...splitLines(trackedNames), ...untrackedNames])];
+
+    let fullDiff = await this.gitOutput(cwd, ['diff', task.baseRef]);
+    for (const file of untrackedNames) {
+      if (fullDiff.length >= RUN_DIFF_LIMIT) break;
+      const patch = await this.untrackedDiff(cwd, file);
+      if (!patch) continue;
+      fullDiff = `${fullDiff}${fullDiff && !fullDiff.endsWith('\n') ? '\n' : ''}${patch}`;
+    }
+    const boundedDiff = boundedText(fullDiff.trim(), RUN_DIFF_LIMIT);
+
+    const untrackedStat = untrackedNames.map(name => ` ${name} | untracked`).join('\n');
+    const diffStat = [trackedStat.trim(), untrackedStat].filter(Boolean).join('\n');
+
+    const boundedOutput = boundedText(result.output ?? '', RUN_OUTPUT_LIMIT);
+    const started = Date.parse(result.startedAt);
+    const completed = Date.parse(result.completedAt);
+    const durationMs = Number.isFinite(started) && Number.isFinite(completed)
+      ? Math.max(0, completed - started)
+      : 0;
+
+    return {
+      diffStat,
+      artifacts: {
+        output: boundedOutput.text,
+        outputTruncated: boundedOutput.truncated,
+        diff: boundedDiff.text,
+        diffTruncated: boundedDiff.truncated,
+        changedFiles,
+        exitCode: result.exitCode,
+        signal: result.signal,
+        timedOut: result.timedOut,
+        startedAt: result.startedAt,
+        completedAt: result.completedAt,
+        durationMs,
+      },
+    };
+  }
+
+  private async gitOutput(cwd: string, args: string[]): Promise<string> {
+    try {
+      const { stdout } = await execFileAsync('git', args, { cwd, maxBuffer: 4 * 1024 * 1024 });
+      return stdout;
+    } catch {
+      // Evidence collection is best-effort: a missing worktree or a git quirk must not
+      // turn a completed agent run into a thrown error with no persisted record.
+      return '';
+    }
+  }
+
+  private async untrackedDiff(cwd: string, file: string): Promise<string> {
+    try {
+      const { stdout } = await execFileAsync(
+        'git',
+        ['diff', '--no-index', '--', '/dev/null', file],
+        { cwd, maxBuffer: 4 * 1024 * 1024 },
+      );
+      return stdout;
+    } catch (error) {
+      // `git diff --no-index` exits 1 when it finds a difference; stdout still carries
+      // the patch and is the useful part here.
+      if (error && typeof error === 'object' && 'stdout' in error) {
+        const stdout = (error as { stdout?: unknown }).stdout;
+        if (typeof stdout === 'string') return stdout;
+      }
+      return '';
+    }
   }
 
   async close(): Promise<void> {

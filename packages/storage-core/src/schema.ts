@@ -22,6 +22,7 @@ export const runs = sqliteTable('runs', {
   agentId: text('agent_id').notNull(),
   status: text('status').notNull(),
   diffStat: text('diff_stat').notNull().default(''),
+  artifacts: text('artifacts').notNull().default('{}'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 });

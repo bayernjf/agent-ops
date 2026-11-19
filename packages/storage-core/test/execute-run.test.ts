@@ -19,12 +19,12 @@ async function initRepo(dir: string): Promise<string> {
   return dir;
 }
 
-const fakeRunner = (exitCode: number): CodexProcessRunner => async () => ({
+const fakeRunner = (exitCode: number, output = 'ok'): CodexProcessRunner => async () => ({
   exitCode,
   signal: null,
   timedOut: false,
-  output: 'ok',
-  startedAt: new Date().toISOString(),
+  output,
+  startedAt: new Date(Date.now() - 10).toISOString(),
   completedAt: new Date().toISOString(),
 });
 
@@ -50,8 +50,17 @@ describe('KernelStore executeRun', () => {
       const executed = await store.executeRun(run.id, fakeRunner(0));
       expect(executed.status).toBe('review');
       expect(executed.diffStat).toContain('NEW.md');
+      expect(executed.artifacts).toMatchObject({ output: 'ok', exitCode: 0, timedOut: false });
+      expect(executed.artifacts.diff).toContain('NEW.md');
+      expect(executed.artifacts.changedFiles).toContain('NEW.md');
+      expect(executed.artifacts.durationMs).toBeGreaterThanOrEqual(0);
       expect(store.getTask(task.id)?.status).toBe('review');
       await store.close();
+
+      const reopened = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      expect(reopened.getRun(run.id)?.artifacts.diff).toContain('NEW.md');
+      expect(reopened.getRun(run.id)?.artifacts.changedFiles).toContain('NEW.md');
+      await reopened.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
@@ -72,6 +81,8 @@ describe('KernelStore executeRun', () => {
       expect(executed.status).toBe('review');
       expect(executed.diffStat).toContain('UNTRACKED.md');
       expect(executed.diffStat).toContain('untracked');
+      expect(executed.artifacts.diff).toContain('UNTRACKED.md');
+      expect(executed.artifacts.changedFiles).toContain('UNTRACKED.md');
       await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
@@ -86,9 +97,54 @@ describe('KernelStore executeRun', () => {
       const task = await provisionedTask(store, repo);
       const run = await store.createRun(task.id, 'codex');
 
-      const executed = await store.executeRun(run.id, fakeRunner(1));
+      const executed = await store.executeRun(run.id, fakeRunner(1, 'boom'));
       expect(executed.status).toBe('failed');
+      expect(executed.artifacts).toMatchObject({ output: 'boom', exitCode: 1, timedOut: false });
       expect(store.getTask(task.id)?.status).toBe('failed');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('records timeout evidence when the agent process is killed', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const run = await store.createRun(task.id, 'codex');
+      const timeoutRunner: CodexProcessRunner = async () => ({
+        exitCode: null,
+        signal: null,
+        timedOut: true,
+        output: 'timed out',
+        startedAt: new Date(Date.now() - 1000).toISOString(),
+        completedAt: new Date().toISOString(),
+      });
+
+      const executed = await store.executeRun(run.id, timeoutRunner);
+      expect(executed.status).toBe('failed');
+      expect(executed.artifacts).toMatchObject({ output: 'timed out', timedOut: true });
+      expect(executed.artifacts.exitCode).toBeNull();
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('caps persisted output instead of storing an unbounded agent log', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const run = await store.createRun(task.id, 'codex');
+
+      const executed = await store.executeRun(run.id, fakeRunner(0, 'x'.repeat(70_000)));
+      expect(executed.artifacts.outputTruncated).toBe(true);
+      expect(executed.artifacts.output.length).toBeLessThan(70_000);
+      expect(executed.artifacts.output).toContain('[truncated: 70000 characters total]');
       await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });

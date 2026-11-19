@@ -156,11 +156,23 @@ describe('createKernelApp', () => {
 
       const executed = await app.request(`/api/runs/${run.id}/execute`, { method: 'POST' });
       expect(executed.status).toBe(200);
-      expect((await executed.json()) as object).toMatchObject({ status: 'review' });
+      expect((await executed.json()) as object).toMatchObject({
+        status: 'review',
+        artifacts: { output: 'ok', exitCode: 0, timedOut: false },
+      });
+
+      const runDetail = await app.request(`/api/runs/${run.id}`);
+      expect(runDetail.status).toBe(200);
+      expect((await runDetail.json()) as object).toMatchObject({
+        artifacts: { output: 'ok', exitCode: 0 },
+      });
 
       const accepted = await app.request(`/api/runs/${run.id}/accept`, { method: 'POST' });
       expect(accepted.status).toBe(200);
-      expect((await accepted.json()) as object).toMatchObject({ status: 'done' });
+      expect((await accepted.json()) as object).toMatchObject({
+        status: 'done',
+        artifacts: { output: 'ok' },
+      });
 
       await store.close();
     } finally {
