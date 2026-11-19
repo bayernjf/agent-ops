@@ -14,6 +14,7 @@ export const tasks = sqliteTable('tasks', {
   acceptanceCriteria: text('acceptance_criteria').notNull().default('[]'),
   priority: text('priority').notNull().default('medium'),
   baseCommit: text('base_commit').notNull().default(''),
+  roleId: text('role_id').notNull().default(''),
   status: text('status').notNull(),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),

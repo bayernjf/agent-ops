@@ -426,6 +426,9 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
       title: z.string().trim().min(1).describe('Short task title.'),
       objective: z.string().trim().max(2000).optional().describe('What the task should achieve.'),
       recipe: z.string().trim().max(500).optional().describe('Optional preset or product type, e.g. "webapp-golden-path".'),
+      acceptanceCriteria: z.array(z.string().trim().min(1).max(500)).max(20).optional().describe('Verifiable acceptance criteria.'),
+      priority: z.enum(['low', 'medium', 'high']).optional().describe('Task priority; defaults to medium.'),
+      roleId: z.string().trim().min(1).optional().describe('Optional Role that owns this task; see agent_ops_list_roles.'),
     },
     annotations: ADDITIVE,
   }, args => callDaemon('POST', '/api/tasks', {
@@ -434,6 +437,9 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     title: args.title,
     ...(args.objective ? { objective: args.objective } : {}),
     ...(args.recipe ? { recipe: args.recipe } : {}),
+    ...(args.acceptanceCriteria ? { acceptanceCriteria: args.acceptanceCriteria } : {}),
+    ...(args.priority ? { priority: args.priority } : {}),
+    ...(args.roleId ? { roleId: args.roleId } : {}),
   }).then(toResult));
 
   server.registerTool('agent_ops_provision_task', {

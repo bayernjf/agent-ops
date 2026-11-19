@@ -73,4 +73,10 @@ export const kernelMigrations: readonly Migration[] = [
       ALTER TABLE runs ADD COLUMN runtime_id TEXT NOT NULL DEFAULT '';
     `,
   },
+  {
+    id: '0012_task_role',
+    sql: `
+      ALTER TABLE tasks ADD COLUMN role_id TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];

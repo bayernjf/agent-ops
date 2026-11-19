@@ -12,6 +12,8 @@ import {
   describeRuntimeExecutorRejection,
   executeCodexPlan,
   resolveRuntimeExecutor,
+  runtimeProviderAgentId,
+  type AgentRole,
   type ApprovedTask,
   type CodexExecutionResult,
   type CodexProcessRunner,
@@ -43,6 +45,7 @@ export type CreateTaskInput = {
   acceptanceCriteria?: string[];
   priority?: TaskPriority;
   baseCommit?: string;
+  roleId?: string;
 };
 
 export type TaskRecord = {
@@ -56,12 +59,13 @@ export type TaskRecord = {
   acceptanceCriteria: string[];
   priority: TaskPriority;
   baseCommit: string;
+  roleId: string | null;
   status: TaskRunState;
   createdAt: string;
   updatedAt: string;
 };
 
-type TaskRow = Omit<TaskRecord, 'acceptanceCriteria'> & { acceptanceCriteria: string };
+type TaskRow = Omit<TaskRecord, 'acceptanceCriteria' | 'roleId'> & { acceptanceCriteria: string; roleId: string };
 
 function toTaskRecord(row: TaskRow): TaskRecord {
   let acceptanceCriteria: string[] = [];
@@ -75,7 +79,7 @@ function toTaskRecord(row: TaskRow): TaskRecord {
   }
   const priority: TaskPriority =
     row.priority === 'low' || row.priority === 'high' ? row.priority : 'medium';
-  return { ...row, acceptanceCriteria, priority };
+  return { ...row, acceptanceCriteria, priority, roleId: row.roleId || null };
 }
 
 export type RunArtifacts = {
@@ -265,6 +269,12 @@ export class KernelStore {
   }
 
   async createTask(input: CreateTaskInput): Promise<TaskRecord> {
+    const linkedRoleId = input.roleId?.trim() || undefined;
+    if (linkedRoleId) {
+      const role = await this.roles.getRole(linkedRoleId);
+      if (!role) throw new Error(`Role ${linkedRoleId} was not found.`);
+      if (!role.enabled) throw new Error(`Role ${linkedRoleId} is disabled.`);
+    }
     const now = new Date().toISOString();
     const record: TaskRecord = {
       id: randomUUID(),
@@ -277,6 +287,7 @@ export class KernelStore {
       acceptanceCriteria: input.acceptanceCriteria ?? [],
       priority: input.priority ?? 'medium',
       baseCommit: input.baseCommit ?? '',
+      roleId: linkedRoleId ?? null,
       status: 'queued',
       createdAt: now,
       updatedAt: now,
@@ -284,6 +295,7 @@ export class KernelStore {
     this.kernelOrm.insert(tasks).values({
       ...record,
       acceptanceCriteria: JSON.stringify(record.acceptanceCriteria),
+      roleId: record.roleId ?? '',
     }).run();
     await this.persist();
     return record;
@@ -336,12 +348,37 @@ export class KernelStore {
     return { ...existing, worktreePath: '', updatedAt: now };
   }
 
-  async createRun(taskId: string, agentId: string, roleId?: string): Promise<RunRecord> {
-    if (!this.getTask(taskId)) throw new Error(`Task ${taskId} was not found.`);
-    const linkedRoleId = roleId?.trim() || undefined;
-    if (linkedRoleId && !(await this.roles.getRole(linkedRoleId))) {
-      throw new Error(`Role ${linkedRoleId} was not found.`);
+  private async resolveRunRole(task: TaskRecord, requestedRoleId: string | undefined, agentId: string): Promise<AgentRole | null> {
+    const linkedRoleId = requestedRoleId?.trim() || task.roleId || undefined;
+    if (!linkedRoleId) return null;
+    const role = await this.roles.getRole(linkedRoleId);
+    if (!role) throw new Error(`Role ${linkedRoleId} was not found.`);
+    if (!role.enabled) throw new Error(`Role ${linkedRoleId} is disabled.`);
+
+    const agentProfile = await this.profiles.getProfile(agentId);
+    const agentBaseId = agentProfile?.baseAgentId ?? runtimeProviderAgentId(agentId);
+
+    if (role.profileId) {
+      const profile = await this.profiles.getProfile(role.profileId);
+      if (!profile) throw new Error(`Role ${role.id} profile ${role.profileId} was not found.`);
+      if (agentBaseId !== profile.baseAgentId) {
+        throw new Error(`Role ${role.id} targets ${role.profileId} (${profile.baseAgentId}), not run agent ${agentId}.`);
+      }
+      return role;
     }
+
+    const baseAgentId = role.baseAgentId;
+    if (!baseAgentId) throw new Error(`Role ${role.id} has no base agent.`);
+    if (agentBaseId !== baseAgentId) {
+      throw new Error(`Role ${role.id} targets ${baseAgentId}, not run agent ${agentId}.`);
+    }
+    return role;
+  }
+
+  async createRun(taskId: string, agentId: string, roleId?: string): Promise<RunRecord> {
+    const task = this.getTask(taskId);
+    if (!task) throw new Error(`Task ${taskId} was not found.`);
+    const role = await this.resolveRunRole(task, roleId, agentId);
     const now = new Date().toISOString();
     const artifacts = emptyRunArtifacts();
     const record: RunRecord = {
@@ -352,7 +389,7 @@ export class KernelStore {
       diffStat: '',
       artifacts,
       commitSha: '',
-      roleId: linkedRoleId ?? null,
+      roleId: role?.id ?? null,
       runtimeId: null,
       createdAt: now,
       updatedAt: now,
@@ -494,6 +531,7 @@ export class KernelStore {
     const plan = buildAgentExecutionPlan(approvedTask, task.worktreePath, resolved.agentId, {
       execute: true,
       profile: resolved.profile,
+      role: role ?? undefined,
       toolPolicy: role?.runtimePolicy,
       roleId: role?.id,
     });

@@ -23,6 +23,7 @@ export {
   KNOWN_WRITE_TOOLS,
 } from './tool-policy.js';
 import { resolveToolPolicy, hasRestrictedToolPolicy, type RuntimeToolPolicy, type ResolvedToolPolicy } from './tool-policy.js';
+import type { AgentRole } from './roles.js';
 export {
   type AgentRole,
   type RoleApprovalMode,
@@ -174,22 +175,24 @@ export function buildAgentExecutionPlan(
   task: ApprovedTask,
   workspacePath: string,
   agentId: string,
-  options: { execute?: boolean; profile?: AgentProfile; toolPolicy?: RuntimeToolPolicy; roleId?: string } = {},
+  options: { execute?: boolean; profile?: AgentProfile; toolPolicy?: RuntimeToolPolicy; roleId?: string; role?: AgentRole } = {},
 ): CodexExecutionPlan {
   const execute = options.execute === true;
   const profile = options.profile;
+  const role = options.role;
   // When a profile is provided, resolve the base agent from the profile.
   const resolvedAgentId = profile?.baseAgentId ?? agentId;
-  const basePrompt = buildTaskPrompt(task);
-  // Append profile system prompt after the task prompt.
-  const prompt = profile?.overrides.systemPrompt
-    ? `${basePrompt}\n\n---\n${profile.overrides.systemPrompt}`
-    : basePrompt;
+  const promptParts = [buildTaskPrompt(task)];
+  if (role) promptParts.push(buildRolePromptSection(role));
+  // Append profile system prompt after the task and Role prompts.
+  if (profile?.overrides.systemPrompt) promptParts.push(`---\n${profile.overrides.systemPrompt}`);
+  const prompt = promptParts.join('\n\n');
   const adapter = getRuntimeAdapter(resolvedAgentId);
   if (!adapter) throw new Error(`Agent "${resolvedAgentId}" does not have a candidate execution adapter.`);
   if (execute && adapter.status !== 'verified') throw new Error(`Agent "${resolvedAgentId}" has a candidate or experimental adapter but has not passed execution verification.`);
-  const resolvedPolicy = options.toolPolicy && hasRestrictedToolPolicy(options.toolPolicy)
-    ? resolveToolPolicy(adapter, options.toolPolicy)
+  const toolPolicy = options.toolPolicy ?? role?.runtimePolicy;
+  const resolvedPolicy = toolPolicy && hasRestrictedToolPolicy(toolPolicy)
+    ? resolveToolPolicy(adapter, toolPolicy)
     : undefined;
   return {
     mode: execute ? 'execute' : 'dry-run',
@@ -209,7 +212,7 @@ export function buildAgentExecutionPlan(
     profileId: profile?.id,
     baseAgentId: resolvedAgentId,
     profileEnv: profile?.overrides.env,
-    roleId: options.roleId,
+    roleId: role?.id ?? options.roleId,
     toolPolicy: resolvedPolicy,
   };
 }
@@ -316,6 +319,24 @@ function buildTaskPrompt(task: ApprovedTask): string {
     'Work only in this task workspace. Do not access secrets, production systems, or paths outside the workspace.',
     'After implementation, summarize changed files and remaining risks. Do not claim acceptance without evidence.',
   ].join('\n');
+}
+
+function buildRolePromptSection(role: AgentRole): string {
+  const lines = [
+    '---',
+    `Acting Role: ${role.name} (${role.id})`,
+  ];
+  if (role.description) lines.push(`Role responsibility: ${role.description}`);
+  if (role.systemPrompt) lines.push(role.systemPrompt);
+  if (role.acceptanceCriteria.length > 0) {
+    lines.push('Role acceptance criteria:');
+    lines.push(...role.acceptanceCriteria.map((criterion, index) => `${index + 1}. ${criterion}`));
+  }
+  lines.push('Role tool policy:');
+  lines.push(`- Allowed tools: ${role.runtimePolicy.allowedTools.length > 0 ? role.runtimePolicy.allowedTools.join(', ') : '(no allowlist; Runtime defaults apply)'}`);
+  lines.push(`- Blocked tools: ${role.runtimePolicy.blockedTools.length > 0 ? role.runtimePolicy.blockedTools.join(', ') : '(none)'}`);
+  lines.push(`- Approval mode: ${role.runtimePolicy.approvalMode}`);
+  return lines.join('\n');
 }
 
 function boundedAppend(current: string, chunk: string) {

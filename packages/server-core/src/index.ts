@@ -37,6 +37,7 @@ const createTaskSchema = z.object({
   acceptanceCriteria: z.array(z.string().trim().min(1).max(500)).max(20).optional(),
   priority: z.enum(['low', 'medium', 'high']).optional(),
   baseCommit: z.string().trim().optional(),
+  roleId: z.string().trim().min(1).optional(),
 });
 
 const createRunSchema = z.object({
