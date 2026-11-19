@@ -387,6 +387,7 @@ export type KernelRunArtifacts = {
   exitCode: number | null;
   signal: string | null;
   timedOut: boolean;
+  cancelled: boolean;
   startedAt: string;
   completedAt: string;
   durationMs: number;
