@@ -97,7 +97,7 @@
 - [x] server `POST /api/tasks/:id/runs` 接受可选 `roleId`；MCP `agent_ops_create_run` 同步透传。
 - [x] Studio `KernelRun` 接入 `commitSha` / `roleId` / `runtimeId`；TasksView 的 Run 行展示实际 runtime，下方证据行展示 Role / Runtime / Commit，中英文 key 已补。
 - [x] 测试：storage role 落库/未知 Role、执行后 runtime 持久化、server roleId 回显/执行/accept commit、MCP roleId 透传；全仓 typecheck 0，47 文件 / 630 tests 绿。
-- [x] 本轮提交：`TBD feat(storage-core): record run role and runtime`、`TBD test(storage-core): cover run identity evidence`、`TBD docs(handoff): record the run identity baseline`（提交后回填真实 SHA）。
+- [x] 本轮提交：`19d260a feat(storage-core): record run role and runtime`、`5020001 test(storage-core): cover run identity evidence`、`94465d4 docs(handoff): record the run identity baseline`。
 - [ ] F0-06 只做证据落库与展示；Role 与 run.agentId 的一致性校验、prompt 注入、Policy 生效仍归 F4/F3。
 
 ## 技术债 — 已完成
