@@ -50,6 +50,20 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('mounts task routes without the diagnostics surface when asked', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store, { diagnostics: false });
+      for (const path of ['/api/health', '/api/doctor', '/api/runtime/probe', '/api/runtime/catalog']) {
+        expect((await app.request(path)).status).toBe(404);
+      }
+      expect((await app.request('/api/tasks')).status).toBe(200);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('closes task routes behind the bearer token when one is configured', async () => {
     const { store, directory } = await openStore();
     try {

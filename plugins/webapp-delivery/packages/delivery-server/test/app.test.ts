@@ -1090,7 +1090,10 @@ describe('daemon API', () => {
       try {
         const response = await app.request('http://localhost/api/health');
         expect(response.status).toBe(200);
-        await expect(response.json()).resolves.toMatchObject({ status: 'ok' });
+        await expect(response.json()).resolves.toMatchObject({
+          status: 'ok',
+          version: expect.any(String),
+        });
       } finally {
         await store.close();
       }
