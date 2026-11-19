@@ -443,7 +443,7 @@ Coordinator Role
 | 自动 merge/push/PR | 人审闸门是产品边界；自动合并风险高 | 不做；最多做“一键创建 PR”显式动作 |
 | 自研 harness / 模型推理 | Agent Ops 管执行，不做执行引擎；先验证外部 Runtime 是否足够 | Adapter 契约稳定 + 3 个外部 Runtime 狗粮通过 + 现有 Harness 无法表达角色/团队语义 + 接受长期维护 |
 | 角色长期记忆/技能库 | 先解决角色/团队/证据；记忆是下一层 | v0.4，角色/团队稳定后 |
-| Personal Agent Host（Personal Host） | 先做工作控制面；个人 Agent Host 需要记忆、触发器、连接器、移动端和消费级审批 UX | v0.4 探索；至少 1 个 local-first Personal Agent Host spike 通过 |
+| Personal Agent Harness（含 Personal Host） | 先做工作控制面；个人 Harness 需要记忆、触发器、连接器、移动端和消费级审批 UX | v0.4 探索；至少 1 个 local-first Personal Agent Harness spike 通过 |
 | Coordinator 自动派活 | 先手动派活，验证角色边界 | v0.3，串行 handoff 狗粮通过后 |
 | 并行多 worktree | 先串行，避免冲突/资源问题 | v0.3，worktree 冲突测试通过后 |
 | 成本预算/计费 | 先有证据，再谈预算；依赖 model-hub | model-hub usage 可按 role/task 归集时 |
@@ -510,52 +510,63 @@ B 模式不直接集成产品代码，而是先定 **Capability Pack 契约**：
 3. **并行观察**：DSH / Pi 作为实验 Runtime 接入，验证“同一角色可换 Runtime”。
 4. **最后**：满足上述四条触发条件后，再单独立项自有 Harness。
 
-### 12.2 Personal Agent：你的 AI Agent，不是第二套内核
+### 12.2 Personal Agent：一种个人 Harness，不是第二套内核
 
-> 这是相邻赛道备忘，不是 v0.2/v0.3 承诺，也不改变 PD-1～PD-8。
+> 这是相邻赛道备忘，不是 v0.2/v0.3 承诺，也不改变 PD-1～PD-8。跨产品讨论见 [Tier0-个人上下文层与PersonalAgent-讨论备忘-2026-11-19.md](../../../bayjf/docs/tier0/Tier0-个人上下文层与PersonalAgent-讨论备忘-2026-11-19.md)。
 
-**一句话：Personal Agent 是你的 AI Agent——LLM 是它的推理核心，记忆/工具/权限/目标构成它的代理能力；“Personal” 说明它的 principal 是你、数据属于你、它代表你。Agent Ops 是管理它的控制面；Host 才是它的前台/身体。**
+**一句话：Personal Agent 是一种 personal-purpose Harness，和 Codex / Pi Agent / Claude Code / Hermes / DSH 同一层；它以你为 principal，把 LLM 变成代表你行事的 Agent。LLM 是大脑，Harness 是身体/神经系统，Host 是入口，Agent Ops 是管理多个 Harness 的控制面。**
 
 #### 和 Agent Ops 的关系
 
-| | Agent Ops | Personal Agent |
+| | Agent Ops | Personal Agent（Harness） |
 |---|---|---|
-| 用户 | 一个人 + 多个工作角色 | 一个人 + 生活/工作域 |
+| 层 | 控制面 | 运行时 / Harness |
+| 职责 | 管理多个 Harness/Agent：Task / Run / Role / Team / Evidence | 以你为 principal 的 Agent loop：context / tools / memory / permissions |
 | 工作单元 | Task / Run / Role / Team | 目标 / 情景 / 触发 / 审批 |
 | 护城河 | 执行、证据、审批、Adapter | 人格、记忆、上下文、信任 |
-| 交互形态 | 本地 Web 控制台 | Chat / Inbox / 手机 |
+| 交互形态 | 本地 Web 控制台 | Chat / Inbox / 手机（Host） |
 | 风险 | 改错代码 | 办错事、发错消息、付错钱 |
 
-同一个控制面，两类宿主：
+#### Harness 分层
 
 ```text
-Agent Ops Core
-├─ Work Host（当前 Studio：任务 / 角色 / 团队）
-└─ Personal Host（以后：收件箱 / 记忆 / 触发器）
+LLM（大脑）
+  └─ Harness（身体 / 神经系统）
+       ├─ Codex
+       ├─ Pi Agent
+       ├─ Claude Code
+       ├─ Hermes
+       └─ Personal Agent（以你为 principal）
+            └─ Host（入口 / 外壳）
+
+Agent Ops（控制面）──管理──▶ Harness / Agent
+Work Learn / Zeus DataDomain（记忆 / 数据服务）
 ```
 
-Personal Host 具体是 Studio 的第二视图还是独立前端，v0.4 再定；Personal Agent 可以由 Agent Ops 管理，复用 Adapter 和 Evidence。
+所以 Personal Agent 不是“Codex 里的一种 agent”，也不是“Pi 上的一个实例”；它和 Codex/Pi 是同一层，区别在 principal、目标、记忆、权限和 loop。
+
+Personal Agent Harness 自带或外接 Host；具体是 Studio 的第二视图还是独立前端，v0.4 再定。Agent Ops 管理它，复用 Adapter 和 Evidence；但 Agent Ops 本身不是 Harness。
 
 #### 现在不做
 
-- v0.2/v0.3 不引入 Personal Agent Host。Personal Agent 作为 Agent 概念可以存在，但它的个人宿主会强制引入记忆、触发器、连接器、移动端和消费级审批 UX，直接摊薄角色/团队主线。
-- 不把 Personal Agent Host 当成“聊天框”；它的核心是“它做完了，等你批”的收件箱体验。
+- v0.2/v0.3 不引入 Personal Agent Harness。它会强制引入记忆、触发器、连接器、移动端和消费级审批 UX，直接摊薄角色/团队主线。
+- 不把 Personal Agent Harness 当成“聊天框”；它的核心是“它做完了，等你批”的收件箱体验。
 - 不把个人数据、账号、支付能力放进当前单用户工作控制面；先保持边界。
 
-#### v0.4 探索 Personal Agent Host：2 周 spike
+#### v0.4 探索 Personal Agent Harness：2 周 spike
 
 - 3 个角色：Chief of Staff / Researcher / Operator。
 - 3 个只读连接器：日历、邮件、浏览器。
 - 所有写操作进审批 Inbox；本机优先，数据不出机器。
-- 同一角色可切换 Runtime（Codex / Claude Code / OpenCode / Hermes）。
+- 同一套个人上下文 / 权限可挂到不同 Harness（Codex / Pi / Claude Code / Hermes）；v0.4 先做其中一个。
 - 先用 20 个真实个人任务验证，不承诺产品化。
 
 验收只看三件事：**能不能持续记住、能不能主动触发、能不能安全地等你批。**
 
 #### 需要继续讨论的问题
 
-1. 做“工作控制面”还是“个人 Agent OS”？可以共内核，但前台、分发、商业模式不同。
-2. 记忆放哪：本地 SQLite / Markdown / 向量库；如何导出、删除、审计。
+1. Personal Agent Harness 是独立实现，还是基于 Codex / Pi 改？建议先做独立薄 Harness，借鉴它们的工具/模型适配经验，不 fork。
+2. 记忆/数据放哪：Zeus DataDomain / Work Learn SQLite / 新 store；如何导出、删除、审计。
 3. 触发器怎么接：cron、邮件、日历、文件变化、Webhook；先借 Hermes 的 cron 思路，不搬它的消息平台。
 4. 权限怎么真正落地：读可以、写要批、付款绝对要批；`allowedTools/blockedTools` 必须进入实际执行命令。
 5. 前台是 Chat 还是 Inbox：建议 Approval Inbox + Task Board，不做纯聊天壳。
@@ -581,4 +592,4 @@ Personal Host 具体是 Studio 的第二视图还是独立前端，v0.4 再定�
 |---|---|
 | 2026-11-19 | 初稿：确立 Agent Ops 多角色/团队方向；v0.2 串行、v0.3 并行；列出非目标与验收 |
 | 2026-11-19 | 补充 §12.1 后续方向备忘：控制面 / 能力包 / 自有 Harness 三层；明确自有 Harness 是可选 Runtime Adapter，未立项 |
-| 2026-11-19 | 补充 §12.2 Personal Agent 方向备忘：Personal Agent 是你的 AI Agent；Host 才是壳；v0.4 两周 spike；不进入 v0.2/v0.3 |
+| 2026-11-19 | 补充 §12.2 Personal Agent 方向备忘：Personal Agent 是一种 personal-purpose Harness，与 Codex / Pi / Claude Code / Hermes / DSH 同层；Agent Ops 是控制面；v0.4 两周 spike |
