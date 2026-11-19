@@ -151,6 +151,61 @@ describe('KernelStore executeRun', () => {
     }
   });
 
+  it('cancels an active run and persists cancelled evidence', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const run = await store.createRun(task.id, 'codex');
+
+      const slowRunner: CodexProcessRunner = (_command, _arguments, options) => new Promise(resolve => {
+        const finish = () => resolve({
+          exitCode: null,
+          signal: 'SIGTERM',
+          timedOut: false,
+          cancelled: true,
+          output: 'stopped',
+          startedAt: new Date(Date.now() - 100).toISOString(),
+          completedAt: new Date().toISOString(),
+        });
+        options.onOutput?.('working', 'stdout');
+        if (options.signal?.aborted) finish();
+        else options.signal?.addEventListener('abort', finish, { once: true });
+      });
+
+      const execution = store.executeRun(run.id, slowRunner);
+      for (let attempt = 0; attempt < 100 && store.getRun(run.id)?.status !== 'running'; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      await store.cancelRun(run.id);
+      const executed = await execution;
+
+      expect(executed.status).toBe('failed');
+      expect(executed.artifacts).toMatchObject({ cancelled: true, output: 'stopped' });
+      expect(store.getTask(task.id)?.status).toBe('failed');
+      expect(store.getRunEvents(run.id).map(event => event.type))
+        .toEqual(expect.arrayContaining(['started', 'stdout', 'cancelled']));
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('refuses to cancel a run that is not active', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const run = await store.createRun(task.id, 'codex');
+      await expect(store.cancelRun(run.id)).rejects.toThrow('cannot be cancelled from status queued');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   it('refuses to run an unprovisioned task', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
     try {
@@ -216,12 +271,15 @@ describe('KernelStore executeRun', () => {
       await execFileAsync('git', ['add', '-A'], { cwd: task.worktreePath });
       await execFileAsync('git', ['-c', 'user.name=Agent', '-c', 'user.email=agent@localhost', 'commit', '-qm', 'agent change'], { cwd: task.worktreePath });
       await store.executeRun(run.id, fakeRunner(0));
+      expect(store.getRunEvents(run.id).map(event => event.type)).toEqual(['started', 'completed']);
 
       const rejected = await store.rejectRun(run.id);
       expect(rejected.status).toBe('queued');
       expect(store.getTask(task.id)?.status).toBe('queued');
       // The rejected run is queued again and can be re-executed.
       await expect(store.executeRun(run.id, fakeRunner(0))).resolves.toMatchObject({ status: 'review' });
+      // A new attempt must not replay the previous terminal event to SSE subscribers.
+      expect(store.getRunEvents(run.id).map(event => event.type)).toEqual(['started', 'completed']);
       await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
