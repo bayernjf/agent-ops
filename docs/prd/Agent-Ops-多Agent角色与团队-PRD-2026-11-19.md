@@ -443,7 +443,7 @@ Coordinator Role
 | 自动 merge/push/PR | 人审闸门是产品边界；自动合并风险高 | 不做；最多做“一键创建 PR”显式动作 |
 | 自研 harness / 模型推理 | Agent Ops 管执行，不做执行引擎；先验证外部 Runtime 是否足够 | Adapter 契约稳定 + 3 个外部 Runtime 狗粮通过 + 现有 Harness 无法表达角色/团队语义 + 接受长期维护 |
 | 角色长期记忆/技能库 | 先解决角色/团队/证据；记忆是下一层 | v0.4，角色/团队稳定后 |
-| Personal Agent 前台（Personal Shell） | 先做工作控制面；个人 Agent 需要记忆、触发器、连接器、移动端和消费级审批 UX | v0.4 探索；至少 1 个 local-first Personal Agent spike 通过 |
+| Personal Agent Host（Personal Host） | 先做工作控制面；个人 Agent Host 需要记忆、触发器、连接器、移动端和消费级审批 UX | v0.4 探索；至少 1 个 local-first Personal Agent Host spike 通过 |
 | Coordinator 自动派活 | 先手动派活，验证角色边界 | v0.3，串行 handoff 狗粮通过后 |
 | 并行多 worktree | 先串行，避免冲突/资源问题 | v0.3，worktree 冲突测试通过后 |
 | 成本预算/计费 | 先有证据，再谈预算；依赖 model-hub | model-hub usage 可按 role/task 归集时 |
@@ -510,39 +510,39 @@ B 模式不直接集成产品代码，而是先定 **Capability Pack 契约**：
 3. **并行观察**：DSH / Pi 作为实验 Runtime 接入，验证“同一角色可换 Runtime”。
 4. **最后**：满足上述四条触发条件后，再单独立项自有 Harness。
 
-### 12.2 Personal Agent：第二层壳，不是第二套内核
+### 12.2 Personal Agent：你的 AI Agent，不是第二套内核
 
 > 这是相邻赛道备忘，不是 v0.2/v0.3 承诺，也不改变 PD-1～PD-8。
 
-**一句话：Personal Agent = 长期角色 + 记忆 + 触发器 + 权限 + 审批收件箱。Agent Ops 适合做它的后台控制面，而不是直接做它的前台。**
+**一句话：Personal Agent 是你的 AI Agent——LLM 是它的推理核心，记忆/工具/权限/目标构成它的代理能力；“Personal” 说明它的 principal 是你、数据属于你、它代表你。Agent Ops 是管理它的控制面；Host 才是它的前台/身体。**
 
 #### 和 Agent Ops 的关系
 
 | | Agent Ops | Personal Agent |
 |---|---|---|
 | 用户 | 一个人 + 多个工作角色 | 一个人 + 生活/工作域 |
-| 单位 | Task / Run / Role / Team | 对话 / 习惯 / 触发 / 收件箱 |
-| 护城河 | 执行、证据、审批、Adapter | 记忆、上下文、连接器、信任 |
-| 形态 | 本地 Web 控制台 | Chat / Inbox / 手机 |
+| 工作单元 | Task / Run / Role / Team | 目标 / 情景 / 触发 / 审批 |
+| 护城河 | 执行、证据、审批、Adapter | 人格、记忆、上下文、信任 |
+| 交互形态 | 本地 Web 控制台 | Chat / Inbox / 手机 |
 | 风险 | 改错代码 | 办错事、发错消息、付错钱 |
 
-同一个内核，两种壳：
+同一个控制面，两类宿主：
 
 ```text
 Agent Ops Core
-├─ Work Shell（当前 Studio：任务 / 角色 / 团队）
-└─ Personal Shell（以后：收件箱 / 记忆 / 触发器）
+├─ Work Host（当前 Studio：任务 / 角色 / 团队）
+└─ Personal Host（以后：收件箱 / 记忆 / 触发器）
 ```
 
-具体是 Studio 的第二视图还是独立前端，v0.4 再定；但共用 Core、Adapter 和 Evidence。
+Personal Host 具体是 Studio 的第二视图还是独立前端，v0.4 再定；Personal Agent 可以由 Agent Ops 管理，复用 Adapter 和 Evidence。
 
 #### 现在不做
 
-- v0.2/v0.3 不引入 Personal Agent。它会强制引入记忆、触发器、连接器、移动端和消费级审批 UX，直接摊薄角色/团队主线。
-- 不把 Personal Agent 当成“聊天框”；它的核心是“它做完了，等你批”的收件箱体验。
+- v0.2/v0.3 不引入 Personal Agent Host。Personal Agent 作为 Agent 概念可以存在，但它的个人宿主会强制引入记忆、触发器、连接器、移动端和消费级审批 UX，直接摊薄角色/团队主线。
+- 不把 Personal Agent Host 当成“聊天框”；它的核心是“它做完了，等你批”的收件箱体验。
 - 不把个人数据、账号、支付能力放进当前单用户工作控制面；先保持边界。
 
-#### v0.4 探索：2 周 spike
+#### v0.4 探索 Personal Agent Host：2 周 spike
 
 - 3 个角色：Chief of Staff / Researcher / Operator。
 - 3 个只读连接器：日历、邮件、浏览器。
@@ -581,4 +581,4 @@ Agent Ops Core
 |---|---|
 | 2026-11-19 | 初稿：确立 Agent Ops 多角色/团队方向；v0.2 串行、v0.3 并行；列出非目标与验收 |
 | 2026-11-19 | 补充 §12.1 后续方向备忘：控制面 / 能力包 / 自有 Harness 三层；明确自有 Harness 是可选 Runtime Adapter，未立项 |
-| 2026-11-19 | 补充 §12.2 Personal Agent 方向备忘：第二层壳、v0.4 两周 spike；不进入 v0.2/v0.3 |
+| 2026-11-19 | 补充 §12.2 Personal Agent 方向备忘：Personal Agent 是你的 AI Agent；Host 才是壳；v0.4 两周 spike；不进入 v0.2/v0.3 |
