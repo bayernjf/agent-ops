@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
-import type { KernelStore } from '@agent-ops/storage-core';
+import type { KernelStore, RunEvent } from '@agent-ops/storage-core';
 import {
   type CodexProcessRunner,
   type CustomAgentInput,
@@ -199,6 +200,84 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
   app.get('/api/runs/:id', (c) => {
     const run = store.getRun(c.req.param('id'));
     return run ? c.json(run) : c.json({ error: `Run ${c.req.param('id')} was not found.` }, 404);
+  });
+
+  app.get('/api/runs/:id/events', (c) => {
+    const id = c.req.param('id');
+    const run = store.getRun(id);
+    if (!run) return c.json({ error: `Run ${id} was not found.` }, 404);
+
+    return streamSSE(c, async stream => {
+      let closed = false;
+      let closing = false;
+      let unsubscribe = () => {};
+      const isTerminal = (event: RunEvent) =>
+        event.type === 'completed' || event.type === 'failed' || event.type === 'cancelled';
+
+      const write = async (event: RunEvent | { runId: string; type: 'done'; at: string }) => {
+        if (closed) return;
+        try {
+          await stream.writeSSE({ event: event.type, data: JSON.stringify(event) });
+        } catch {
+          closed = true;
+        }
+      };
+
+      const closeStream = async () => {
+        if (closing) return;
+        closing = true;
+        closed = true;
+        unsubscribe();
+        await stream.close();
+      };
+
+      stream.onAbort(() => {
+        closed = true;
+        unsubscribe();
+      });
+
+      const replay = store.getRunEvents(id);
+      const seen = new Set(replay.map(event => event.seq));
+      for (const event of replay) await write(event);
+      if (replay.some(isTerminal)) {
+        await closeStream();
+        return;
+      }
+      if (closed) return;
+
+      const accept = async (event: RunEvent) => {
+        if (seen.has(event.seq)) return;
+        seen.add(event.seq);
+        await write(event);
+        if (isTerminal(event)) await closeStream();
+      };
+
+      // Subscribe before reading the post-replay tail: an event emitted in the gap between
+      // replay and subscribe is then either delivered live or found in the tail, never lost.
+      unsubscribe = store.subscribeRunEvents(id, event => { void accept(event); });
+      for (const event of store.getRunEvents(id)) {
+        if (!seen.has(event.seq)) await accept(event);
+      }
+      if (closed) return;
+
+      // A run that finished before this stream connected has no in-memory events left
+      // after a daemon restart; close with an explicit done frame instead of hanging.
+      if (run.status !== 'running' && run.status !== 'queued' && replay.length === 0) {
+        await write({ runId: id, type: 'done', at: new Date().toISOString() });
+        await closeStream();
+        return;
+      }
+
+      await new Promise<void>(resolve => stream.onAbort(resolve));
+    });
+  });
+
+  app.post('/api/runs/:id/cancel', async (c) => {
+    try {
+      return c.json(await store.cancelRun(c.req.param('id')));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
   });
 
   app.post('/api/runs/:id/execute', async (c) => {

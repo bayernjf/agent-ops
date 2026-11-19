@@ -37,6 +37,38 @@ describe('Local Codex Runtime', () => {
     expect(result).toMatchObject({ exitCode: 0, timedOut: false });
   });
 
+  it('passes output callbacks through to the process runner', async () => {
+    const plan = buildAgentExecutionPlan({ id: 'task-stream', title: 'Stream', objective: 'Stream output.', acceptanceCriteria: ['Chunks arrive.'] }, '/tmp/agent-task', 'codex', { execute: true });
+    const chunks: Array<{ chunk: string; stream: 'stdout' | 'stderr' }> = [];
+    await executeCodexPlan(plan, async (_command, _arguments, options) => {
+      options.onOutput?.('hello', 'stdout');
+      options.onOutput?.('oops', 'stderr');
+      return { exitCode: 0, signal: null, timedOut: false, output: 'hellooops', startedAt: '2026-08-07T00:00:00.000Z', completedAt: '2026-08-07T00:00:01.000Z' };
+    }, undefined, { onOutput: (chunk, stream) => chunks.push({ chunk, stream }) });
+    expect(chunks).toEqual([
+      { chunk: 'hello', stream: 'stdout' },
+      { chunk: 'oops', stream: 'stderr' },
+    ]);
+  });
+
+  it('cancels a running process through AbortSignal', async () => {
+    const plan = buildAgentExecutionPlan({ id: 'task-cancel', title: 'Cancel', objective: 'Stop.', acceptanceCriteria: ['Stops.'] }, process.cwd(), 'codex', { execute: true });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 100);
+    try {
+      const result = await executeCodexPlan(
+        { ...plan, command: ['node', '-e', 'setInterval(() => {}, 1000)'] },
+        runCodexProcess,
+        20_000,
+        { signal: controller.signal },
+      );
+      expect(result.cancelled).toBe(true);
+      expect(result.timedOut).toBe(false);
+    } finally {
+      clearTimeout(timer);
+    }
+  }, 20_000);
+
   it('allows candidate adapters to prepare a dry-run but blocks execution', () => {
     const task = { id: 'task-4', title: 'Add status', objective: 'Show status.', acceptanceCriteria: ['Status renders.'] };
     const plan = buildAgentExecutionPlan(task, '/tmp/agent-task', 'claude-code');

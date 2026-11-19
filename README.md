@@ -6,7 +6,7 @@
 
 迁移（move 阶段）已完成：内核 4 个 package（agent-runtime / workflow / policy / storage-core）+ 2 个 app（cli / daemon）从 `agent-dev` 抽取到本仓；webapp-delivery 的 6 个包（blueprint / storage-webapp / delivery-server / provider-core / provider-cli / deployment-composer）与 1 个 app（studio）已隔离到 `plugins/webapp-delivery/`。内核不再反向依赖插件。typecheck 通过、测试全绿。
 
-内核 Task/Run 控制面已具备运行证据链：每次 Run 持久化 stdout/stderr（有上限）、完整 diff（含未跟踪文件 patch，有上限）、exit code、耗时、超时标记与变更文件；Studio 的 Task 看板可展开审阅这些证据后再 accept/reject。
+内核 Task/Run 控制面已具备运行证据链：每次 Run 持久化 stdout/stderr（有上限）、完整 diff（含未跟踪文件 patch，有上限）、exit code、耗时、超时标记与变更文件；运行中可通过 SSE 实时查看 stdout/stderr 并取消执行，取消同样落库为证据；Studio 的 Task 看板可展开审阅这些证据后再 accept/reject。
 
 迁移方案见：
 

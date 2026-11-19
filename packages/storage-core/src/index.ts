@@ -62,13 +62,28 @@ export type RunArtifacts = {
   exitCode: number | null;
   signal: string | null;
   timedOut: boolean;
+  /** True when the run was stopped through POST /api/runs/:id/cancel. */
+  cancelled: boolean;
   startedAt: string;
   completedAt: string;
   durationMs: number;
 };
 
+export type RunEventType = 'started' | 'stdout' | 'stderr' | 'completed' | 'failed' | 'cancelled';
+
+export type RunEvent = {
+  runId: string;
+  type: RunEventType;
+  /** Monotonic per-store sequence, used by SSE replay/subscribe handoff to deduplicate. */
+  seq: number;
+  /** Raw process chunk for stdout/stderr; absent for lifecycle events. */
+  data?: string;
+  at: string;
+};
+
 export const RUN_OUTPUT_LIMIT = 64_000;
 export const RUN_DIFF_LIMIT = 256_000;
+export const RUN_EVENT_LIMIT = 500;
 
 export function emptyRunArtifacts(): RunArtifacts {
   return {
@@ -80,6 +95,7 @@ export function emptyRunArtifacts(): RunArtifacts {
     exitCode: null,
     signal: null,
     timedOut: false,
+    cancelled: false,
     startedAt: '',
     completedAt: '',
     durationMs: 0,
@@ -115,6 +131,7 @@ function parseRunArtifacts(raw: string): RunArtifacts {
       exitCode: typeof parsed.exitCode === 'number' ? parsed.exitCode : null,
       signal: typeof parsed.signal === 'string' ? parsed.signal : null,
       timedOut: parsed.timedOut === true,
+      cancelled: parsed.cancelled === true,
       startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : '',
       completedAt: typeof parsed.completedAt === 'string' ? parsed.completedAt : '',
       durationMs: typeof parsed.durationMs === 'number' && Number.isFinite(parsed.durationMs)
@@ -171,6 +188,10 @@ export class KernelStore {
   protected readonly sqlite: Database;
   protected readonly databasePath: string;
   protected migrations: readonly Migration[] = kernelMigrations;
+  private readonly activeRuns = new Map<string, AbortController>();
+  private readonly runEvents = new Map<string, RunEvent[]>();
+  private readonly runEventListeners = new Map<string, Set<(event: RunEvent) => void>>();
+  private nextRunEventSeq = 1;
 
   protected constructor(sqlite: Database, databasePath: string) {
     this.sqlite = sqlite;
@@ -286,6 +307,32 @@ export class KernelStore {
     return rows.map(toRunRecord);
   }
 
+  getRunEvents(id: string): RunEvent[] {
+    return [...(this.runEvents.get(id) ?? [])];
+  }
+
+  subscribeRunEvents(id: string, listener: (event: RunEvent) => void): () => void {
+    const listeners = this.runEventListeners.get(id) ?? new Set<(event: RunEvent) => void>();
+    listeners.add(listener);
+    this.runEventListeners.set(id, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.runEventListeners.delete(id);
+    };
+  }
+
+  async cancelRun(id: string): Promise<RunRecord> {
+    const run = this.getRun(id);
+    if (!run) throw new Error(`Run ${id} was not found.`);
+    if (run.status !== 'running') throw new Error(`Run ${id} cannot be cancelled from status ${run.status}.`);
+    const controller = this.activeRuns.get(id);
+    if (!controller) {
+      throw new Error(`Run ${id} cannot be cancelled because no active execution handle exists.`);
+    }
+    controller.abort();
+    return this.getRun(id) ?? run;
+  }
+
   async updateRunStatus(
     id: string,
     status: TaskRunState,
@@ -327,28 +374,48 @@ export class KernelStore {
     const approvedTask: ApprovedTask = { id: task.id, title: task.title, objective: task.objective, acceptanceCriteria: [] };
     const plan = buildAgentExecutionPlan(approvedTask, task.worktreePath, resolved.agentId, { execute: true, profile: resolved.profile });
 
+    const controller = new AbortController();
+    this.activeRuns.set(id, controller);
+    // A rejected run can be executed again under the same run id; stale terminal events
+    // would make a new SSE subscriber close on the previous attempt.
+    this.runEvents.delete(id);
     await this.updateTaskStatus(task.id, 'running');
     await this.updateRunStatus(id, 'running');
+    this.emitRunEvent(id, 'started');
 
     let result: CodexExecutionResult;
     try {
-      result = await executeCodexPlan(plan, runner);
+      result = await executeCodexPlan(plan, runner, undefined, {
+        signal: controller.signal,
+        onOutput: (chunk, stream) => this.emitRunEvent(id, stream, chunk),
+      });
     } catch (error) {
       result = {
         exitCode: null,
         signal: null,
         timedOut: false,
+        cancelled: controller.signal.aborted,
         output: error instanceof Error ? error.message : String(error),
         startedAt: new Date().toISOString(),
         completedAt: new Date().toISOString(),
       };
+    } finally {
+      this.activeRuns.delete(id);
     }
 
-    const evidence = await this.collectEvidence(task, result);
+    const cancelled = result.cancelled === true || controller.signal.aborted;
+    const evidence = await this.collectEvidence(task, result, cancelled);
+    if (cancelled) {
+      this.emitRunEvent(id, 'cancelled');
+      await this.updateTaskStatus(task.id, 'failed');
+      return this.updateRunStatus(id, 'failed', evidence.diffStat, evidence.artifacts);
+    }
     if (result.exitCode === 0 && !result.timedOut) {
+      this.emitRunEvent(id, 'completed');
       await this.updateTaskStatus(task.id, 'review');
       return this.updateRunStatus(id, 'review', evidence.diffStat, evidence.artifacts);
     }
+    this.emitRunEvent(id, 'failed');
     await this.updateTaskStatus(task.id, 'failed');
     return this.updateRunStatus(id, 'failed', evidence.diffStat, evidence.artifacts);
   }
@@ -369,9 +436,25 @@ export class KernelStore {
     return this.updateRunStatus(id, 'queued');
   }
 
+  private emitRunEvent(runId: string, type: RunEventType, data?: string): void {
+    const event: RunEvent = { runId, type, seq: this.nextRunEventSeq++, at: new Date().toISOString(), ...(data !== undefined ? { data } : {}) };
+    const events = this.runEvents.get(runId) ?? [];
+    events.push(event);
+    if (events.length > RUN_EVENT_LIMIT) events.splice(0, events.length - RUN_EVENT_LIMIT);
+    this.runEvents.set(runId, events);
+    for (const listener of this.runEventListeners.get(runId) ?? []) {
+      try {
+        listener(event);
+      } catch {
+        // SSE clients disconnect; a listener must not break the execution path.
+      }
+    }
+  }
+
   private async collectEvidence(
     task: TaskRecord,
     result: CodexExecutionResult,
+    cancelled: boolean,
   ): Promise<{ diffStat: string; artifacts: RunArtifacts }> {
     const cwd = task.worktreePath;
     const trackedStat = await this.gitOutput(cwd, ['diff', '--stat', task.baseRef]);
@@ -414,6 +497,7 @@ export class KernelStore {
         exitCode: result.exitCode,
         signal: result.signal,
         timedOut: result.timedOut,
+        cancelled,
         startedAt: result.startedAt,
         completedAt: result.completedAt,
         durationMs,
@@ -452,6 +536,9 @@ export class KernelStore {
   }
 
   async close(): Promise<void> {
+    this.activeRuns.clear();
+    this.runEvents.clear();
+    this.runEventListeners.clear();
     await this.persist();
     this.sqlite.close();
   }

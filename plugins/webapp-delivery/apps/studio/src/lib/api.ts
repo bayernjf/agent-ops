@@ -17,3 +17,12 @@ export async function apiFetch(
   const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
   return fetch(input, { ...init, signal });
 }
+
+/**
+ * Streaming requests (SSE over fetch) must not inherit the 15-second API timeout.
+ * The dev proxy still attaches the daemon bearer token server-side; the caller owns
+ * cancellation through its own AbortSignal.
+ */
+export function apiStreamFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  return fetch(input, init);
+}

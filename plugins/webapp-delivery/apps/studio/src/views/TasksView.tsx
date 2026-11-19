@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, ListTodo, RefreshCw, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Check, ChevronDown, ChevronRight, ListTodo, RefreshCw, Square, X } from 'lucide-react';
 import { useI18n, type KeyPath } from '../i18n/i18n';
 import type { KernelRun, KernelTask, KernelTaskState } from '../types';
-import { apiFetch } from '../lib/api';
+import { apiFetch, apiStreamFetch } from '../lib/api';
 
 type RunAction = 'execute' | 'accept' | 'reject';
 
@@ -17,6 +17,7 @@ function hasEvidence(run: KernelRun): boolean {
     || artifacts.diff
     || artifacts.exitCode !== null
     || artifacts.timedOut
+    || artifacts.cancelled
     || artifacts.changedFiles.length > 0
   ));
 }
@@ -36,6 +37,9 @@ export function TasksView() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [runsByTask, setRunsByTask] = useState<Record<string, KernelRun[]>>({});
   const [busyRunId, setBusyRunId] = useState<string | null>(null);
+  const [executingRunId, setExecutingRunId] = useState<string | null>(null);
+  const [liveOutputByRun, setLiveOutputByRun] = useState<Record<string, string>>({});
+  const liveAbortRef = useRef<AbortController | null>(null);
 
   const stateLabel = (state: KernelTaskState) => t(`tasks.state.${state}` as KeyPath);
 
@@ -74,6 +78,70 @@ export function TasksView() {
 
   useEffect(() => { void loadTasks(); }, [loadTasks]);
 
+  useEffect(() => () => {
+    liveAbortRef.current?.abort();
+  }, []);
+
+  const stopRunStream = useCallback(() => {
+    liveAbortRef.current?.abort();
+    liveAbortRef.current = null;
+  }, []);
+
+  const startRunStream = useCallback(async (run: KernelRun) => {
+    stopRunStream();
+    const controller = new AbortController();
+    liveAbortRef.current = controller;
+    try {
+      const response = await apiStreamFetch(`/api/runs/${encodeURIComponent(run.id)}/events`, {
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) return;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let finished = false;
+      while (!finished) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        const frames = buffer.split('\n\n');
+        buffer = frames.pop() ?? '';
+        for (const frame of frames) {
+          const data = frame
+            .split('\n')
+            .filter(line => line.startsWith('data:'))
+            .map(line => line.slice(5).trimStart())
+            .join('\n');
+          if (!data) continue;
+          let event: { type?: string; data?: unknown };
+          try {
+            event = JSON.parse(data) as { type?: string; data?: unknown };
+          } catch {
+            continue;
+          }
+          if ((event.type === 'stdout' || event.type === 'stderr') && typeof event.data === 'string') {
+            setLiveOutputByRun(previous => ({
+              ...previous,
+              [run.id]: `${previous[run.id] ?? ''}${event.data as string}`,
+            }));
+          }
+          if (event.type === 'completed' || event.type === 'failed' || event.type === 'cancelled') {
+            finished = true;
+            void loadRuns(run.taskId);
+            break;
+          }
+        }
+      }
+    } catch (cause) {
+      if (!(cause instanceof DOMException && cause.name === 'AbortError')) {
+        setError(cause instanceof Error ? cause.message : t('tasks.streamRun'));
+      }
+    } finally {
+      if (liveAbortRef.current === controller) liveAbortRef.current = null;
+      controller.abort();
+    }
+  }, [loadRuns, stopRunStream, t]);
+
   const toggleTask = (taskId: string) => {
     if (expandedId === taskId) {
       setExpandedId(null);
@@ -84,7 +152,20 @@ export function TasksView() {
   };
 
   const runAction = async (run: KernelRun, action: RunAction) => {
-    setBusyRunId(run.id);
+    const isExecute = action === 'execute';
+    if (isExecute) {
+      setExecutingRunId(run.id);
+      setRunsByTask(previous => ({
+        ...previous,
+        [run.taskId]: (previous[run.taskId] ?? []).map(candidate => (
+          candidate.id === run.id ? { ...candidate, status: 'running' } : candidate
+        )),
+      }));
+      setLiveOutputByRun(previous => ({ ...previous, [run.id]: '' }));
+      void startRunStream(run);
+    } else {
+      setBusyRunId(run.id);
+    }
     setError('');
     try {
       const response = await apiFetch(`/api/runs/${encodeURIComponent(run.id)}/${action}`, { method: 'POST' });
@@ -93,6 +174,27 @@ export function TasksView() {
       await loadRuns(run.taskId);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t(`tasks.${action}Run` as KeyPath));
+      if (isExecute) await loadRuns(run.taskId);
+    } finally {
+      if (isExecute) {
+        stopRunStream();
+        setExecutingRunId(null);
+      } else {
+        setBusyRunId(null);
+      }
+    }
+  };
+
+  const cancelRun = async (run: KernelRun) => {
+    setBusyRunId(run.id);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/runs/${encodeURIComponent(run.id)}/cancel`, { method: 'POST' });
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(payload?.error ?? t('tasks.cancelRun'));
+      await loadRuns(run.taskId);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.cancelRun'));
     } finally {
       setBusyRunId(null);
     }
@@ -163,8 +265,13 @@ export function TasksView() {
                               <span className="run-diff">{run.diffStat || '—'}</span>
                               <span className="run-actions">
                                 {run.status === 'queued' && (
-                                  <button className="secondary-button" type="button" onClick={() => void runAction(run, 'execute')} disabled={busyRunId === run.id}>
+                                  <button className="secondary-button" type="button" onClick={() => void runAction(run, 'execute')} disabled={busyRunId === run.id || executingRunId === run.id}>
                                     {t('tasks.execute')}
+                                  </button>
+                                )}
+                                {run.status === 'running' && (
+                                  <button className="secondary-button" type="button" onClick={() => void cancelRun(run)} disabled={busyRunId === run.id}>
+                                    <Square size={14} aria-hidden="true" /> {busyRunId === run.id ? t('tasks.cancelling') : t('tasks.cancel')}
                                   </button>
                                 )}
                                 {run.status === 'review' && (
@@ -180,6 +287,13 @@ export function TasksView() {
                               </span>
                             </div>
 
+                            {run.status === 'running' && (
+                              <details className="run-evidence" open>
+                                <summary>{t('tasks.liveOutput')}</summary>
+                                <pre className="run-evidence-pre">{liveOutputByRun[run.id] || t('tasks.waitingOutput')}</pre>
+                              </details>
+                            )}
+
                             {hasEvidence(run) && (
                               <details className="run-evidence">
                                 <summary>{t('tasks.evidence')}</summary>
@@ -188,6 +302,7 @@ export function TasksView() {
                                   <span>{t('tasks.duration')}: {formatDuration(run.artifacts?.durationMs ?? 0)}</span>
                                   <span>{t('tasks.changedFiles')}: {run.artifacts?.changedFiles.length ?? 0}</span>
                                   {run.artifacts?.timedOut && <span className="run-evidence-warning">{t('tasks.timedOut')}</span>}
+                                  {run.artifacts?.cancelled && <span className="run-evidence-warning">{t('tasks.cancelled')}</span>}
                                 </div>
                                 {run.artifacts?.changedFiles.length ? (
                                   <p className="run-evidence-files">{run.artifacts.changedFiles.join(', ')}</p>

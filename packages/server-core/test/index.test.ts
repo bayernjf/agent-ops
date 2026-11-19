@@ -36,6 +36,20 @@ const fakeRunner = (exitCode: number): CodexProcessRunner => async () => ({
   completedAt: new Date().toISOString(),
 });
 
+const slowRunner: CodexProcessRunner = (_command, _arguments, options) => new Promise(resolve => {
+  const finish = () => resolve({
+    exitCode: null,
+    signal: 'SIGTERM',
+    timedOut: false,
+    cancelled: true,
+    output: 'stopped',
+    startedAt: new Date(Date.now() - 100).toISOString(),
+    completedAt: new Date().toISOString(),
+  });
+  if (options.signal?.aborted) finish();
+  else options.signal?.addEventListener('abort', finish, { once: true });
+});
+
 describe('createKernelApp', () => {
   it('answers the health probe without a token', async () => {
     const { store, directory } = await openStore();
@@ -167,12 +181,47 @@ describe('createKernelApp', () => {
         artifacts: { output: 'ok', exitCode: 0 },
       });
 
+      const events = await app.request(`/api/runs/${run.id}/events`);
+      expect(events.status).toBe(200);
+      expect(events.headers.get('content-type')).toContain('text/event-stream');
+      expect(await events.text()).toContain('event: completed');
+
       const accepted = await app.request(`/api/runs/${run.id}/accept`, { method: 'POST' });
       expect(accepted.status).toBe(200);
       expect((await accepted.json()) as object).toMatchObject({
         status: 'done',
         artifacts: { output: 'ok' },
       });
+
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('cancels a running execution through the HTTP surface', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-server-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const app = createKernelApp(store, { runner: slowRunner });
+
+      const task = await store.createTask({ repo, baseRef: 'main', title: 'Cancel me' });
+      await store.provisionTask(task.id);
+      const run = await store.createRun(task.id, 'codex');
+
+      const execution = app.request(`/api/runs/${run.id}/execute`, { method: 'POST' });
+      for (let attempt = 0; attempt < 100 && store.getRun(run.id)?.status !== 'running'; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+
+      const cancelled = await app.request(`/api/runs/${run.id}/cancel`, { method: 'POST' });
+      expect(cancelled.status).toBe(200);
+      expect((await cancelled.json()) as object).toMatchObject({ status: 'running' });
+
+      const executed = (await (await execution).json()) as { status: string; artifacts: { cancelled: boolean } };
+      expect(executed.status).toBe('failed');
+      expect(executed.artifacts.cancelled).toBe(true);
 
       await store.close();
     } finally {
