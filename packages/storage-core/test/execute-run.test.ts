@@ -40,7 +40,7 @@ describe('KernelStore executeRun', () => {
       const repo = await initRepo(join(directory, 'repo'));
       const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
       const task = await provisionedTask(store, repo);
-      const run = await store.createRun(task.id, 'codex');
+      const run = await store.createRun(task.id, 'local-codex');
 
       // Simulate the agent producing a change inside the worktree.
       await writeFile(join(task.worktreePath, 'NEW.md'), '# new\n', 'utf8');
@@ -49,6 +49,7 @@ describe('KernelStore executeRun', () => {
 
       const executed = await store.executeRun(run.id, fakeRunner(0));
       expect(executed.status).toBe('review');
+      expect(executed.runtimeId).toBe('codex');
       expect(executed.diffStat).toContain('NEW.md');
       expect(executed.artifacts).toMatchObject({ output: 'ok', exitCode: 0, timedOut: false });
       expect(executed.artifacts.diff).toContain('NEW.md');
@@ -58,6 +59,7 @@ describe('KernelStore executeRun', () => {
       await store.close();
 
       const reopened = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      expect(reopened.getRun(run.id)?.runtimeId).toBe('codex');
       expect(reopened.getRun(run.id)?.artifacts.diff).toContain('NEW.md');
       expect(reopened.getRun(run.id)?.artifacts.changedFiles).toContain('NEW.md');
       await reopened.close();

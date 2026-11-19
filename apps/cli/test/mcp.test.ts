@@ -426,12 +426,21 @@ describe('agent-ops MCP bridge', () => {
     const single = await client.callTool({ name: 'agent_ops_get_task', arguments: { taskId: task.id } });
     expect((JSON.parse(textOf(single)) as { title: string }).title).toBe('MCP kernel probe');
 
-    const runCreated = await client.callTool({ name: 'agent_ops_create_run', arguments: { taskId: task.id, agentId: 'codex' } });
+    const roleCreated = await client.callTool({
+      name: 'agent_ops_create_role',
+      arguments: { name: 'MCP Runner', baseAgentId: 'codex' },
+    });
+    expect(roleCreated.isError).toBeUndefined();
+    const role = JSON.parse(textOf(roleCreated)) as { role: { id: string } };
+
+    const runCreated = await client.callTool({ name: 'agent_ops_create_run', arguments: { taskId: task.id, agentId: 'codex', roleId: role.role.id } });
     expect(runCreated.isError).toBeUndefined();
-    const run = JSON.parse(textOf(runCreated)) as { id: string; agentId: string; status: string };
+    const run = JSON.parse(textOf(runCreated)) as { id: string; agentId: string; status: string; roleId: string | null; runtimeId: string | null };
     expect(run.id).toBeTruthy();
     expect(run.agentId).toBe('codex');
     expect(run.status).toBe('queued');
+    expect(run.roleId).toBe(role.role.id);
+    expect(run.runtimeId).toBeNull();
 
     const runs = await client.callTool({ name: 'agent_ops_list_runs', arguments: { taskId: task.id } });
     const runList = JSON.parse(textOf(runs)) as { id: string }[];

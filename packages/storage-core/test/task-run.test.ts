@@ -76,6 +76,27 @@ describe('KernelStore task/run', () => {
     }
   });
 
+  it('records the selected role on a run and rejects an unknown role', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-task-'));
+    try {
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'T' });
+      const role = await store.roles.createRole({ name: 'Runner', baseAgentId: 'codex' });
+      const run = await store.createRun(task.id, 'codex', role.id);
+      expect(run.roleId).toBe(role.id);
+      expect(run.runtimeId).toBeNull();
+      await expect(store.createRun(task.id, 'codex', 'missing-role')).rejects.toThrow('Role missing-role was not found.');
+      await store.close();
+
+      const reopened = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      expect(reopened.getRun(run.id)?.roleId).toBe(role.id);
+      expect(reopened.getRun(run.id)?.runtimeId).toBeNull();
+      await reopened.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   it('rejects a run for a missing task', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-task-'));
     try {

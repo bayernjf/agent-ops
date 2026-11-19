@@ -240,6 +240,14 @@ describe('createKernelApp', () => {
       const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
       const app = createKernelApp(store, { runner: fakeRunner(0) });
 
+      const roleRes = await app.request('/api/roles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Runner', baseAgentId: 'codex' }),
+      });
+      expect(roleRes.status).toBe(201);
+      const role = (await roleRes.json()) as { role: { id: string } };
+
       const created = await app.request('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -254,21 +262,26 @@ describe('createKernelApp', () => {
       const runRes = await app.request(`/api/tasks/${task.id}/runs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentId: 'local-codex' }),
+        body: JSON.stringify({ agentId: 'local-codex', roleId: role.role.id }),
       });
       expect(runRes.status).toBe(201);
-      const run = (await runRes.json()) as { id: string };
+      const run = (await runRes.json()) as { id: string; roleId: string | null; runtimeId: string | null };
+      expect(run).toMatchObject({ roleId: role.role.id, runtimeId: null });
 
       const executed = await app.request(`/api/runs/${run.id}/execute`, { method: 'POST' });
       expect(executed.status).toBe(200);
       expect((await executed.json()) as object).toMatchObject({
         status: 'review',
+        roleId: role.role.id,
+        runtimeId: 'codex',
         artifacts: { output: 'ok', exitCode: 0, timedOut: false },
       });
 
       const runDetail = await app.request(`/api/runs/${run.id}`);
       expect(runDetail.status).toBe(200);
       expect((await runDetail.json()) as object).toMatchObject({
+        roleId: role.role.id,
+        runtimeId: 'codex',
         artifacts: { output: 'ok', exitCode: 0 },
       });
 
@@ -279,10 +292,12 @@ describe('createKernelApp', () => {
 
       const accepted = await app.request(`/api/runs/${run.id}/accept`, { method: 'POST' });
       expect(accepted.status).toBe(200);
-      expect((await accepted.json()) as object).toMatchObject({
+      const acceptedRun = (await accepted.json()) as { status: string; artifacts: object; commitSha?: string };
+      expect(acceptedRun).toMatchObject({
         status: 'done',
         artifacts: { output: 'ok' },
       });
+      expect(acceptedRun.commitSha).toMatch(/^[0-9a-f]{40}$/);
 
       await store.close();
     } finally {
