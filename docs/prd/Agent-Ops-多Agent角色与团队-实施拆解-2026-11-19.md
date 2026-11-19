@@ -271,6 +271,8 @@ E0 基础闭环修复
 - 每步 commit SHA 可查；失败可暂停/重跑。
 - 至少 1 条真实模型 Run 从 UI 跑通（不再用确定性 runner 冒充）。
 
+**M1-A 完成记录（2026-11-20，部分）**：F1-01 Role schema、F1-02 `/api/roles` CRUD、F1-03 5 个 MCP role 工具、F1-04 RoleResolver、F1-05 同 Agent 多角色（RoleStore + Profile 解耦）、F2-01 Runtime Registry、F2-02 capability matrix 已落码；`RuntimeRegistry` 替换内核 `AGENT_ADAPTERS` switch，7 个默认 adapter 状态与能力可查询。Role 暂存 `agent-roles.json`（原子替换 + corrupted 拒写），candidate adapter 在 Role API 直接拒绝。全仓 typecheck 0、47 文件 / 629 tests 绿。F0-06、F3、F4、F6、F7、F9 未完成，M1 整体仍未达退出标准。
+
 ### M2 团队与狗粮（2026-12-11 → 2026-12-24）
 
 **目标**：团队/交接/逐文件审可用，开始真实狗粮。

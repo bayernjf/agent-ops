@@ -3,7 +3,7 @@
 ## 待办登记（标准）
 
 > 本段是本产品唯一活跃待办入口；详细背景见下方原有章节。完成一项改 `[x]`，并在“最近变更 / Recently shipped”留证据。
-> 最近同步：2026-11-19
+> 最近同步：2026-11-20
 >
 > 产品规划（非活跃待办，不计入上方待办）：多 Agent 角色与团队 v0.2/v0.3，PRD 见 `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md`，实施拆解见 `docs/prd/Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md`；PD-1～PD-9 已于 2026-11-19 拍板；后续方向备忘（Tier 0 能力包 / 现有 Harness / Personal Agent）见 PRD §12.1–12.2。
 
@@ -75,6 +75,18 @@
 - [x] 测试覆盖：accept 提交未提交改动、`.env` 拒提交、reject 回到 base 并可重跑、release 脏 worktree 拒绝、criteria/priority API 往返、prompt 含 priority；全仓 typecheck 0，44 文件 / 614 tests 绿。
 - [x] 本轮提交：`73026db feat(storage-core): close the task acceptance and commit loop`、`60ec8dd fix(storage-core): keep accepted commits reachable`。
 - [ ] M0 的**真实模型**验收仍受登录阻塞，见上方“真实模型 UI E2E”；本轮闭环使用确定性 runner 与真实 git 临时仓验证，不把它冒充真实模型已验收。
+
+## M1-A Role + Runtime Registry — 已完成（2026-11-20）
+
+- [x] `RuntimeRegistry`：7 个默认 adapter 从硬编码 switch 迁到 `packages/agent-runtime/src/runtime-registry.ts`；状态扩展为 `verified | candidate | experimental | unsupported`，verified = codex/opencode/codebuddy/hermes，candidate = claude-code/aider/openclaw；能力矩阵覆盖 `nonInteractive / streaming / structuredOutput / sessionResume / toolPolicy / worktreeSafe`。
+- [x] 内核执行路径改为 `getRuntimeAdapter`，不再直接读 `AGENT_ADAPTERS`；`isAgentExecutable` 与 `resolveRuntimeExecutor` 统一走 registry 状态，`candidate` / `experimental` 明确拒绝。
+- [x] `AgentRole` schema：`id/name/description/baseAgentId/profileId/systemPrompt/acceptanceCriteria/runtimePolicy/enabled/createdAt/updatedAt`；必须至少有一个 `baseAgentId` 或 `profileId`；`RoleRuntimePolicy` 含 `allowedTools/blockedTools/approvalMode`，默认 `human` + 空数组。
+- [x] `RoleStore`：`agent-roles.json`，与 `ProfileStore` 相同的原子替换 + corrupted 拒写策略；同名角色自动 `reviewer` / `reviewer-2`。JSON 是 M1-A 单用户 tradeoff，Team/Pipeline 需要关系查询时再迁 SQL。
+- [x] `/api/roles`：列表/详情/创建/更新/删除 + `/resolve`；创建/更新校验 Profile 存在、Profile 与 baseAgent 一致、baseAgent 必须 verified；candidate adapter 直接 400，不静默降级。
+- [x] CLI MCP 新增 5 个工具：`agent_ops_list_roles`、`agent_ops_get_role`、`agent_ops_create_role`、`agent_ops_update_role`、`agent_ops_delete_role`；`callDaemon` 支持 `DELETE`。
+- [x] 测试：`runtime-registry` 3、`roles` 7、`roles-store` 2、server role API 2、CLI role 流程；全仓 typecheck 0，47 文件 / 629 tests 绿。
+- [x] 本轮提交：`2f25b19 feat(runtime): register adapters and roles`、`9cca353 test(runtime): cover role resolution and registry`。
+- [ ] **M1-A 不是完整 M1**：F0-06 Run 证据 role/runtime、F3 Policy 映射到 adapter、F4 Task/Run role 绑定与 prompt、F6 串行 Pipeline、F7 Studio RolesView、F9 Claude/OpenCode 真实写任务均未完成；不能据此宣称 M1 完成。
 
 ## 技术债 — 已完成
 
