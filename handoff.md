@@ -86,7 +86,7 @@
 - [x] CLI MCP 新增 5 个工具：`agent_ops_list_roles`、`agent_ops_get_role`、`agent_ops_create_role`、`agent_ops_update_role`、`agent_ops_delete_role`；`callDaemon` 支持 `DELETE`。
 - [x] 测试：`runtime-registry` 3、`roles` 7、`roles-store` 2、server role API 2、CLI role 流程；全仓 typecheck 0，47 文件 / 629 tests 绿。
 - [x] 本轮提交：`2f25b19 feat(runtime): register adapters and roles`、`9cca353 test(runtime): cover role resolution and registry`。
-- [ ] **M1-A 不是完整 M1**：F3 Policy 映射到 adapter、F4 Task/Run role 绑定与 prompt、F6 串行 Pipeline、F7 Studio RolesView、F9 Claude/OpenCode 真实写任务均未完成；不能据此宣称 M1 完成。
+- [ ] **M1-A 不是完整 M1**：F3 Policy、F4 Task/Run role、F6 串行 Pipeline 已在后续完成；F7 Studio RolesView、F9 Claude/OpenCode 真实写任务仍未完成，不能据此宣称 M1 完成。
 
 ## F0-06 Run 证据 role/runtime/commit — 已完成（2026-11-20）
 
@@ -124,6 +124,21 @@
 - [x] 本轮提交：`288cdff feat(storage-core): bind task and run roles`、`ebc5b5c test(storage-core): cover task role binding`。
 - [ ] F4 只覆盖 F4-01/F4-02/F4-03；Team 字段（E5 Team 模型尚未存在）、Run version/command/token/cost（F4-04）、重跑 hygiene（F4-05）、成本预算（F4-06）未做。
 - [ ] Run 不会自动把 Role 的 `profileId` 变成执行 Profile；`agentId` 仍由调用方指定，只校验与 Role 的 base 兼容。
+
+## F6 内核串行 Pipeline — 已完成（2026-11-20）
+
+- [x] migration `0013_task_pipeline` 给 `tasks` 增加 `pipeline`（JSON 字符串，默认空）；migration `0014_run_instruction` 给 `runs` 增加 `instruction`（默认空），旧记录读取为 `null` / 空指令。
+- [x] Pipeline 模型进入 kernel：`TaskPipelineStepInput` / `TaskPipelineStep` / `TaskPipelineStepResult` / `TaskPipeline`；step 支持 `roleId` / `profileId` / `agentId` / `prompt`，至少指定一个执行身份，step id 自动生成并校验唯一。
+- [x] `createTask` 接受 `pipeline`，校验 Role 存在且启用、Profile 存在；同时绑定 Role 与 Profile 时比较 baseAgent，不允许跨 Runtime 组合。
+- [x] `executeTaskPipeline(taskId, runner?)`：仅允许 `idle` 启动，`activePipelines` 拒绝并发重入；逐步解析执行身份（`agentId` > `profileId` > Role 的 `profileId` / `baseAgentId`），每步创建 Run 并写入 `Pipeline step N/M: <name>` + step prompt。
+- [x] 每步 Run 成功后必须进入 `review`，随即 `acceptRun` 自动提交；非 `review` 或失败即把 pipeline 置 `failed` 并停止，不启动下一步。每步记录 `runId` / `commitSha` / `output` / `error` / 起止时间；全部成功置 `completed`，Task 最终 `done`。
+- [x] 所有 step 共用同一 worktree，下游基于上一步已提交的 commit 继续；`buildAgentExecutionPlan` 新增 `instruction`，在 Task objective 之后追加 `Step instruction`。
+- [x] server 新增 `GET /api/tasks/:id/pipeline`（无 pipeline 或 task 不存在返回 404）与 `POST /api/tasks/:id/pipeline/execute`；`createTaskSchema` 接受 1–20 个 step，step 必须提供三种身份之一。
+- [x] MCP `agent_ops_create_task` 接受 `pipeline.steps`；新增 `agent_ops_execute_pipeline`（POST execute，`ADDITIVE` 注解）。
+- [x] 测试：pipeline 持久化/自动 id/重开 DB、两步串行成功（每步不同文件、第二步可见第一步文件、两个不同 commit SHA、Role 分别正确、Task done、worktree clean）、第一步失败即停（仅 1 个 Run、pipeline failed、Task failed）、server pipeline 读取与执行、MCP create_task pipeline 透传；全仓 typecheck 0，49 文件 / 643 tests 绿。
+- [x] 本轮提交：`79644d3 feat(storage-core): add serial task pipelines`、`dffa9db test(storage-core): cover pipeline execution`。
+- [ ] F6 只覆盖 F6-01/F6-02/F6-03；每步审批/暂停恢复（F6-04）、失败重跑与 step base reset（F6-05）、并行 DAG（F6-06）未做。
+- [ ] Pipeline 当前只允许 `idle` 启动，completed/failed 不能直接重跑；step 间不替换 output 模板，下游只依赖上一步 commit 的 worktree 状态。
 
 ## 技术债 — 已完成
 

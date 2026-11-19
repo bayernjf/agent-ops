@@ -271,13 +271,15 @@ E0 基础闭环修复
 - 每步 commit SHA 可查；失败可暂停/重跑。
 - 至少 1 条真实模型 Run 从 UI 跑通（不再用确定性 runner 冒充）。
 
-**M1-A 完成记录（2026-11-20，部分）**：F1-01 Role schema、F1-02 `/api/roles` CRUD、F1-03 5 个 MCP role 工具、F1-04 RoleResolver、F1-05 同 Agent 多角色（RoleStore + Profile 解耦）、F2-01 Runtime Registry、F2-02 capability matrix 已落码；`RuntimeRegistry` 替换内核 `AGENT_ADAPTERS` switch，7 个默认 adapter 状态与能力可查询。Role 暂存 `agent-roles.json`（原子替换 + corrupted 拒写），candidate adapter 在 Role API 直接拒绝。F6、F7、F9 未完成，M1 整体仍未达退出标准。
+**M1-A 完成记录（2026-11-20，部分）**：F1-01 Role schema、F1-02 `/api/roles` CRUD、F1-03 5 个 MCP role 工具、F1-04 RoleResolver、F1-05 同 Agent 多角色（RoleStore + Profile 解耦）、F2-01 Runtime Registry、F2-02 capability matrix 已落码；`RuntimeRegistry` 替换内核 `AGENT_ADAPTERS` switch，7 个默认 adapter 状态与能力可查询。Role 暂存 `agent-roles.json`（原子替换 + corrupted 拒写），candidate adapter 在 Role API 直接拒绝。F6 已在后续完成；F7、F9 未完成，M1 整体仍未达退出标准。
 
 **F0-06 完成记录（2026-11-20）**：migration `0011_run_identity` 给 `runs` 增加 `role_id` / `runtime_id`；`RunRecord` 增加 `roleId` / `runtimeId`，旧 Run 空值映射为 `null`；`createRun` 可选 `roleId` 并校验 Role 存在，`executeRun` 写入实际 base adapter；server 与 MCP 透传 `roleId`；Studio Run 行展示 Role / Runtime / Commit。全仓 typecheck 0、47 文件 / 630 tests 绿。
 
 **F3-01/F3-02/F3-03 完成记录（2026-11-20）**：Role `allowedTools/blockedTools` 经 `resolveToolPolicy` 进入 `CodexExecutionPlan`；Codex 只读 allowlist 映射 `--sandbox read-only`，写 allowlist 标记 `coarse` 并告警；Claude Code 映射 `--allowedTools`；Hermes 等不支持工具策略的 Adapter 对受限 Role 直接拒绝，不再全放行。只读审查者在 Codex 上执行后 worktree clean。全仓 typecheck 0、48 文件 / 637 tests 绿。F3-04 工具审计、F3-05 统一策略层未做。
 
 **F4-01/F4-02/F4-03 完成记录（2026-11-20）**：migration `0012_task_role` 给 `tasks` 增加 `role_id`；`createTask` 校验 Role 存在且启用；`createRun` 默认继承 Task Role，显式 role 可覆盖，并校验 Role baseAgent 与 run agent（含 `local-*` 前缀和 Profile base）一致。`buildAgentExecutionPlan` 追加 Role 职责、systemPrompt、验收标准、allowed/blocked tools 与 approval mode。server 与 MCP Task 创建支持 roleId；MCP create_task 同时开放 acceptanceCriteria/priority。全仓 typecheck 0、48 文件 / 639 tests 绿。Team 字段、F4-04 版本/成本、F4-05 重跑 hygiene、F4-06 预算未做；Run 不会自动采用 Role 的 profileId 作为执行 Profile。
+
+**F6-01/F6-02/F6-03 完成记录（2026-11-20）**：migration `0013_task_pipeline` 给 `tasks` 增加 `pipeline`，`0014_run_instruction` 给 `runs` 增加 `instruction`；`TaskPipeline` 支持 `roleId/profileId/agentId/prompt`，`createTask` 校验执行身份和 Role/Profile base 一致。`executeTaskPipeline` 仅允许 `idle` 启动，用 `activePipelines` 拒绝并发；每步创建 Run 并写入 step instruction，成功后必须 `review` 再 `acceptRun` 自动提交，然后才进入下一步；失败即停并记录 step error。所有 step 共用同一 worktree，下游基于上一步 commit。server 提供 pipeline 读取/执行端点，MCP 提供 create_task pipeline 入参与 execute_pipeline 工具。两步串行成功、失败即停、server 路由和 MCP 透传均有测试；全仓 typecheck 0、49 文件 / 643 tests 绿。F6-04 每步审批、F6-05 失败重跑/reset、F6-06 并行 DAG 未做；completed/failed pipeline 暂不支持直接重跑。
 
 ### M2 团队与狗粮（2026-12-11 → 2026-12-24）
 
