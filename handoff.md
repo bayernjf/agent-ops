@@ -1,5 +1,15 @@
 # Agent Ops — handoff
 
+## 待办登记（标准）
+
+> 本段是本产品唯一活跃待办入口；详细背景见下方原有章节。完成一项改 `[x]`，并在“最近变更 / Recently shipped”留证据。
+> 最近同步：2026-11-19
+
+- [ ] **真实模型 UI E2E** — 状态：blocked；阻塞：Claude Code / Codex 未登录，OpenCode `serve --service` 启动超过 80 秒无产出；下一步：owner 登录后跑真实写任务。
+- [ ] **登录后真实写任务验收** — 状态：blocked；当前 UI 完成路径使用确定性 E2E runner，不代表真实模型任务已验收。
+- [ ] **3–5 个本仓 dogfood** — 状态：open；下一步：收集 diff / 测试 / 失败率，验证是否能替代手工。
+- [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
+
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环），当前处于**运行证据链补强完成**阶段。
 > 迁移方案与执行记录见 `bayjf/docs/tier0/Tier0-agent-dev并入AgentOps-迁移方案-2026-11-18.md`。
 
