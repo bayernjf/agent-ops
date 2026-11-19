@@ -47,6 +47,12 @@ export type KernelAppOptions = {
   runner?: CodexProcessRunner;
   /** Directory holding the custom agent catalog (agents.conf). Omit to run with no custom agents. */
   dataDirectory?: string;
+  /**
+   * Register health/doctor/runtime diagnostics. Default true (standalone kernel
+   * daemon). A webapp-enabled host already owns those routes, so it mounts the
+   * kernel task/run surface with `diagnostics: false` instead of shadowing.
+   */
+  diagnostics?: boolean;
 };
 
 /** Maps KernelStore's Error messages onto HTTP status codes instead of always returning 500. */
@@ -64,14 +70,17 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
 
   if (options.authToken) app.use('/api/*', createTokenAuthMiddleware(options.authToken));
 
-  app.get('/api/health', (c) => c.json({ service: 'agent-ops-daemon', status: 'ok' }));
+  // Diagnostics double as the kernel's standalone surface. A webapp-enabled
+  // daemon already owns health/doctor/runtime, so it mounts task/run only.
+  if (options.diagnostics !== false) {
+    app.get('/api/health', (c) => c.json({ service: 'agent-ops-daemon', status: 'ok' }));
 
-  const customAgents: CustomAgentInput[] = options.dataDirectory ? loadCustomAgents(options.dataDirectory) : [];
-  const discoverRuntimes = () => discoverAgentRuntimes(customAgents);
+    const customAgents: CustomAgentInput[] = options.dataDirectory ? loadCustomAgents(options.dataDirectory) : [];
+    const discoverRuntimes = () => discoverAgentRuntimes(customAgents);
 
-  app.get('/api/doctor', async (c) => c.json({ report: await runDoctor() }));
+    app.get('/api/doctor', async (c) => c.json({ report: await runDoctor() }));
 
-  app.get('/api/runtime/probe', (c) => c.json({ probe: probeCodexRuntime() }));
+    app.get('/api/runtime/probe', (c) => c.json({ probe: probeCodexRuntime() }));
 
   app.get('/api/runtime/probe/:agentId', async (c) => {
     const agentId = c.req.param('agentId');
@@ -140,6 +149,7 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     if (!deleted) return c.json({ error: 'Profile not found.' }, 404);
     return c.json({ deleted: true });
   });
+  }
 
   app.post('/api/tasks', async (c) => {
     const parsed = createTaskSchema.safeParse(await c.req.json().catch(() => null));

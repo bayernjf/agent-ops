@@ -1510,11 +1510,10 @@ export function createDaemonApp(store: AgentOpsStore, events = new DaemonEventBu
   );
 
   // The kernel Task/Run control plane is the base surface; the webapp vertical
-  // above is the optional extension. Mount the kernel routes so a webapp-enabled
-  // daemon serves both, with the outer auth middleware (line above the routes)
-  // already covering every /api/* path. Duplicate health/doctor/runtime routes on
-  // this app keep their existing webapp behaviour and shadow the kernel copies.
-  app.route('/', createKernelApp(store, { dataDirectory }));
+  // above is the optional extension. Mount task/run only: the webapp owns
+  // health/doctor/runtime, so disabling the kernel diagnostics removes the
+  // previous duplicate-route shadowing without changing the exposed surface.
+  app.route('/', createKernelApp(store, { dataDirectory, diagnostics: false }));
 
   return { app, events };
 }
