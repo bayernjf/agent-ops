@@ -98,7 +98,7 @@
 - [x] Studio `KernelRun` 接入 `commitSha` / `roleId` / `runtimeId`；TasksView 的 Run 行展示实际 runtime，下方证据行展示 Role / Runtime / Commit，中英文 key 已补。
 - [x] 测试：storage role 落库/未知 Role、执行后 runtime 持久化、server roleId 回显/执行/accept commit、MCP roleId 透传；全仓 typecheck 0，47 文件 / 630 tests 绿。
 - [x] 本轮提交：`19d260a feat(storage-core): record run role and runtime`、`5020001 test(storage-core): cover run identity evidence`、`94465d4 docs(handoff): record the run identity baseline`。
-- [ ] F0-06 只做证据落库与展示；Role 与 run.agentId 的一致性校验、prompt 注入仍归 F4。
+- [x] F0-06 的后续边界：Role 与 run.agentId 的一致性校验、Role prompt 注入已在 F4 完成；F0-06 本身只负责证据落库与展示。
 
 ## F3 Policy 执行 — 已完成（2026-11-20）
 
@@ -111,6 +111,19 @@
 - [x] 测试：`tool-policy` 5、storage execute 新增 2；全仓 typecheck 0，48 文件 / 637 tests 绿。
 - [x] 本轮提交：`b11b8fb feat(runtime): enforce role tool policies`、`f1d9621 test(runtime): cover read-only policy enforcement`。
 - [ ] F3 只覆盖 F3-01/F3-02/F3-03；工具调用审计（F3-04）和跨 Runtime 统一策略层（F3-05）仍未做。`approvalMode` 仍由人工门禁消费，不由 Adapter 伪装执行。
+
+## F4 Task/Run Role 绑定 + prompt 注入 — 已完成（2026-11-20）
+
+- [x] migration `0012_task_role`：`tasks` 增加 `role_id`，默认空字符串；旧 Task 读取为 `null`，不破坏历史数据。
+- [x] `createTask` 接受 `roleId`，校验 Role 存在且 `enabled`；`PATCH` 未做，Task 的 Role 目前只能在创建时指定。
+- [x] `createRun` 默认继承 `task.roleId`，显式 `roleId` 可覆盖；Role 缺失、禁用或与 run agent 不匹配时明确抛错。
+- [x] Agent 匹配：Role 的 baseAgent 与 `local-*` 前缀、Profile 的 baseAgent 统一比较；Role 绑定 Profile 时，Run 的 agent 必须落在同一 base 上。
+- [x] `buildAgentExecutionPlan` 接收完整 Role：prompt 追加 `Acting Role`、职责/`systemPrompt`、Role 验收标准、allowed/blocked tools、approval mode；Profile prompt 仍在其后。
+- [x] server `POST /api/tasks` 接受 `roleId`；MCP `agent_ops_create_task` 增加 `roleId`、`acceptanceCriteria`、`priority`，`agent_ops_create_run` 可省略 `roleId` 走继承。
+- [x] 测试：Task Role 落库/未知 Role、Run 继承/显式覆盖/agent 不匹配、Role prompt 注入、server Task→Run 继承、MCP Task 字段；全仓 typecheck 0，48 文件 / 639 tests 绿。
+- [x] 本轮提交：`288cdff feat(storage-core): bind task and run roles`、`ebc5b5c test(storage-core): cover task role binding`。
+- [ ] F4 只覆盖 F4-01/F4-02/F4-03；Team 字段（E5 Team 模型尚未存在）、Run version/command/token/cost（F4-04）、重跑 hygiene（F4-05）、成本预算（F4-06）未做。
+- [ ] Run 不会自动把 Role 的 `profileId` 变成执行 Profile；`agentId` 仍由调用方指定，只校验与 Role 的 base 兼容。
 
 ## 技术债 — 已完成
 
