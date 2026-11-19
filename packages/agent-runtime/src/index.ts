@@ -4,12 +4,25 @@ export {
   type AgentAdapterStatus,
   type RuntimeAdapter,
   type RuntimeCapabilities,
+  type RuntimeCommandPolicy,
   RuntimeRegistry,
   runtimeRegistry,
   getRuntimeAdapter,
   getAgentAdapterStatus,
 } from './runtime-registry.js';
 import { getRuntimeAdapter, getAgentAdapterStatus, type AgentAdapterStatus } from './runtime-registry.js';
+export {
+  type RuntimeToolPolicy,
+  type ToolPolicyEnforcement,
+  type ResolvedToolPolicy,
+  normalizeToolName,
+  hasRestrictedToolPolicy,
+  isReadOnlyToolPolicy,
+  effectiveAllowedTools,
+  resolveToolPolicy,
+  KNOWN_WRITE_TOOLS,
+} from './tool-policy.js';
+import { resolveToolPolicy, hasRestrictedToolPolicy, type RuntimeToolPolicy, type ResolvedToolPolicy } from './tool-policy.js';
 export {
   type AgentRole,
   type RoleApprovalMode,
@@ -139,6 +152,10 @@ export type CodexExecutionPlan = {
   baseAgentId: string;
   /** Additional environment variables from profile overrides, merged into execution env. */
   profileEnv?: Record<string, string>;
+  /** Role that supplied the tool policy, when the run was created from one. */
+  roleId?: string;
+  /** What the Adapter can actually enforce, plus any warnings about coarse mapping. */
+  toolPolicy?: ResolvedToolPolicy;
 };
 
 export function probeCodexRuntime(): CodexRuntimeProbe {
@@ -157,7 +174,7 @@ export function buildAgentExecutionPlan(
   task: ApprovedTask,
   workspacePath: string,
   agentId: string,
-  options: { execute?: boolean; profile?: AgentProfile } = {},
+  options: { execute?: boolean; profile?: AgentProfile; toolPolicy?: RuntimeToolPolicy; roleId?: string } = {},
 ): CodexExecutionPlan {
   const execute = options.execute === true;
   const profile = options.profile;
@@ -171,11 +188,20 @@ export function buildAgentExecutionPlan(
   const adapter = getRuntimeAdapter(resolvedAgentId);
   if (!adapter) throw new Error(`Agent "${resolvedAgentId}" does not have a candidate execution adapter.`);
   if (execute && adapter.status !== 'verified') throw new Error(`Agent "${resolvedAgentId}" has a candidate or experimental adapter but has not passed execution verification.`);
+  const resolvedPolicy = options.toolPolicy && hasRestrictedToolPolicy(options.toolPolicy)
+    ? resolveToolPolicy(adapter, options.toolPolicy)
+    : undefined;
   return {
     mode: execute ? 'execute' : 'dry-run',
     taskId: task.id,
     workspacePath,
-    command: adapter.buildCommand(prompt, workspacePath),
+    command: adapter.buildCommand(
+      prompt,
+      workspacePath,
+      resolvedPolicy
+        ? { readOnly: resolvedPolicy.readOnly, allowedTools: resolvedPolicy.allowedTools, blockedTools: resolvedPolicy.blockedTools }
+        : undefined,
+    ),
     forbiddenPaths: ['.env', '.env.*', '.git/config', '~/.ssh', 'production secrets'],
     acceptanceCriteria: task.acceptanceCriteria,
     noExternalChanges: !execute,
@@ -183,6 +209,8 @@ export function buildAgentExecutionPlan(
     profileId: profile?.id,
     baseAgentId: resolvedAgentId,
     profileEnv: profile?.overrides.env,
+    roleId: options.roleId,
+    toolPolicy: resolvedPolicy,
   };
 }
 

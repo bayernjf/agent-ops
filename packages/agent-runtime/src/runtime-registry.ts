@@ -21,11 +21,17 @@ export type RuntimeCapabilities = {
   worktreeSafe: boolean;
 };
 
+export type RuntimeCommandPolicy = {
+  readOnly: boolean;
+  allowedTools: string[];
+  blockedTools: string[];
+};
+
 export type RuntimeAdapter = {
   id: string;
   status: Exclude<AgentAdapterStatus, 'unsupported'>;
   capabilities: RuntimeCapabilities;
-  buildCommand: (prompt: string, workspacePath: string) => string[];
+  buildCommand: (prompt: string, workspacePath: string, policy?: RuntimeCommandPolicy) => string[];
 };
 
 /**
@@ -78,7 +84,7 @@ runtimeRegistry.register({
   },
   // Adapters with status 'verified' have passed a locally exercised execution contract.
   // Candidate adapters are present but not yet verified end-to-end.
-  buildCommand: (prompt, cwd) => ['codex', 'exec', '--json', '--ephemeral', '--sandbox', 'workspace-write', '--cd', cwd, prompt],
+  buildCommand: (prompt, cwd, policy) => ['codex', 'exec', '--json', '--ephemeral', '--sandbox', policy?.readOnly ? 'read-only' : 'workspace-write', '--cd', cwd, prompt],
 });
 
 runtimeRegistry.register({
@@ -95,7 +101,10 @@ runtimeRegistry.register({
   // Claude Code has no `--cwd` flag; the working directory is set by the spawn cwd option.
   // `--dangerously-skip-permissions` avoids interactive approval prompts in the isolated task workspace.
   // `--output-format json` gives structured output parseable by the same runner as Codex.
-  buildCommand: (prompt, _cwd) => ['claude', '-p', prompt, '--allowedTools', 'Read,Write,Edit,Bash', '--dangerously-skip-permissions', '--output-format', 'json'],
+  buildCommand: (prompt, _cwd, policy) => {
+    const allowedTools = policy?.allowedTools.length ? policy.allowedTools.join(',') : 'Read,Write,Edit,Bash';
+    return ['claude', '-p', prompt, '--allowedTools', allowedTools, '--dangerously-skip-permissions', '--output-format', 'json'];
+  },
 });
 
 runtimeRegistry.register({

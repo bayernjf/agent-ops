@@ -481,6 +481,9 @@ export class KernelStore {
     if (!resolved.ok) throw new Error(describeRuntimeExecutorRejection(resolved));
     await this.updateRunRuntime(id, resolved.agentId);
 
+    const role = run.roleId ? await this.roles.getRole(run.roleId) : null;
+    if (run.roleId && !role) throw new Error(`Role ${run.roleId} was not found.`);
+
     const approvedTask: ApprovedTask = {
       id: task.id,
       title: task.title,
@@ -488,7 +491,12 @@ export class KernelStore {
       acceptanceCriteria: task.acceptanceCriteria,
       priority: task.priority,
     };
-    const plan = buildAgentExecutionPlan(approvedTask, task.worktreePath, resolved.agentId, { execute: true, profile: resolved.profile });
+    const plan = buildAgentExecutionPlan(approvedTask, task.worktreePath, resolved.agentId, {
+      execute: true,
+      profile: resolved.profile,
+      toolPolicy: role?.runtimePolicy,
+      roleId: role?.id,
+    });
 
     const controller = new AbortController();
     this.activeRuns.set(id, controller);
