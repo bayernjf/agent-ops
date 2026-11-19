@@ -251,9 +251,10 @@ describe('createKernelApp', () => {
       const created = await app.request('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo, baseRef: 'main', title: 'Rename bin' }),
+        body: JSON.stringify({ repo, baseRef: 'main', title: 'Rename bin', roleId: role.role.id }),
       });
-      const task = (await created.json()) as { id: string };
+      const task = (await created.json()) as { id: string; roleId: string | null };
+      expect(task.roleId).toBe(role.role.id);
 
       const provisioned = await app.request(`/api/tasks/${task.id}/provision`, { method: 'POST' });
       expect(provisioned.status).toBe(200);
@@ -262,7 +263,7 @@ describe('createKernelApp', () => {
       const runRes = await app.request(`/api/tasks/${task.id}/runs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentId: 'local-codex', roleId: role.role.id }),
+        body: JSON.stringify({ agentId: 'local-codex' }),
       });
       expect(runRes.status).toBe(201);
       const run = (await runRes.json()) as { id: string; roleId: string | null; runtimeId: string | null };

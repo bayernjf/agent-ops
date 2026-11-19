@@ -80,8 +80,10 @@ describe('KernelStore executeRun', () => {
         runtimePolicy: { allowedTools: ['Read', 'Grep', 'Glob'], blockedTools: [], approvalMode: 'human' },
       });
       const run = await store.createRun(task.id, 'codex', reviewer.id);
+      let prompt = '';
 
       const guardedRunner: CodexProcessRunner = async (_command, arguments_, options) => {
+        prompt = arguments_[arguments_.length - 1] ?? '';
         const sandboxIndex = arguments_.indexOf('--sandbox');
         if (arguments_[sandboxIndex + 1] !== 'read-only') {
           await writeFile(join(options.cwd, 'LEAK.md'), '# leaked\n', 'utf8');
@@ -99,6 +101,8 @@ describe('KernelStore executeRun', () => {
       const executed = await store.executeRun(run.id, guardedRunner);
       expect(executed.status).toBe('review');
       expect(executed.runtimeId).toBe('codex');
+      expect(prompt).toContain('Acting Role: Reviewer (reviewer)');
+      expect(prompt).toContain('Allowed tools: Read, Grep, Glob');
       expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: task.worktreePath })).stdout.trim()).toBe('');
       await expect(access(join(task.worktreePath, 'LEAK.md'))).rejects.toThrow();
       await store.close();

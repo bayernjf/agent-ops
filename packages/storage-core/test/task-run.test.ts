@@ -76,6 +76,36 @@ describe('KernelStore task/run', () => {
     }
   });
 
+  it('records the selected role on a task and inherits it on runs', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-task-'));
+    try {
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const role = await store.roles.createRole({ name: 'Builder', baseAgentId: 'codex' });
+      const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'T', roleId: role.id });
+      expect(task.roleId).toBe(role.id);
+
+      const inherited = await store.createRun(task.id, 'codex');
+      expect(inherited.roleId).toBe(role.id);
+      const explicit = await store.createRun(task.id, 'codex', role.id);
+      expect(explicit.roleId).toBe(role.id);
+
+      await expect(store.createTask({ repo: '/r', baseRef: 'main', title: 'T', roleId: 'missing-role' }))
+        .rejects.toThrow('Role missing-role was not found.');
+
+      const hermesRole = await store.roles.createRole({ name: 'Hermes reviewer', baseAgentId: 'hermes' });
+      const otherTask = await store.createTask({ repo: '/r', baseRef: 'main', title: 'U', roleId: hermesRole.id });
+      await expect(store.createRun(otherTask.id, 'codex')).rejects.toThrow('targets hermes, not run agent codex');
+      await store.close();
+
+      const reopened = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      expect(reopened.getTask(task.id)?.roleId).toBe(role.id);
+      expect(reopened.getRun(inherited.id)?.roleId).toBe(role.id);
+      await reopened.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   it('records the selected role on a run and rejects an unknown role', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-task-'));
     try {
