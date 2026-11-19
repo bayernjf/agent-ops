@@ -68,6 +68,67 @@ describe('KernelStore executeRun', () => {
     }
   });
 
+  it('runs a read-only reviewer Role without allowing a write', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const reviewer = await store.roles.createRole({
+        name: 'Reviewer',
+        baseAgentId: 'codex',
+        runtimePolicy: { allowedTools: ['Read', 'Grep', 'Glob'], blockedTools: [], approvalMode: 'human' },
+      });
+      const run = await store.createRun(task.id, 'codex', reviewer.id);
+
+      const guardedRunner: CodexProcessRunner = async (_command, arguments_, options) => {
+        const sandboxIndex = arguments_.indexOf('--sandbox');
+        if (arguments_[sandboxIndex + 1] !== 'read-only') {
+          await writeFile(join(options.cwd, 'LEAK.md'), '# leaked\n', 'utf8');
+        }
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'review complete',
+          startedAt: new Date(Date.now() - 10).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+
+      const executed = await store.executeRun(run.id, guardedRunner);
+      expect(executed.status).toBe('review');
+      expect(executed.runtimeId).toBe('codex');
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: task.worktreePath })).stdout.trim()).toBe('');
+      await expect(access(join(task.worktreePath, 'LEAK.md'))).rejects.toThrow();
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('refuses a restricted Role on a Runtime that cannot enforce it', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const restricted = await store.roles.createRole({
+        name: 'Hermes reviewer',
+        baseAgentId: 'hermes',
+        runtimePolicy: { allowedTools: [], blockedTools: ['Bash'], approvalMode: 'strict' },
+      });
+      const run = await store.createRun(task.id, 'hermes', restricted.id);
+
+      await expect(store.executeRun(run.id, fakeRunner(0))).rejects.toThrow('cannot enforce a Role tool policy');
+      expect(store.getRun(run.id)?.status).toBe('queued');
+      expect(store.getTask(task.id)?.status).toBe('queued');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   it('includes untracked files the agent created without committing', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
     try {
