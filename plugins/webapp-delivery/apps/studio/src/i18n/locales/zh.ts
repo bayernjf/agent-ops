@@ -797,6 +797,8 @@ export const zh = {
     accept: '接受',
     acceptSelected: '接受选中文件',
     reject: '拒绝',
+    retryKeep: '保留工作树',
+    retryFresh: '重建工作树',
     executeRun: '无法执行该运行。',
     cancelRun: '无法取消该运行。',
     acceptRun: '无法接受该运行。',

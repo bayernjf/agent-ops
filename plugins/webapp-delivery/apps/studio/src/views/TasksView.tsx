@@ -5,6 +5,7 @@ import type { AgentRole, KernelRun, KernelTask, KernelTaskState, TaskPipeline, T
 import { apiFetch, apiStreamFetch } from '../lib/api';
 
 type RunAction = 'execute' | 'accept' | 'reject';
+type WorktreePolicy = 'keep' | 'fresh';
 
 type PipelineStepForm = {
   name: string;
@@ -394,7 +395,7 @@ export function TasksView() {
     }));
   };
 
-  const runAction = async (run: KernelRun, action: RunAction, files?: string[]) => {
+  const runAction = async (run: KernelRun, action: RunAction, files?: string[], worktree?: WorktreePolicy) => {
     const isExecute = action === 'execute';
     if (isExecute) {
       setExecutingRunId(run.id);
@@ -411,10 +412,15 @@ export function TasksView() {
     }
     setError('');
     try {
+      const body = action === 'accept' && files !== undefined
+        ? { files }
+        : action === 'execute' && worktree !== undefined
+          ? { worktree }
+          : undefined;
       const response = await apiFetch(`/api/runs/${encodeURIComponent(run.id)}/${action}`, {
         method: 'POST',
-        ...(action === 'accept' && files !== undefined
-          ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ files }) }
+        ...(body !== undefined
+          ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
           : {}),
       });
       const payload = (await response.json().catch(() => null)) as { error?: string } | null;
@@ -630,6 +636,19 @@ export function TasksView() {
                                   <button className="secondary-button" type="button" onClick={() => void runAction(run, 'execute')} disabled={busyRunId === run.id || executingRunId === run.id}>
                                     {t('tasks.execute')}
                                   </button>
+                                )}
+                                {run.status === 'failed' && (
+                                  <>
+                                    <button className="secondary-button" type="button" onClick={() => void runAction(run, 'execute')} disabled={busyRunId === run.id || executingRunId === run.id}>
+                                      <RotateCcw size={14} aria-hidden="true" /> {t('common.retry')}
+                                    </button>
+                                    <button className="secondary-button" type="button" onClick={() => void runAction(run, 'execute', undefined, 'keep')} disabled={busyRunId === run.id || executingRunId === run.id}>
+                                      {t('tasks.retryKeep')}
+                                    </button>
+                                    <button className="secondary-button" type="button" onClick={() => void runAction(run, 'execute', undefined, 'fresh')} disabled={busyRunId === run.id || executingRunId === run.id}>
+                                      {t('tasks.retryFresh')}
+                                    </button>
+                                  </>
                                 )}
                                 {run.status === 'running' && (
                                   <button className="secondary-button" type="button" onClick={() => void cancelRun(run)} disabled={busyRunId === run.id}>

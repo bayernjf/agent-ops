@@ -815,6 +815,8 @@ export const en = {
     accept: 'Accept',
     acceptSelected: 'Accept selected',
     reject: 'Reject',
+    retryKeep: 'Keep',
+    retryFresh: 'Fresh',
     executeRun: 'Unable to execute the run.',
     cancelRun: 'Unable to cancel the run.',
     acceptRun: 'Unable to accept the run.',
