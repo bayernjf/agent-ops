@@ -1920,6 +1920,23 @@ select option {
   font-size: 12px;
 }
 
+.run-tool-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.run-tool-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.run-tool-list small { color: var(--text-3); }
+
 .run-evidence-pre {
   margin: 0;
   padding: 10px;

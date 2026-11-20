@@ -815,6 +815,13 @@ export const zh = {
     cost: '成本',
     commit: '提交',
     lane: '并行通道',
+    toolAudit: '工具调用',
+    toolAuditUnknown: '运行时没有上报工具调用。',
+    toolStatus: {
+      ok: '已调用',
+      denied: '被拒绝',
+      unknown: '未知',
+    },
     handoff: '交接',
     timedOut: '已超时',
     cancelled: '已取消',
