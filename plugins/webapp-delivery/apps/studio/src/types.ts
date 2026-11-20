@@ -352,7 +352,8 @@ export type View =
   | { kind: 'credentials' }
   | { kind: 'agents' }
   | { kind: 'activity' }
-  | { kind: 'tasks' };
+  | { kind: 'tasks' }
+  | { kind: 'roles' };
 
 export type ProjectTab =
   | 'blueprint'
@@ -403,6 +404,29 @@ export type KernelRun = {
   commitSha?: string;
   roleId?: string | null;
   runtimeId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RoleApprovalMode = 'auto' | 'human' | 'strict';
+
+export type RoleRuntimePolicy = {
+  allowedTools: string[];
+  blockedTools: string[];
+  approvalMode: RoleApprovalMode;
+};
+
+/** Mirrors `AgentRole` in `@agent-ops/agent-runtime/roles` for the browser. */
+export type AgentRole = {
+  id: string;
+  name: string;
+  description?: string;
+  baseAgentId?: string;
+  profileId?: string;
+  systemPrompt?: string;
+  acceptanceCriteria: string[];
+  runtimePolicy: RoleRuntimePolicy;
+  enabled: boolean;
   createdAt: string;
   updatedAt: string;
 };
