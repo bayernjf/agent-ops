@@ -484,12 +484,21 @@ describe('createKernelApp', () => {
           name: 'Delivery',
           roleIds: [architect.id, implementer.id],
           handoffs: [{ fromRoleId: architect.id, toRoleId: implementer.id, note: 'Hand over the plan.' }],
+          ownerRoleId: implementer.id,
         }),
       });
       expect(created.status).toBe(201);
-      const team = ((await created.json()) as { team: { id: string; handoffs: unknown[] } }).team;
+      const team = ((await created.json()) as { team: { id: string; handoffs: unknown[]; ownerRoleId?: string } }).team;
       expect(team.id).toBe('delivery');
       expect(team.handoffs).toHaveLength(1);
+      expect(team.ownerRoleId).toBe(implementer.id);
+
+      const badOwner = await app.request('/api/teams', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Bad owner', roleIds: [architect.id], ownerRoleId: 'missing-role' }),
+      });
+      expect(badOwner.status).toBe(400);
 
       expect(((await (await app.request('/api/teams')).json()) as { teams: unknown[] }).teams).toHaveLength(1);
       expect((await app.request(`/api/teams/${team.id}`)).status).toBe(200);
@@ -683,14 +692,17 @@ describe('createKernelApp', () => {
         name: 'Delivery',
         roleIds: [implementer.id, architect.id],
         handoffs: [{ fromRoleId: architect.id, toRoleId: implementer.id }],
+        ownerRoleId: implementer.id,
       });
       const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Coordinated', teamId: team.id });
 
       const planned = await app.request(`/api/tasks/${task.id}/coordinator/plan`, { method: 'POST' });
       expect(planned.status).toBe(200);
-      const { plan } = (await planned.json()) as { plan: { order: string[]; steps: unknown[] } };
+      const { plan } = (await planned.json()) as { plan: { ownerRoleId: string | null; order: string[]; steps: Array<{ ownsDeliverable?: boolean }> } };
       expect(plan.order).toEqual([architect.id, implementer.id]);
       expect(plan.steps).toHaveLength(2);
+      expect(plan.ownerRoleId).toBe(implementer.id);
+      expect(plan.steps[1]?.ownsDeliverable).toBe(true);
 
       const applied = await app.request(`/api/tasks/${task.id}/coordinator/apply`, { method: 'POST' });
       expect(applied.status).toBe(200);
