@@ -190,6 +190,17 @@
 - [x] 测试：三步 Pipeline 首步保留、第二步失败后重试成功、失败文件被清掉、首步 runner 不重复执行、首步 commit 不变、最终 4 个 commit 且 worktree clean；驳回第二步时保留第一步 commit 与文件；server HTTP 重试与 completed 再重试 409；全仓 typecheck 0，49 文件 / 652 tests 绿。
 - [x] 本轮提交：`20d707a feat(storage-core): retry failed pipelines`、`4ec87aa feat(server-core): expose pipeline retry`、`53687f3 feat(studio): retry failed pipeline steps`、`28e4e5a test(storage-core): cover pipeline retry`。
 - [ ] F6-05 只支持 failed pipeline 的重试；completed pipeline 仍不支持 reset 后重跑，step 间 output 模板替换也未做。F6-06 并行 DAG、F7-05 Run 详情扩展仍未做。
+
+## M1 退出验收 — 4 步串行完整组合 — 已完成（2026-11-20）
+
+- [x] 新增 4 步串行 Pipeline 端到端测试：`Plan → Implement（requiresApproval）→ Review → Verify`，四个不同 Role，真实 git 仓库 + 真实 worktree + 注入 runner。
+- [x] 断言覆盖完整组合：执行到第 2 步停在 `awaiting_approval`（此时只有 2 次 runner 调用）；`approvePipelineStep` 后继续跑第 3、4 步；4 个 step 全部 `completed` 且各有一个互不相同的 40 位 commit SHA；worktree 累计 5 个 commit（init + 4 步）且 worktree clean；Task 最终 `done`、pipeline `completed`。
+- [x] 断言每步身份正确：4 条 Run 的 `roleId` 依序对应 Architect / Implementer / Reviewer / Verifier，prompt 中 `Pipeline step N/4` 标记与 `Acting Role` 段落逐步骤匹配，下游能读到上游已提交的文件。
+- [x] 发现的真实限制：`executeCodexPlan` 在 `adapter.status !== 'verified'` 时拒绝执行，`claude-code` 仍是 `candidate`，因此带 Claude 角色的 step 会直接失败。本条验收的组合因此使用 4 个 codex 角色；“同一 Codex 3 角色 + Claude/Hermes 角色”要等 Claude adapter 通过验证后才能组合。
+- [x] 全仓 `npm run typecheck` 0 错误，`npm test` 49 文件 / 657 tests 全绿。
+- [x] 本轮提交：`63fe913 test(storage-core): cover a four-step pipeline`。
+- [ ] 本条验收是确定性 runner 下的内核级验收，不是真实模型 UI 验收；真实模型 UI E2E 仍 blocked（见上方待办登记）。
+
 ## F7-05 Run 详情扩展 — 已完成（2026-11-20）
 
 - [x] migration `0015_run_execution_evidence` 给 `runs` 增加 `runtime_version`（默认空字符串）、`command`（默认空字符串）、`input_tokens` / `output_tokens`（INTEGER，可空）、`cost_usd`（REAL，可空）；旧 Run 读取为 `runtimeVersion=null`、`command=''`、usage 为 `null`。
