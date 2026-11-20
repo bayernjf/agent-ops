@@ -52,3 +52,21 @@ export const runEvents = sqliteTable('run_events', {
   data: text('data'),
   at: text('at').notNull(),
 });
+
+// Handoffs record what an upstream pipeline step actually delivered to the next one: the commit
+// a human accepted plus the files it changed. A Team configures the edges; this table records
+// every traversal that really happened, so the delivery can be audited after the worktree moves on.
+export const runHandoffs = sqliteTable('run_handoffs', {
+  id: text('id').primaryKey(),
+  taskId: text('task_id').notNull(),
+  teamId: text('team_id').notNull().default(''),
+  fromStepId: text('from_step_id').notNull(),
+  toStepId: text('to_step_id').notNull(),
+  fromRunId: text('from_run_id').notNull(),
+  toRunId: text('to_run_id').notNull(),
+  fromRoleId: text('from_role_id').notNull().default(''),
+  toRoleId: text('to_role_id').notNull().default(''),
+  fromCommitSha: text('from_commit_sha').notNull(),
+  artifacts: text('artifacts').notNull().default('[]'),
+  createdAt: text('created_at').notNull(),
+});

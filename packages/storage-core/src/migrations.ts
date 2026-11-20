@@ -107,4 +107,30 @@ export const kernelMigrations: readonly Migration[] = [
       ALTER TABLE tasks ADD COLUMN team_id TEXT NOT NULL DEFAULT '';
     `,
   },
+  {
+    id: '0017_run_handoffs',
+    sql: `
+      CREATE TABLE IF NOT EXISTS run_handoffs (
+        id TEXT PRIMARY KEY NOT NULL,
+        task_id TEXT NOT NULL,
+        team_id TEXT NOT NULL DEFAULT '',
+        from_step_id TEXT NOT NULL,
+        to_step_id TEXT NOT NULL,
+        from_run_id TEXT NOT NULL,
+        to_run_id TEXT NOT NULL,
+        from_role_id TEXT NOT NULL DEFAULT '',
+        to_role_id TEXT NOT NULL DEFAULT '',
+        from_commit_sha TEXT NOT NULL,
+        artifacts TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(task_id) REFERENCES tasks(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_run_handoffs_task
+        ON run_handoffs(task_id, created_at);
+
+      CREATE INDEX IF NOT EXISTS idx_run_handoffs_to_run
+        ON run_handoffs(to_run_id);
+    `,
+  },
 ];

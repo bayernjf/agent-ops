@@ -463,7 +463,39 @@ describe('KernelStore pipeline', () => {
       expect(count).toBe('5');
       expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: provisioned.worktreePath })).stdout.trim()).toBe('');
       expect((await execFileAsync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: provisioned.worktreePath })).stdout).toContain('VERIFY.md');
+
+      const handoffs = store.listHandoffs(task.id);
+      expect(handoffs).toHaveLength(3);
+      const byTarget = new Map(handoffs.map(handoff => [handoff.toStepId, handoff]));
+      const stepCommit = (stepId: string) => resumed.results.find(result => result.stepId === stepId)?.commitSha;
+      const stepRun = (stepId: string) => resumed.results.find(result => result.stepId === stepId)?.runId;
+
+      expect(byTarget.get('implement')).toMatchObject({
+        fromStepId: 'plan',
+        fromCommitSha: stepCommit('plan'),
+        toRunId: stepRun('implement'),
+        teamId: null,
+      });
+      expect(byTarget.get('implement')?.artifacts).toContain('PLAN.md');
+      expect(byTarget.get('review')).toMatchObject({
+        fromStepId: 'implement',
+        fromCommitSha: stepCommit('implement'),
+        toRunId: stepRun('review'),
+      });
+      expect(byTarget.get('review')?.artifacts).toContain('IMPL.md');
+      expect(byTarget.get('verify')).toMatchObject({
+        fromStepId: 'review',
+        fromCommitSha: stepCommit('review'),
+        toRunId: stepRun('verify'),
+      });
+      expect(byTarget.get('verify')?.artifacts).toContain('REVIEW.md');
+      expect(store.getHandoffForRun(stepRun('verify') ?? '')?.fromStepId).toBe('review');
+      expect(store.getHandoffForRun(stepRun('plan') ?? '')).toBeNull();
       await store.close();
+
+      const reopened = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      expect(reopened.listHandoffs(task.id)).toHaveLength(3);
+      await reopened.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }

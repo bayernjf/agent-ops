@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { eq, asc } from 'drizzle-orm';
+import { eq, asc, desc } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/sql-js';
 import initSqlJs, { type Database } from 'sql.js';
 import {
@@ -19,7 +19,7 @@ import {
   type CodexProcessRunner,
 } from '@agent-ops/agent-runtime';
 import type { TaskRunState } from '@agent-ops/workflow';
-import { tasks, runs, runEvents } from './schema.js';
+import { tasks, runs, runEvents, runHandoffs } from './schema.js';
 import { kernelMigrations, type Migration } from './migrations.js';
 import { ProfileStore } from './profiles-store.js';
 import { RoleStore } from './roles-store.js';
@@ -31,7 +31,7 @@ const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
 
 function createKernelOrm(database: Database) {
-  return drizzle(database, { schema: { tasks, runs, runEvents } });
+  return drizzle(database, { schema: { tasks, runs, runEvents, runHandoffs } });
 }
 
 export type TaskPriority = 'low' | 'medium' | 'high';
@@ -153,6 +153,32 @@ function toTaskRecord(row: TaskRow): TaskRecord {
   return { ...row, acceptanceCriteria, priority, roleId: row.roleId || null, teamId: row.teamId || null, pipeline: parseTaskPipeline(row.pipeline) };
 }
 
+type HandoffRow = Omit<RunHandoff, 'teamId' | 'fromRoleId' | 'toRoleId' | 'artifacts'> & {
+  teamId: string;
+  fromRoleId: string;
+  toRoleId: string;
+  artifacts: string;
+};
+
+function parseStoredStringList(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function toRunHandoff(row: HandoffRow): RunHandoff {
+  return {
+    ...row,
+    teamId: row.teamId || null,
+    fromRoleId: row.fromRoleId || null,
+    toRoleId: row.toRoleId || null,
+    artifacts: parseStoredStringList(row.artifacts),
+  };
+}
+
 export type RunArtifacts = {
   /** Combined stdout/stderr from the agent process, capped before persistence. */
   output: string;
@@ -245,6 +271,25 @@ export type RunExecutionEvidence = {
   inputTokens?: number | null;
   outputTokens?: number | null;
   costUsd?: number | null;
+};
+
+/**
+ * What an upstream pipeline step delivered to the downstream one. A Team configures the edges;
+ * this record is the receipt of an actual traversal: the accepted commit and the files it changed.
+ */
+export type RunHandoff = {
+  id: string;
+  taskId: string;
+  teamId: string | null;
+  fromStepId: string;
+  toStepId: string;
+  fromRunId: string;
+  toRunId: string;
+  fromRoleId: string | null;
+  toRoleId: string | null;
+  fromCommitSha: string;
+  artifacts: string[];
+  createdAt: string;
 };
 
 type RunRow = Omit<RunRecord, 'artifacts' | 'roleId' | 'runtimeId' | 'runtimeVersion' | 'inputTokens' | 'outputTokens' | 'costUsd'> & {
@@ -601,6 +646,41 @@ export class KernelStore {
     return rows.map(toRunRecord);
   }
 
+  /** Handoff receipts for a task, newest first. */
+  listHandoffs(taskId: string): RunHandoff[] {
+    const rows = this.kernelOrm
+      .select()
+      .from(runHandoffs)
+      .where(eq(runHandoffs.taskId, taskId))
+      .orderBy(desc(runHandoffs.createdAt), desc(runHandoffs.id))
+      .all() as HandoffRow[];
+    return rows.map(toRunHandoff);
+  }
+
+  /** The handoff that delivered work into this run, if any. */
+  getHandoffForRun(runId: string): RunHandoff | null {
+    const row = this.kernelOrm
+      .select()
+      .from(runHandoffs)
+      .where(eq(runHandoffs.toRunId, runId))
+      .orderBy(desc(runHandoffs.createdAt), desc(runHandoffs.id))
+      .get() as HandoffRow | undefined;
+    return row ? toRunHandoff(row) : null;
+  }
+
+  private async recordHandoff(input: Omit<RunHandoff, 'id' | 'createdAt'>): Promise<RunHandoff> {
+    const record: RunHandoff = { ...input, id: randomUUID(), createdAt: new Date().toISOString() };
+    this.kernelOrm.insert(runHandoffs).values({
+      ...record,
+      teamId: record.teamId ?? '',
+      fromRoleId: record.fromRoleId ?? '',
+      toRoleId: record.toRoleId ?? '',
+      artifacts: JSON.stringify(record.artifacts),
+    }).run();
+    await this.persist();
+    return record;
+  }
+
   getRunEvents(id: string): RunEvent[] {
     const rows = this.kernelOrm
       .select()
@@ -898,6 +978,33 @@ export class KernelStore {
     }
   }
 
+  /**
+   * Record the receipt for the edge that just delivered into `toRunId`. Only a completed,
+   * committed upstream step has something to hand over; a retried step gets its own receipt.
+   */
+  private async recordStepHandoff(taskId: string, pipeline: TaskPipeline, index: number, toRunId: string): Promise<void> {
+    if (index === 0) return;
+    const task = this.getTask(taskId);
+    if (!task) return;
+    const fromStep = pipeline.steps[index - 1];
+    const toStep = pipeline.steps[index];
+    const fromResult = pipeline.results.find(result => result.stepId === fromStep.id);
+    if (!toStep || fromResult?.status !== 'completed' || !fromResult.runId || !fromResult.commitSha) return;
+    const fromRun = this.getRun(fromResult.runId);
+    await this.recordHandoff({
+      taskId,
+      teamId: task.teamId,
+      fromStepId: fromStep.id,
+      toStepId: toStep.id,
+      fromRunId: fromResult.runId,
+      toRunId,
+      fromRoleId: fromRun?.roleId ?? fromStep.roleId ?? null,
+      toRoleId: toStep.roleId ?? null,
+      fromCommitSha: fromResult.commitSha,
+      artifacts: (fromRun?.artifacts.changedFiles ?? []).slice(0, 200),
+    });
+  }
+
   private async runPipelineSteps(id: string, initial: TaskPipeline, startIndex: number, runner?: CodexProcessRunner): Promise<TaskPipeline> {
     let pipeline = initial;
     for (let index = startIndex; index < pipeline.steps.length; index++) {
@@ -920,6 +1027,7 @@ export class KernelStore {
         runId = run.id;
         updateResult({ stepId: step.id, status: 'running', runId, startedAt });
         await this.saveTaskPipeline(id, pipeline);
+        await this.recordStepHandoff(id, pipeline, index, run.id);
 
         const executed = await this.executeRun(run.id, runner);
         if (executed.status !== 'review') {
