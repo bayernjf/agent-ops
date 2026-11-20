@@ -354,6 +354,13 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     return task.pipeline ? c.json(task.pipeline) : c.json({ error: `Task ${task.id} has no pipeline.` }, 404);
   });
 
+  app.get('/api/tasks/:id/handoffs', (c) => {
+    const taskId = c.req.param('id');
+    const task = store.getTask(taskId);
+    if (!task) return c.json({ error: `Task ${taskId} was not found.` }, 404);
+    return c.json({ handoffs: store.listHandoffs(taskId) });
+  });
+
   app.post('/api/tasks/:id/pipeline/execute', async (c) => {
     try {
       return c.json(await store.executeTaskPipeline(c.req.param('id'), options.runner));
@@ -396,11 +403,15 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     }
   });
 
-  app.get('/api/tasks/:id/runs', (c) => c.json(store.listRuns(c.req.param('id'))));
+  app.get('/api/tasks/:id/runs', (c) => {
+    const taskId = c.req.param('id');
+    return c.json(store.listRuns(taskId).map(run => ({ ...run, handoff: store.getHandoffForRun(run.id) })));
+  });
 
   app.get('/api/runs/:id', (c) => {
     const run = store.getRun(c.req.param('id'));
-    return run ? c.json(run) : c.json({ error: `Run ${c.req.param('id')} was not found.` }, 404);
+    if (!run) return c.json({ error: `Run ${c.req.param('id')} was not found.` }, 404);
+    return c.json({ ...run, handoff: store.getHandoffForRun(run.id) });
   });
 
   app.get('/api/runs/:id/events', (c) => {

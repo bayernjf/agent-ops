@@ -183,6 +183,59 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('serves handoff receipts for a task and its runs', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      let calls = 0;
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        calls++;
+        await writeFile(join(options.cwd, `handoff-${calls}.txt`), 'done\n', 'utf8');
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'ok',
+          startedAt: new Date(Date.now() - 10).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+      const app = createKernelApp(store, { runner });
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Handoff over HTTP',
+        pipeline: {
+          steps: [
+            { id: 'build', name: 'Build', agentId: 'codex' },
+            { id: 'ship', name: 'Ship', agentId: 'codex' },
+          ],
+        },
+      });
+      await store.provisionTask(task.id);
+      await app.request(`/api/tasks/${task.id}/pipeline/execute`, { method: 'POST' });
+
+      const listed = await app.request(`/api/tasks/${task.id}/handoffs`);
+      expect(listed.status).toBe(200);
+      const { handoffs } = (await listed.json()) as { handoffs: Array<{ fromStepId: string; toStepId: string; fromCommitSha: string; toRunId: string; teamId: string | null }> };
+      expect(handoffs).toHaveLength(1);
+      expect(handoffs[0]).toMatchObject({ fromStepId: 'build', toStepId: 'ship', teamId: null });
+      expect(handoffs[0]?.fromCommitSha).toMatch(/^[0-9a-f]{40}$/);
+      expect((await app.request('/api/tasks/missing/handoffs')).status).toBe(404);
+
+      const downstream = await app.request(`/api/runs/${handoffs[0]?.toRunId}`);
+      expect((await downstream.json()) as object).toMatchObject({
+        handoff: { fromStepId: 'build', fromCommitSha: handoffs[0]?.fromCommitSha },
+      });
+      const upstreamRunId = store.listRuns(task.id)[0]?.id ?? '';
+      const upstream = await app.request(`/api/runs/${upstreamRunId}`);
+      expect(((await upstream.json()) as { handoff: unknown }).handoff).toBeNull();
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('serves approval gates over the pipeline API', async () => {
     const { store, directory } = await openStore();
     try {
