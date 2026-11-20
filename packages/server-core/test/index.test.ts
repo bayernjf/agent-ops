@@ -644,6 +644,32 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('serves kernel metrics with an optional window', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const response = await app.request('/api/metrics');
+      expect(response.status).toBe(200);
+      const metrics = (await response.json()) as {
+        runs: { successRate: number | null };
+        usage: { costUsd: number | null };
+        byRuntime: unknown[];
+      };
+      expect(metrics.runs.successRate).toBeNull();
+      expect(metrics.usage.costUsd).toBeNull();
+      expect(metrics.byRuntime).toEqual([]);
+
+      const windowed = await app.request('/api/metrics?since=2026-01-01T00:00:00.000Z&until=2026-01-02T00:00:00.000Z');
+      expect(windowed.status).toBe(200);
+      expect(((await windowed.json()) as { window: { since: string } }).window.since).toBe('2026-01-01T00:00:00.000Z');
+
+      expect((await app.request('/api/metrics?since=not-a-date')).status).toBe(400);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a role whose runtime is not verified or whose profile is missing', async () => {
     const { store, directory } = await openStore();
     try {
