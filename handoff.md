@@ -166,15 +166,27 @@
 - [x] `styles.css` 新增 task-form / tasks-actions / pipeline-toggle / pipeline-editor / pipeline-step / pipeline-panel / pipeline-step-row / pipeline-step-identity / pipeline-step-commit 样式。
 - [x] 门禁：全仓 typecheck 0，49 文件 / 644 tests 绿（studio 16 例含 owned-copy / cross-locale / smoke）。
 - [x] 本轮提交：`ab59175 feat(studio): add task creation and pipeline editing`。
-- [ ] F7-01 只覆盖串行 Pipeline 的建任务与执行 UI；F6-05 失败重跑、F7-05 Run 详情扩展仍未做。
+- [ ] F7-01 只覆盖串行 Pipeline 的建任务与执行 UI；F7-05 Run 详情扩展仍未做；F6-05 失败重跑已在后续完成。
 
 ## F6-04 每步审批 requiresApproval — 已完成（2026-11-20）
 
 - [x] `TaskPipelineStep` / `TaskPipelineStepInput` 增加 `requiresApproval`；step 成功进入 `review` 后若该步需审批，不自动 accept，pipeline 置 `awaiting_approval`，step result 同为 `awaiting_approval`，Run 保持 `review`。
-- [x] `approvePipelineStep`：接受当前待审 Run（commit），把该 step 置 `completed` 并继续执行剩余步骤；`rejectPipelineStep`：reset worktree 到 base，该 step 记 `Rejected by operator.`，pipeline 与任务均置 `failed`。
+- [x] `approvePipelineStep`：接受当前待审 Run（commit），把该 step 置 `completed` 并继续执行剩余步骤；`rejectPipelineStep`：reset worktree 到该 step 的前置 commit（首步回 `baseCommit`），该 step 记 `Rejected by operator.`，pipeline 与任务均置 `failed`。
 - [x] `parseTaskPipeline` 白名单补 `awaiting_approval`，否则 daemon 重载后暂停态会被折回 `idle`（由新测试抓到的真实缺陷）。
 - [x] server 新增 `POST /api/tasks/:id/pipeline/approve`、`/reject`；`createTaskSchema` step 接受 `requiresApproval`；无待审批时的 gate 调用返回 409。
 - [x] Studio：建任务表单每步新增"需要人工审批后继续"开关；pipeline 面板与 step 行渲染 `awaiting_approval`，暂停时显示 Approve / Reject 按钮；zh/en 文案与状态配色补齐。
 - [x] 测试：storage-core 3 例（暂停、approve 继续、驳回 reset、无门禁拒绝）、server-core 2 例 HTTP approve/reject；全仓 typecheck 0，49 文件 / 649 tests 绿。
 - [x] 本轮提交：`e6e4658 feat(storage-core): pause pipeline steps for approval`、`d4ddacc feat(server-core): expose pipeline approval routes`、`4b4ba7c feat(studio): gate pipeline steps in the task board`。
-- [ ] F6-04 只覆盖串行 Pipeline 的单点审批门禁；F6-05 失败重跑（reset 到 step base）、F6-06 并行 DAG、F7-05 Run 详情扩展仍未做。
+- [ ] F6-04 只覆盖串行 Pipeline 的单点审批门禁；F6-06 并行 DAG、F7-05 Run 详情扩展仍未做。
+
+## F6-05 失败重跑 — 已完成（2026-11-20）
+
+- [x] `retryTaskPipeline` 只接受 `failed` pipeline；completed / idle / awaiting_approval / running 均拒绝，避免把“重试”误用成“重跑已完成任务”。
+- [x] 找到第一个 `failed` 的 step，重跑前把 worktree hard reset 到该 step 的前置 commit：首步回 `baseCommit`，中间步回上一条 completed result 的 `commitSha`；同时清掉 failed step 及其后的结果，保留前面 completed step 的 commit 和 result。
+- [x] 重试会新建 Run，旧失败 Run 继续留在 Run 列表；重试成功后继续执行剩余 step，pipeline `completed`、Task `done`；再次失败则仍为 `failed`，可继续重试。
+- [x] 修复 F6-04 的真实缺陷：`rejectPipelineStep` 之前调用 `rejectRun` 会 reset 到任务 `baseCommit`，把前面已完成 step 的 commit 一并抹掉；现在 `rejectRun` 接受可选 reset target，pipeline 驳回只回退到当前 step 的前置 commit。
+- [x] server 新增 `POST /api/tasks/:id/pipeline/retry`，非 failed pipeline 返回 409。
+- [x] MCP 新增 `agent_ops_retry_pipeline`；Studio failed 状态的按钮从错误的 execute 改为 Retry failed step，并沿用 busy/错误处理。
+- [x] 测试：三步 Pipeline 首步保留、第二步失败后重试成功、失败文件被清掉、首步 runner 不重复执行、首步 commit 不变、最终 4 个 commit 且 worktree clean；驳回第二步时保留第一步 commit 与文件；server HTTP 重试与 completed 再重试 409；全仓 typecheck 0，49 文件 / 652 tests 绿。
+- [x] 本轮提交：`20d707a feat(storage-core): retry failed pipelines`、`4ec87aa feat(server-core): expose pipeline retry`、`53687f3 feat(studio): retry failed pipeline steps`、`28e4e5a test(storage-core): cover pipeline retry`。
+- [ ] F6-05 只支持 failed pipeline 的重试；completed pipeline 仍不支持 reset 后重跑，step 间 output 模板替换也未做。F6-06 并行 DAG、F7-05 Run 详情扩展仍未做。
