@@ -358,6 +358,57 @@ export type KernelAuditEventType =
 
 export type KernelAuditActor = 'operator' | 'system';
 
+/** Aggregated success, rework, usage and timing over the kernel's tasks and runs. */
+export type KernelMetrics = {
+  generatedAt: string;
+  window: { since: string | null; until: string | null };
+  tasks: { total: number; done: number; failed: number; cancelled: number; open: number };
+  runs: {
+    total: number;
+    executed: number;
+    succeeded: number;
+    failed: number;
+    cancelled: number;
+    inFlight: number;
+    /** succeeded / executed; null when nothing executed in the window. */
+    successRate: number | null;
+  };
+  rework: {
+    retries: number;
+    rejections: number;
+    /** (retries + rejections) / executed; a heuristic, not a per-task measure. */
+    reworkRate: number | null;
+  };
+  usage: {
+    reportingRuns: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    costUsd: number | null;
+  };
+  timing: {
+    totalDurationMs: number;
+    /** Mean per executed run; null when nothing executed. */
+    averageDurationMs: number | null;
+  };
+  byRuntime: Array<{
+    runtimeId: string;
+    runs: number;
+    succeeded: number;
+    failed: number;
+    cancelled: number;
+    durationMs: number;
+    costUsd: number | null;
+  }>;
+  byRole: Array<{
+    roleId: string;
+    runs: number;
+    succeeded: number;
+    failed: number;
+    cancelled: number;
+    durationMs: number;
+  }>;
+};
+
 /** Append-only record of model changes and human gate decisions, replayable by task. */
 export type KernelAuditEvent = {
   id: string;
@@ -1460,6 +1511,142 @@ export class KernelStore {
     ));
     const limit = Math.min(Math.max(filter.limit ?? 200, 1), 1000);
     return events.length > limit ? events.slice(events.length - limit) : events;
+  }
+
+  /** Aggregate success, rework, usage and timing over tasks and runs, optionally windowed. */
+  getMetrics(filter: { since?: string; until?: string } = {}): KernelMetrics {
+    const since = filter.since ? Date.parse(filter.since) : null;
+    const until = filter.until ? Date.parse(filter.until) : null;
+    const inWindow = (iso: string) => {
+      const at = Date.parse(iso);
+      if (Number.isNaN(at)) return false;
+      if (since !== null && !Number.isNaN(since) && at < since) return false;
+      if (until !== null && !Number.isNaN(until) && at > until) return false;
+      return true;
+    };
+
+    const taskTotals = { total: 0, done: 0, failed: 0, cancelled: 0, open: 0 };
+    for (const task of this.listTasks()) {
+      if (!inWindow(task.createdAt)) continue;
+      taskTotals.total++;
+      if (task.status === 'done') taskTotals.done++;
+      else if (task.status === 'failed') taskTotals.failed++;
+      else if (task.status === 'cancelled') taskTotals.cancelled++;
+      else taskTotals.open++;
+    }
+
+    type RuntimeBucket = { runs: number; succeeded: number; failed: number; cancelled: number; durationMs: number; costUsd: number; reporting: number };
+    type RoleBucket = { runs: number; succeeded: number; failed: number; cancelled: number; durationMs: number };
+    const runtimeBuckets = new Map<string, RuntimeBucket>();
+    const roleBuckets = new Map<string, RoleBucket>();
+    const bucketFor = <T>(map: Map<string, T>, key: string, init: () => T): T => {
+      const existing = map.get(key);
+      if (existing) return existing;
+      const created = init();
+      map.set(key, created);
+      return created;
+    };
+
+    const runsTotals = { total: 0, executed: 0, succeeded: 0, failed: 0, cancelled: 0, inFlight: 0 };
+    let durationMs = 0;
+    let reportingRuns = 0;
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let costUsd = 0;
+
+    for (const task of this.listTasks()) {
+      for (const run of this.listRuns(task.id)) {
+        if (!inWindow(run.createdAt)) continue;
+        runsTotals.total++;
+        durationMs += run.artifacts.durationMs;
+        const reported = run.inputTokens !== null || run.outputTokens !== null || run.costUsd !== null;
+        if (reported) {
+          reportingRuns++;
+          inputTokens += run.inputTokens ?? 0;
+          outputTokens += run.outputTokens ?? 0;
+          costUsd += run.costUsd ?? 0;
+        }
+
+        const runtime = bucketFor(runtimeBuckets, run.runtimeId ?? 'unresolved', () => ({ runs: 0, succeeded: 0, failed: 0, cancelled: 0, durationMs: 0, costUsd: 0, reporting: 0 }));
+        runtime.runs++;
+        runtime.durationMs += run.artifacts.durationMs;
+        if (reported) {
+          runtime.reporting++;
+          runtime.costUsd += run.costUsd ?? 0;
+        }
+
+        const role = bucketFor(roleBuckets, run.roleId ?? 'unassigned', () => ({ runs: 0, succeeded: 0, failed: 0, cancelled: 0, durationMs: 0 }));
+        role.runs++;
+        role.durationMs += run.artifacts.durationMs;
+
+        if (run.status === 'review' || run.status === 'done') {
+          runsTotals.succeeded++;
+          runsTotals.executed++;
+          runtime.succeeded++;
+          role.succeeded++;
+        } else if (run.status === 'failed') {
+          runsTotals.failed++;
+          runsTotals.executed++;
+          runtime.failed++;
+          role.failed++;
+        } else if (run.status === 'cancelled') {
+          runsTotals.cancelled++;
+          runsTotals.executed++;
+          runtime.cancelled++;
+          role.cancelled++;
+        } else {
+          runsTotals.inFlight++;
+        }
+      }
+    }
+
+    const audit = this.listAudit({ limit: 1000 });
+    const retries = audit.filter(event => event.type === 'pipeline.retried' && inWindow(event.at)).length;
+    const rejections = audit.filter(event => event.type === 'run.rejected' && inWindow(event.at)).length;
+
+    const byRuntime = [...runtimeBuckets.entries()]
+      .map(([runtimeId, bucket]) => ({
+        runtimeId,
+        runs: bucket.runs,
+        succeeded: bucket.succeeded,
+        failed: bucket.failed,
+        cancelled: bucket.cancelled,
+        durationMs: bucket.durationMs,
+        costUsd: bucket.reporting > 0 ? bucket.costUsd : null,
+      }))
+      .sort((a, b) => b.runs - a.runs);
+
+    const byRole = [...roleBuckets.entries()]
+      .map(([roleId, bucket]) => ({
+        roleId,
+        runs: bucket.runs,
+        succeeded: bucket.succeeded,
+        failed: bucket.failed,
+        cancelled: bucket.cancelled,
+        durationMs: bucket.durationMs,
+      }))
+      .sort((a, b) => b.runs - a.runs);
+
+    return {
+      generatedAt: new Date().toISOString(),
+      window: { since: filter.since ?? null, until: filter.until ?? null },
+      tasks: taskTotals,
+      runs: { ...runsTotals, successRate: runsTotals.executed > 0 ? runsTotals.succeeded / runsTotals.executed : null },
+      rework: { retries, rejections, reworkRate: runsTotals.executed > 0 ? (retries + rejections) / runsTotals.executed : null },
+      usage: {
+        // Null, not zero: nothing reported usage in this window.
+        reportingRuns,
+        inputTokens: reportingRuns > 0 ? inputTokens : null,
+        outputTokens: reportingRuns > 0 ? outputTokens : null,
+        costUsd: reportingRuns > 0 ? costUsd : null,
+      },
+      timing: {
+        totalDurationMs: durationMs,
+        averageDurationMs: runsTotals.executed > 0 ? Math.round(durationMs / runsTotals.executed) : null,
+      },
+      byRuntime,
+      byRole,
+    };
   }
 
   /** Build the Role's dry-run execution plan. Returns null when the Role does not exist. */
