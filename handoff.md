@@ -386,3 +386,14 @@
 - [x] 测试：只读/宽/仅禁三类策略的 readOnly 与决策、unsupported 不抛错并带原因、wrapper 标 coarse、approval 透传；server 端 codex `exact` + hermes `unsupported` + 400；MCP 端到端。全仓 typecheck 0，60 文件 / 718 tests 绿。
 - [x] 本轮提交：`673d584 feat(policy): add a runtime-neutral tool policy`、`d2dd663 refactor(agent-runtime): use the unified policy layer`、`121a426 feat(server-core): evaluate policies across runtimes`、`d2852d8 feat(cli): add the policy evaluation tool`。
 - [ ] 未做：决策基于内置工具名表，未知工具不会被判 deny；`approvalMode` 只是被携带，没有跨 Runtime 的审批执行器；Studio 没有策略预览 UI；`wrapper` 能力目前没有 adapter 使用（只有 native / unsupported）。
+
+## F4-06 成本预算 — 已完成（2026-11-20）
+
+- [x] Role / Team 新增可选 `budget{maxCostUsd, maxInputTokens, maxOutputTokens}`（`CostBudget` + `costBudgetSchema`，至少一个上限；Role/Team 的 create/update schema 与 JSON store 都透传）。
+- [x] `KernelStore.budgetStatus(taskId, roleId?)`：按该任务已有 Run 的上报用量聚合 role 与 team 两个 scope 的 spend，并给出 configured / exceeded / reasons / limits。
+- [x] 超额阻断：`createRun` 与 `executeRun` 在启动前检查，已超预算即抛 `Budget exceeded` 并写 `budget.blocked` 审计；queued 的 Run 在别的 Run 把预算用完后也不能再启动。
+- [x] 诚实口径：只累加上报过的维度；没有上报的维度不会单独触发阻断（`spend` 对应字段为 `null`，`reportingRuns` 标明基线完整度）。
+- [x] server：`GET /api/tasks/:id/budget?roleId=`；MCP：新增 `agent_ops_get_budget`。
+- [x] 测试：role 预算 $1 两笔 $0.6 后第三笔被阻断且审计含 `budget.blocked`；team 预算 100 input tokens 跨角色累计到 120 后，先建后执行的 queued Run 在 execute 时被阻断；未上报用量不阻断（spend null）；server 200/404；MCP 返回 null scope。全仓 typecheck 0，61 文件 / 723 tests 绿。
+- [x] 本轮提交：`4ac5021 feat(agent-runtime): add role and team budgets`、`81ca0a5 feat(storage-core): enforce role and team budgets`、`e4a7594 feat(server-core): serve task budget status`、`068a55b feat(cli): add the budget tool`。
+- [ ] 未做：预算是“任务内”口径（同一 Role/Team 在不同任务里各自计算，不跨任务累计）；只在 Run 启动前阻断，不中断正在跑的 Run；Studio 没有预算输入框或展示；真实 CLI 不报 usage 时预算实际不生效。
