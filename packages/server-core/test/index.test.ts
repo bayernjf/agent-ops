@@ -533,6 +533,33 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('serves audit events with task, team and type filters', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const role = await store.roles.createRole({ name: 'Auditor', baseAgentId: 'codex' });
+      const team = await store.teams.createTeam({ name: 'Audit team', roleIds: [role.id] });
+      const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Audited', roleId: role.id, teamId: team.id });
+
+      const all = await app.request('/api/audit');
+      expect(all.status).toBe(200);
+      const { events } = (await all.json()) as { events: Array<{ type: string; taskId: string | null }> };
+      expect(events.map(event => event.type)).toEqual(['role.created', 'team.created', 'task.created']);
+
+      const byTask = await app.request(`/api/audit?taskId=${task.id}`);
+      expect(((await byTask.json()) as { events: unknown[] }).events).toHaveLength(1);
+
+      const byTeamAndType = await app.request(`/api/audit?teamId=${team.id}&type=team.created`);
+      expect(((await byTeamAndType.json()) as { events: Array<{ type: string }> }).events.map(event => event.type)).toEqual(['team.created']);
+
+      const limited = await app.request('/api/audit?limit=1');
+      expect(((await limited.json()) as { events: Array<{ type: string }> }).events.map(event => event.type)).toEqual(['task.created']);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a role whose runtime is not verified or whose profile is missing', async () => {
     const { store, directory } = await openStore();
     try {

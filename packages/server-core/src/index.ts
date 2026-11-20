@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
-import type { KernelStore, RunEvent, CreateRoleInput, UpdateRoleInput } from '@agent-ops/storage-core';
+import type { KernelStore, RunEvent, CreateRoleInput, UpdateRoleInput, KernelAuditEventType } from '@agent-ops/storage-core';
 import {
   type CodexProcessRunner,
   type CustomAgentInput,
@@ -313,6 +313,22 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
   app.delete('/api/teams/:teamId', async (c) => {
     const deleted = await store.teams.deleteTeam(c.req.param('teamId'));
     return deleted ? c.json({ deleted: true }) : c.json({ error: 'Team not found.' }, 404);
+  });
+
+  app.get('/api/audit', (c) => {
+    const taskId = c.req.query('taskId')?.trim() || undefined;
+    const teamId = c.req.query('teamId')?.trim() || undefined;
+    const type = c.req.query('type')?.trim() || undefined;
+    const parsedLimit = Number(c.req.query('limit') ?? '');
+    const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
+    return c.json({
+      events: store.listAudit({
+        taskId,
+        teamId,
+        type: type as KernelAuditEventType | undefined,
+        limit,
+      }),
+    });
   });
 
   app.post('/api/tasks', async (c) => {
