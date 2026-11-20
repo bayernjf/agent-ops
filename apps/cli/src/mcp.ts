@@ -617,6 +617,19 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: ADDITIVE,
   }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/provision`).then(toResult));
 
+  server.registerTool('agent_ops_execute_parallel', {
+    title: 'Execute parallel lanes',
+    description: 'Run one lane per team role, each in its own worktree, bounded by maxConcurrency. Lanes end in review; file conflicts are reported and never auto-merged. Synchronous and may take minutes.',
+    inputSchema: {
+      ...taskIdSchema,
+      maxConcurrency: z.number().int().min(1).max(8).optional().describe('How many lanes may run at once; defaults to 2.'),
+    },
+    annotations: ADDITIVE,
+  }, args => {
+    const { taskId, maxConcurrency } = args;
+    return callDaemon('POST', `/api/tasks/${encodeURIComponent(taskId)}/parallel/execute`, maxConcurrency ? { maxConcurrency } : {}).then(toResult);
+  });
+
   server.registerTool('agent_ops_execute_pipeline', {
     title: 'Execute pipeline',
     description: 'Run a task pipeline serially. Each successful step is reviewed and committed before the next step starts. Synchronous and may take minutes.',
