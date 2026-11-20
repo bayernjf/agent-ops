@@ -474,5 +474,15 @@
 - 结果：5 步全部 `completed`、5 个 agent commit（`2086d1f` → `a15a624` → `2caf8e3` → `e260347` → `fc0b54e`）、4 条 handoff 收据（artifacts 1→2→3→4）、总耗时 420 s；产物整体应用为 `c36df4d`。
 - 产物：`docs/dogfood/team-run/01-plan.md` … `05-summary.md`（385 行）。
 - 关键发现：五步只产出「笔记」，**落盘 owner 从未被指派**；summarizer 明确拒绝把本轮写成“通过”，并列出 reviewer/tester 一致确认的缺口（预算上限漏 `maxOutputTokens`、分桶字段说明不足、证据表述需区分单 Run 与汇总指标）。这是“不无证据声称通过”的约束在真实链路里生效的证据。
-- 结论：5 角色串行在真实模型下跑通（本轮交付物为 docs 目录）；但“团队任务需要一个落盘 / 最终集成 step 的 owner”是 Coordinator 推导 Pipeline 目前没有表达的，记为产品缺口。
-- [ ] 未做：没有让这 5 个角色产出真实代码改动（worktree 无 node_modules，跑测试不可行）；Coordinator 不会自动指定最后落盘/汇总 step 的 owner。
+- 结论：5 角色串行在真实模型下跑通（本轮交付物为 docs 目录）；但“团队任务需要一个落盘 / 最终集成 step 的 owner”此前是缺口，已由下方「Coordinator 落盘 owner」补齐。
+- [ ] 未做：没有让这 5 个角色产出真实代码改动（worktree 无 node_modules，跑测试不可行）；这一轮已完成的历史运行没有 owner，需要人工/重跑才能产出可验收的落盘。
+
+## Coordinator 落盘 owner — 已完成（2026-11-21）
+
+- [x] Team 增加 `ownerRoleId`：必须是花名册成员，且不得再交接给其它角色（否则 owner 不可能是最后一步）；create/update schema 与 JSON store 同步。
+- [x] `planTeamPipeline`：owner 步骤被移到末尾、标记 `ownsDeliverable: true`，prompt 追加 “You own the final deliverable…”；未配置 owner 时计划给出 warning `Team has no owner role`；owner 不在花名册时也给出 warning。
+- [x] `applyTeamPipeline` 保留 `ownsDeliverable`；`coordinatorSummary` 新增 `owner: { stepId, status }`，可判断落盘 step 是否完成。
+- [x] server team schema 自动接受 owner（越界 400）；MCP 团队工具新增 `ownerRoleId`；Studio 团队表单新增「落盘角色」选择（角色离开花名册会自动清空），详情面板展示 owner。
+- [x] 测试：owner 越界 / owner 仍有 outgoing handoff 被拒；合法 owner 持久化；plan owner 置末 + `ownsDeliverable` + prompt 后缀；无 owner 时 warning；summary owner 状态；server 往返 + 400 + plan 暴露。全仓 typecheck 0，62 文件 / 732 tests 绿；Studio 257 tests 与 `vite build` 通过。
+- [x] 本轮提交：`f3aea53 feat(teams): name a team owner role`、`e0b115b feat(storage-core): mark the owner step in a team plan`、`c1b0f93 test(server-core): cover team owners over HTTP`、`6038f0d feat(cli): accept a team owner field`、`640faa1 feat(studio): set a team owner`。
+- [ ] 未做：owner 是“计划期约束”，不会事后检查 owner step 是否真的写了文件；历史那次五角色运行没有 owner，要重跑才能产出可验收的落盘；Studio 新表单字段未在真实浏览器点击。
