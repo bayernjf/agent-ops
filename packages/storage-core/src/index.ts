@@ -11,6 +11,7 @@ import {
   buildAgentExecutionPlan,
   describeRuntimeExecutorRejection,
   executeCodexPlan,
+  orderTeamRoles,
   resolveRoleRuntime,
   resolveRuntimeExecutor,
   runtimeProviderAgentId,
@@ -354,9 +355,41 @@ export type KernelAuditEventType =
   | 'pipeline.step.approved'
   | 'pipeline.step.rejected'
   | 'pipeline.retried'
+  | 'pipeline.planned'
   | 'handoff.recorded';
 
 export type KernelAuditActor = 'operator' | 'system';
+
+/** A coordinator plan derived from a Team's roster and handoff edges. Nothing runs until applied. */
+export type TeamPipelinePlan = {
+  taskId: string;
+  teamId: string;
+  order: string[];
+  steps: TaskPipelineStep[];
+  warnings: string[];
+};
+
+export type CoordinatorStepSummary = {
+  stepId: string;
+  name: string;
+  roleId: string | null;
+  status: string;
+  commitSha: string | null;
+  changedFiles: number;
+};
+
+/** The deterministic half of a coordinator report: what happened per step and what blocks it. */
+export type CoordinatorSummary = {
+  taskId: string;
+  teamId: string | null;
+  pipelineStatus: string;
+  steps: CoordinatorStepSummary[];
+  completed: number;
+  failed: number;
+  awaiting: number;
+  handoffs: number;
+  blockers: Array<{ stepId: string; status: string }>;
+};
 
 /** Aggregated success, rework, usage and timing over the kernel's tasks and runs. */
 export type KernelMetrics = {
@@ -1646,6 +1679,97 @@ export class KernelStore {
       },
       byRuntime,
       byRole,
+    };
+  }
+
+  /** Derive a serial pipeline from the task's Team: roster order, topological over handoffs. */
+  async planTeamPipeline(taskId: string): Promise<TeamPipelinePlan | null> {
+    const task = this.getTask(taskId);
+    if (!task) return null;
+    if (!task.teamId) throw new Error(`Task ${taskId} is not assigned to a Team.`);
+    const team = await this.teams.getTeam(task.teamId);
+    if (!team) throw new Error(`Team ${task.teamId} was not found.`);
+    if (!team.enabled) throw new Error(`Team ${team.id} is disabled.`);
+
+    const warnings: string[] = [];
+    const steps: TaskPipelineStep[] = [];
+    for (const roleId of orderTeamRoles(team.roleIds, team.handoffs)) {
+      const role = await this.roles.getRole(roleId);
+      if (!role) {
+        warnings.push(`Role ${roleId} was not found and was left out of the plan.`);
+        continue;
+      }
+      if (!role.enabled) warnings.push(`Role ${roleId} is disabled.`);
+      steps.push({
+        id: roleId,
+        name: role.name,
+        roleId,
+        ...(role.description ? { prompt: role.description } : {}),
+      });
+    }
+    if (steps.length === 0) throw new Error(`Team ${team.id} produced an empty plan.`);
+    return { taskId, teamId: team.id, order: steps.map(step => step.id), steps, warnings };
+  }
+
+  /** Write a team plan onto the task as its serial pipeline. Applying it is the human gate. */
+  async applyTeamPipeline(taskId: string): Promise<TaskPipeline | null> {
+    const task = this.getTask(taskId);
+    if (!task) return null;
+    if (task.status !== 'queued') throw new Error(`Task ${taskId} is ${task.status}; a team plan can only be applied to a queued task.`);
+    if (task.pipeline && task.pipeline.status !== 'idle') throw new Error(`Task ${taskId} pipeline is ${task.pipeline.status}; a team plan cannot replace it.`);
+    const plan = await this.planTeamPipeline(taskId);
+    if (!plan) return null;
+    const normalized = await this.normalizePipeline({
+      steps: plan.steps.map(step => ({
+        id: step.id,
+        name: step.name,
+        roleId: step.roleId,
+        ...(step.prompt ? { prompt: step.prompt } : {}),
+      })),
+    });
+    if (!normalized) throw new Error('The team plan produced no steps.');
+    await this.saveTaskPipeline(taskId, normalized);
+    await this.recordAudit({
+      type: 'pipeline.planned',
+      taskId,
+      teamId: plan.teamId,
+      data: { teamId: plan.teamId, steps: normalized.steps.length, order: plan.order, warnings: plan.warnings.length },
+    });
+    return this.getTask(taskId)?.pipeline ?? normalized;
+  }
+
+  /** Summarize what the pipeline actually did, without a model: per-step outcome and blockers. */
+  coordinatorSummary(taskId: string): CoordinatorSummary | null {
+    const task = this.getTask(taskId);
+    if (!task) return null;
+    const pipeline = task.pipeline;
+    const runs = this.listRuns(taskId);
+    const handoffs = this.listHandoffs(taskId);
+    const steps: CoordinatorStepSummary[] = (pipeline?.steps ?? []).map(step => {
+      const result = pipeline?.results.find(candidate => candidate.stepId === step.id);
+      const run = result?.runId ? runs.find(candidate => candidate.id === result.runId) : undefined;
+      return {
+        stepId: step.id,
+        name: step.name,
+        roleId: step.roleId ?? null,
+        status: result?.status ?? 'pending',
+        commitSha: result?.commitSha ?? null,
+        changedFiles: run?.artifacts.changedFiles.length ?? 0,
+      };
+    });
+    const blockers = steps
+      .filter(step => step.status === 'failed' || step.status === 'awaiting_approval')
+      .map(step => ({ stepId: step.stepId, status: step.status }));
+    return {
+      taskId,
+      teamId: task.teamId,
+      pipelineStatus: pipeline?.status ?? 'none',
+      steps,
+      completed: steps.filter(step => step.status === 'completed').length,
+      failed: steps.filter(step => step.status === 'failed').length,
+      awaiting: steps.filter(step => step.status === 'awaiting_approval').length,
+      handoffs: handoffs.length,
+      blockers,
     };
   }
 
