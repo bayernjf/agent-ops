@@ -51,6 +51,11 @@ export {
   ensureUniqueTeamId,
 } from './teams.js';
 export {
+  type RoleTemplate,
+  roleTemplates,
+  getRoleTemplate,
+} from './role-templates.js';
+export {
   type AgentProfile,
   type AgentProfileOverrides,
   type ResolvedAgentConfig,

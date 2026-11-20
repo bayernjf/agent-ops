@@ -586,6 +586,41 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('lists role templates and creates a role from one', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const listed = await app.request('/api/role-templates');
+      expect(listed.status).toBe(200);
+      const { templates } = (await listed.json()) as { templates: Array<{ id: string }> };
+      expect(templates.map(template => template.id)).toEqual(['architect', 'implementer', 'reviewer', 'tester', 'researcher']);
+
+      const created = await app.request('/api/role-templates/reviewer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Strict reviewer' }),
+      });
+      expect(created.status).toBe(201);
+      const body = (await created.json()) as { templateId: string; role: { name: string; baseAgentId: string; systemPrompt: string; runtimePolicy: { approvalMode: string } } };
+      expect(body.templateId).toBe('reviewer');
+      expect(body.role).toMatchObject({ name: 'Strict reviewer', baseAgentId: 'codex', runtimePolicy: { approvalMode: 'strict' } });
+      expect(body.role.systemPrompt).toContain('Review the diff');
+
+      expect((await app.request('/api/role-templates/missing', { method: 'POST', body: '{}' })).status).toBe(404);
+
+      const candidate = await app.request('/api/role-templates/architect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ baseAgentId: 'claude-code' }),
+      });
+      expect(candidate.status).toBe(400);
+      expect(await candidate.text()).toContain('not verified');
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a role whose runtime is not verified or whose profile is missing', async () => {
     const { store, directory } = await openStore();
     try {

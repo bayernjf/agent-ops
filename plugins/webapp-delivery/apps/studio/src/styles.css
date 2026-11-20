@@ -2055,6 +2055,42 @@ select option {
 
 .role-form-actions { display: flex; gap: 10px; justify-content: flex-end; }
 
+.role-templates { margin-bottom: 14px; }
+
+.role-templates > span {
+  display: block;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.role-templates p { margin: 4px 0 10px; color: var(--text-3); font-size: 12px; }
+
+.role-template-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.role-template {
+  display: grid;
+  gap: 2px;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.role-template:hover { border-color: var(--accent); background: var(--surface-muted); }
+
+.role-template strong { font-size: 13px; }
+.role-template small { color: var(--text-3); font-size: 11px; line-height: 1.35; }
+
 /* Kernel team registry: roster, handoff edges and the team's task queue. */
 .teams-view .error { margin: 16px 0 0; }
 

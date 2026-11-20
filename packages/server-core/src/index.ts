@@ -17,6 +17,8 @@ import {
   agentRoleUpdateSchema,
   agentTeamCreateSchema,
   agentTeamUpdateSchema,
+  roleTemplates,
+  getRoleTemplate,
   resolveRoleRuntime,
   type AgentRole,
 } from '@agent-ops/agent-runtime';
@@ -65,6 +67,13 @@ const createRunSchema = z.object({
 
 const acceptRunSchema = z.object({
   files: z.array(z.string().trim().min(1).max(4_096)).min(1).max(1_000).optional(),
+});
+
+const roleTemplateInstantiateSchema = z.object({
+  name: z.string().trim().min(1).max(100).optional(),
+  description: z.string().max(500).optional(),
+  baseAgentId: z.string().trim().min(1).max(100).optional(),
+  profileId: z.string().trim().min(1).max(100).regex(/^[a-z0-9][a-z0-9-]*$/).optional(),
 });
 
 const customAgentSchema = z.object({
@@ -277,6 +286,35 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
   app.delete('/api/roles/:roleId', async (c) => {
     const deleted = await store.roles.deleteRole(c.req.param('roleId'));
     return deleted ? c.json({ deleted: true }) : c.json({ error: 'Role not found.' }, 404);
+  });
+
+  app.get('/api/role-templates', (c) => c.json({ templates: roleTemplates }));
+
+  app.post('/api/role-templates/:templateId', async (c) => {
+    const template = getRoleTemplate(c.req.param('templateId'));
+    if (!template) return c.json({ error: 'Role template not found.' }, 404);
+    const parsed = roleTemplateInstantiateSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: 'Invalid role template input.', details: parsed.error.flatten() }, 400);
+    const binding = await validateRoleBinding(store, {
+      baseAgentId: parsed.data.baseAgentId ?? (parsed.data.profileId ? undefined : template.baseAgentId),
+      profileId: parsed.data.profileId,
+    });
+    if (binding.error) return c.json({ error: binding.error }, 400);
+    try {
+      const role = await store.roles.createRole({
+        name: parsed.data.name ?? template.name,
+        description: parsed.data.description ?? template.description,
+        baseAgentId: binding.baseAgentId,
+        profileId: binding.profileId,
+        systemPrompt: template.systemPrompt,
+        acceptanceCriteria: template.acceptanceCriteria,
+        runtimePolicy: template.runtimePolicy,
+        enabled: true,
+      });
+      return c.json({ role, templateId: template.id }, 201);
+    } catch (error) {
+      return errorResponse(c, error);
+    }
   });
 
   app.get('/api/teams', async (c) => c.json({ teams: await store.teams.listTeams() }));
