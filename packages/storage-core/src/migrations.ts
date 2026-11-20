@@ -40,4 +40,55 @@ export const kernelMigrations: readonly Migration[] = [
       ALTER TABLE runs ADD COLUMN artifacts TEXT NOT NULL DEFAULT '{}';
     `,
   },
+  {
+    id: '0009_run_events',
+    sql: `
+      CREATE TABLE IF NOT EXISTS run_events (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        data TEXT,
+        at TEXT NOT NULL,
+        FOREIGN KEY(run_id) REFERENCES runs(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_run_events_run_seq
+        ON run_events(run_id, seq);
+    `,
+  },
+  {
+    id: '0010_task_closure',
+    sql: `
+      ALTER TABLE tasks ADD COLUMN acceptance_criteria TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'medium';
+      ALTER TABLE tasks ADD COLUMN base_commit TEXT NOT NULL DEFAULT '';
+      ALTER TABLE runs ADD COLUMN commit_sha TEXT NOT NULL DEFAULT '';
+    `,
+  },
+  {
+    id: '0011_run_identity',
+    sql: `
+      ALTER TABLE runs ADD COLUMN role_id TEXT NOT NULL DEFAULT '';
+      ALTER TABLE runs ADD COLUMN runtime_id TEXT NOT NULL DEFAULT '';
+    `,
+  },
+  {
+    id: '0012_task_role',
+    sql: `
+      ALTER TABLE tasks ADD COLUMN role_id TEXT NOT NULL DEFAULT '';
+    `,
+  },
+  {
+    id: '0013_task_pipeline',
+    sql: `
+      ALTER TABLE tasks ADD COLUMN pipeline TEXT NOT NULL DEFAULT '';
+    `,
+  },
+  {
+    id: '0014_run_instruction',
+    sql: `
+      ALTER TABLE runs ADD COLUMN instruction TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];

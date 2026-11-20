@@ -104,12 +104,25 @@ describe('createKernelApp', () => {
       const created = await app.request('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo: '/tmp/repo', baseRef: 'main', title: 'Rename bin' }),
+        body: JSON.stringify({
+          repo: '/tmp/repo',
+          baseRef: 'main',
+          title: 'Rename bin',
+          acceptanceCriteria: ['The bin is renamed.', 'Help text is updated.'],
+          priority: 'high',
+        }),
       });
       expect(created.status).toBe(201);
-      const task = (await created.json()) as { id: string; status: string };
+      const task = (await created.json()) as {
+        id: string;
+        status: string;
+        acceptanceCriteria: string[];
+        priority: string;
+      };
       expect(task.id).toBeTruthy();
       expect(task.status).toBe('queued');
+      expect(task.acceptanceCriteria).toEqual(['The bin is renamed.', 'Help text is updated.']);
+      expect(task.priority).toBe('high');
 
       const list = await app.request('/api/tasks');
       expect(((await list.json()) as unknown[]).length).toBe(1);
@@ -120,6 +133,146 @@ describe('createKernelApp', () => {
 
       const missing = await app.request('/api/tasks/unknown');
       expect(missing.status).toBe(404);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('serves and executes a task pipeline through the API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        await writeFile(join(options.cwd, 'pipeline.txt'), 'done\n', 'utf8');
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'ok',
+          startedAt: new Date(Date.now() - 10).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+      const app = createKernelApp(store, { runner });
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Pipeline over HTTP',
+        pipeline: { steps: [{ id: 'deliver', name: 'Deliver', agentId: 'codex' }] },
+      });
+      await store.provisionTask(task.id);
+
+      const read = await app.request(`/api/tasks/${task.id}/pipeline`);
+      expect(read.status).toBe(200);
+      expect((await read.json()) as object).toMatchObject({ status: 'idle' });
+
+      const executed = await app.request(`/api/tasks/${task.id}/pipeline/execute`, { method: 'POST' });
+      expect(executed.status).toBe(200);
+      expect((await executed.json()) as object).toMatchObject({
+        status: 'completed',
+        results: [{ stepId: 'deliver', status: 'completed' }],
+      });
+      expect(store.getTask(task.id)?.status).toBe('done');
+
+      const plain = await store.createTask({ repo, baseRef: 'main', title: 'No pipeline' });
+      expect((await app.request(`/api/tasks/${plain.id}/pipeline`)).status).toBe(404);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('serves approval gates over the pipeline API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      let calls = 0;
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        calls++;
+        await writeFile(join(options.cwd, `gated-${calls}.txt`), 'done\n', 'utf8');
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'ok',
+          startedAt: new Date(Date.now() - 10).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+      const app = createKernelApp(store, { runner });
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Gated pipeline over HTTP',
+        pipeline: {
+          steps: [
+            { id: 'gated', name: 'Gated', agentId: 'codex', requiresApproval: true },
+            { id: 'tail', name: 'Tail', agentId: 'codex' },
+          ],
+        },
+      });
+      await store.provisionTask(task.id);
+
+      const executed = await app.request(`/api/tasks/${task.id}/pipeline/execute`, { method: 'POST' });
+      expect(executed.status).toBe(200);
+      expect((await executed.json()) as object).toMatchObject({ status: 'awaiting_approval' });
+      expect(calls).toBe(1);
+
+      const approved = await app.request(`/api/tasks/${task.id}/pipeline/approve`, { method: 'POST' });
+      expect(approved.status).toBe(200);
+      expect((await approved.json()) as object).toMatchObject({
+        status: 'completed',
+        results: [
+          { stepId: 'gated', status: 'completed' },
+          { stepId: 'tail', status: 'completed' },
+        ],
+      });
+      expect(calls).toBe(2);
+
+      // A second approval has nothing left to gate.
+      const again = await app.request(`/api/tasks/${task.id}/pipeline/approve`, { method: 'POST' });
+      expect(again.status).toBe(409);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a gated pipeline step over the API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        await writeFile(join(options.cwd, 'rejected.txt'), 'done\n', 'utf8');
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'ok',
+          startedAt: new Date(Date.now() - 10).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+      const app = createKernelApp(store, { runner });
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Rejected gate over HTTP',
+        pipeline: { steps: [{ id: 'gated', name: 'Gated', agentId: 'codex', requiresApproval: true }] },
+      });
+      await store.provisionTask(task.id);
+
+      const executed = await app.request(`/api/tasks/${task.id}/pipeline/execute`, { method: 'POST' });
+      expect((await executed.json()) as object).toMatchObject({ status: 'awaiting_approval' });
+
+      const rejected = await app.request(`/api/tasks/${task.id}/pipeline/reject`, { method: 'POST' });
+      expect(rejected.status).toBe(200);
+      expect((await rejected.json()) as object).toMatchObject({
+        status: 'failed',
+        results: [{ stepId: 'gated', status: 'failed', error: 'Rejected by operator.' }],
+      });
+      expect(store.getTask(task.id)?.status).toBe('failed');
     } finally {
       await store.close();
       await rm(directory, { recursive: true, force: true });
@@ -142,6 +295,84 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('creates, resolves, updates and deletes roles through the kernel API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+
+      const created = await app.request('/api/roles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Reviewer',
+          baseAgentId: 'codex',
+          acceptanceCriteria: ['Read the diff without writes.'],
+          runtimePolicy: { allowedTools: ['Read'], blockedTools: ['Write', 'Edit'], approvalMode: 'strict' },
+        }),
+      });
+      expect(created.status).toBe(201);
+      const role = (await created.json()) as { role: { id: string; name: string; runtimePolicy: object } };
+      expect(role.role).toMatchObject({
+        id: 'reviewer',
+        name: 'Reviewer',
+        runtimePolicy: { blockedTools: ['Write', 'Edit'], approvalMode: 'strict' },
+      });
+
+      const listed = await app.request('/api/roles');
+      expect(((await listed.json()) as { roles: unknown[] }).roles).toHaveLength(1);
+
+      const resolved = await app.request(`/api/roles/${role.role.id}/resolve`);
+      expect(resolved.status).toBe(200);
+      expect((await resolved.json()) as object).toMatchObject({
+        resolution: {
+          executable: true,
+          baseAgentId: 'codex',
+          adapterStatus: 'verified',
+        },
+      });
+
+      const updated = await app.request(`/api/roles/${role.role.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: false }),
+      });
+      expect(updated.status).toBe(200);
+      expect((await updated.json()) as object).toMatchObject({ role: { enabled: false } });
+
+      const deleted = await app.request(`/api/roles/${role.role.id}`, { method: 'DELETE' });
+      expect(deleted.status).toBe(200);
+      expect((await app.request(`/api/roles/${role.role.id}`)).status).toBe(404);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a role whose runtime is not verified or whose profile is missing', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const candidate = await app.request('/api/roles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Candidate', baseAgentId: 'claude-code' }),
+      });
+      expect(candidate.status).toBe(400);
+      expect(await candidate.text()).toContain('not verified');
+
+      const missingProfile = await app.request('/api/roles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Missing profile', profileId: 'does-not-exist' }),
+      });
+      expect(missingProfile.status).toBe(400);
+      expect(await missingProfile.text()).toContain('was not found');
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('provisions, executes, and accepts a run end to end', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-server-'));
     try {
@@ -149,12 +380,21 @@ describe('createKernelApp', () => {
       const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
       const app = createKernelApp(store, { runner: fakeRunner(0) });
 
+      const roleRes = await app.request('/api/roles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Runner', baseAgentId: 'codex' }),
+      });
+      expect(roleRes.status).toBe(201);
+      const role = (await roleRes.json()) as { role: { id: string } };
+
       const created = await app.request('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo, baseRef: 'main', title: 'Rename bin' }),
+        body: JSON.stringify({ repo, baseRef: 'main', title: 'Rename bin', roleId: role.role.id }),
       });
-      const task = (await created.json()) as { id: string };
+      const task = (await created.json()) as { id: string; roleId: string | null };
+      expect(task.roleId).toBe(role.role.id);
 
       const provisioned = await app.request(`/api/tasks/${task.id}/provision`, { method: 'POST' });
       expect(provisioned.status).toBe(200);
@@ -166,18 +406,23 @@ describe('createKernelApp', () => {
         body: JSON.stringify({ agentId: 'local-codex' }),
       });
       expect(runRes.status).toBe(201);
-      const run = (await runRes.json()) as { id: string };
+      const run = (await runRes.json()) as { id: string; roleId: string | null; runtimeId: string | null };
+      expect(run).toMatchObject({ roleId: role.role.id, runtimeId: null });
 
       const executed = await app.request(`/api/runs/${run.id}/execute`, { method: 'POST' });
       expect(executed.status).toBe(200);
       expect((await executed.json()) as object).toMatchObject({
         status: 'review',
+        roleId: role.role.id,
+        runtimeId: 'codex',
         artifacts: { output: 'ok', exitCode: 0, timedOut: false },
       });
 
       const runDetail = await app.request(`/api/runs/${run.id}`);
       expect(runDetail.status).toBe(200);
       expect((await runDetail.json()) as object).toMatchObject({
+        roleId: role.role.id,
+        runtimeId: 'codex',
         artifacts: { output: 'ok', exitCode: 0 },
       });
 
@@ -188,12 +433,40 @@ describe('createKernelApp', () => {
 
       const accepted = await app.request(`/api/runs/${run.id}/accept`, { method: 'POST' });
       expect(accepted.status).toBe(200);
-      expect((await accepted.json()) as object).toMatchObject({
+      const acceptedRun = (await accepted.json()) as { status: string; artifacts: object; commitSha?: string };
+      expect(acceptedRun).toMatchObject({
         status: 'done',
         artifacts: { output: 'ok' },
       });
+      expect(acceptedRun.commitSha).toMatch(/^[0-9a-f]{40}$/);
 
       await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('replays terminal SSE events after the daemon store is reopened', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-server-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const databasePath = join(directory, 'agent-ops.sqlite');
+      const store = await KernelStore.open(databasePath);
+      const app = createKernelApp(store, { runner: fakeRunner(0) });
+
+      const task = await store.createTask({ repo, baseRef: 'main', title: 'Replay me' });
+      await store.provisionTask(task.id);
+      const run = await store.createRun(task.id, 'codex');
+      const executed = await app.request(`/api/runs/${run.id}/execute`, { method: 'POST' });
+      expect(executed.status).toBe(200);
+      await store.close();
+
+      const reopened = await KernelStore.open(databasePath);
+      const restarted = createKernelApp(reopened);
+      const events = await restarted.request(`/api/runs/${run.id}/events`);
+      expect(events.status).toBe(200);
+      expect(await events.text()).toContain('event: completed');
+      await reopened.close();
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -220,7 +493,7 @@ describe('createKernelApp', () => {
       expect((await cancelled.json()) as object).toMatchObject({ status: 'running' });
 
       const executed = (await (await execution).json()) as { status: string; artifacts: { cancelled: boolean } };
-      expect(executed.status).toBe('failed');
+      expect(executed.status).toBe('cancelled');
       expect(executed.artifacts.cancelled).toBe(true);
 
       await store.close();

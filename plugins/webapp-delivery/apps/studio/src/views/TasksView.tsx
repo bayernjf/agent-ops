@@ -1,10 +1,47 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, ListTodo, RefreshCw, Square, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, ListTodo, Play, Plus, RefreshCw, Square, Trash2, X } from 'lucide-react';
 import { useI18n, type KeyPath } from '../i18n/i18n';
-import type { KernelRun, KernelTask, KernelTaskState } from '../types';
+import type { AgentRole, KernelRun, KernelTask, KernelTaskState, TaskPipeline, TaskPipelineStep, TaskPipelineStepResult } from '../types';
 import { apiFetch, apiStreamFetch } from '../lib/api';
 
 type RunAction = 'execute' | 'accept' | 'reject';
+
+type PipelineStepForm = {
+  name: string;
+  roleId: string;
+  profileId: string;
+  agentId: string;
+  prompt: string;
+  requiresApproval: boolean;
+};
+
+type TaskForm = {
+  repo: string;
+  baseRef: string;
+  title: string;
+  objective: string;
+  priority: 'low' | 'medium' | 'high';
+  roleId: string;
+  acceptanceCriteria: string;
+  pipelineEnabled: boolean;
+  steps: PipelineStepForm[];
+};
+
+const emptyStep: PipelineStepForm = { name: '', roleId: '', profileId: '', agentId: '', prompt: '', requiresApproval: false };
+
+const emptyTaskForm: TaskForm = {
+  repo: '',
+  baseRef: 'dev',
+  title: '',
+  objective: '',
+  priority: 'medium',
+  roleId: '',
+  acceptanceCriteria: '',
+  pipelineEnabled: false,
+  steps: [],
+};
+
+const splitLines = (value: string) => value.split('\n').map(line => line.trim()).filter(Boolean);
 
 function formatDuration(durationMs: number): string {
   return durationMs < 1000 ? `${durationMs} ms` : `${(durationMs / 1000).toFixed(1)} s`;
@@ -40,6 +77,11 @@ export function TasksView() {
   const [executingRunId, setExecutingRunId] = useState<string | null>(null);
   const [liveOutputByRun, setLiveOutputByRun] = useState<Record<string, string>>({});
   const liveAbortRef = useRef<AbortController | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [roles, setRoles] = useState<AgentRole[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [taskForm, setTaskForm] = useState<TaskForm>(emptyTaskForm);
+  const [pipelineBusyId, setPipelineBusyId] = useState<string | null>(null);
 
   const stateLabel = (state: KernelTaskState) => t(`tasks.state.${state}` as KeyPath);
 
@@ -77,6 +119,148 @@ export function TasksView() {
   }, [t]);
 
   useEffect(() => { void loadTasks(); }, [loadTasks]);
+
+  const loadRoles = useCallback(async () => {
+    try {
+      const response = await apiFetch('/api/roles');
+      const payload = (await response.json().catch(() => null)) as unknown;
+      if (!response.ok) return;
+      const body = payload as { roles?: AgentRole[] } | null;
+      setRoles(Array.isArray(body?.roles) ? body.roles : []);
+    } catch {
+      // Roles are optional inputs to the create form; a failed read leaves the select empty.
+    }
+  }, []);
+
+  useEffect(() => { void loadRoles(); }, [loadRoles]);
+
+  const startCreate = () => {
+    setShowCreate(true);
+    setTaskForm(emptyTaskForm);
+    setError('');
+  };
+
+  const cancelCreate = () => {
+    setShowCreate(false);
+    setTaskForm(emptyTaskForm);
+  };
+
+  const submitTask = async () => {
+    if (!taskForm.repo.trim() || !taskForm.baseRef.trim() || !taskForm.title.trim()) return;
+    const steps = taskForm.pipelineEnabled
+      ? taskForm.steps
+        .map(step => ({
+          name: step.name.trim(),
+          roleId: step.roleId || undefined,
+          profileId: step.profileId || undefined,
+          agentId: step.agentId || undefined,
+          prompt: step.prompt.trim() || undefined,
+          requiresApproval: step.requiresApproval || undefined,
+        }))
+        .filter(step => step.name && (step.roleId || step.profileId || step.agentId))
+      : [];
+    if (taskForm.pipelineEnabled && steps.length === 0) {
+      setError(t('tasks.pipelineNeedsStep'));
+      return;
+    }
+    setCreating(true);
+    setError('');
+    try {
+      const criteria = splitLines(taskForm.acceptanceCriteria);
+      const response = await apiFetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          repo: taskForm.repo.trim(),
+          baseRef: taskForm.baseRef.trim(),
+          title: taskForm.title.trim(),
+          objective: taskForm.objective.trim() || undefined,
+          priority: taskForm.priority,
+          roleId: taskForm.roleId || undefined,
+          ...(criteria.length ? { acceptanceCriteria: criteria } : {}),
+          ...(taskForm.pipelineEnabled ? { pipeline: { steps } } : {}),
+        }),
+      });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(body?.error ?? t('tasks.createTask'));
+      setShowCreate(false);
+      setTaskForm(emptyTaskForm);
+      await loadTasks();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.createTask'));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const updateTaskForm = <K extends keyof TaskForm>(key: K, value: TaskForm[K]) => setTaskForm(prev => ({ ...prev, [key]: value }));
+
+  const addStep = () => setTaskForm(prev => ({ ...prev, steps: [...prev.steps, { ...emptyStep }] }));
+  const removeStep = (index: number) => setTaskForm(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== index) }));
+  const updateStep = <K extends keyof PipelineStepForm>(index: number, key: K, value: PipelineStepForm[K]) => setTaskForm(prev => ({
+    ...prev,
+    steps: prev.steps.map((step, i) => (i === index ? { ...step, [key]: value } : step)),
+  }));
+
+  const executePipeline = async (task: KernelTask) => {
+    setPipelineBusyId(task.id);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/execute`, { method: 'POST' });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineExecute'));
+      await loadTasks();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.pipelineExecute'));
+    } finally {
+      setPipelineBusyId(null);
+    }
+  };
+
+  const approvePipeline = async (task: KernelTask) => {
+    setPipelineBusyId(task.id);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/approve`, { method: 'POST' });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineApprove'));
+      await loadTasks();
+      if (expandedId === task.id) await loadRuns(task.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.pipelineApprove'));
+    } finally {
+      setPipelineBusyId(null);
+    }
+  };
+
+  const rejectPipeline = async (task: KernelTask) => {
+    setPipelineBusyId(task.id);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/reject`, { method: 'POST' });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineReject'));
+      await loadTasks();
+      if (expandedId === task.id) await loadRuns(task.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.pipelineReject'));
+    } finally {
+      setPipelineBusyId(null);
+    }
+  };
+
+  const stepIdentity = (step: TaskPipelineStep) => step.roleId ?? step.profileId ?? step.agentId ?? '—';
+
+  const pipelineStepResult = (pipeline: TaskPipeline, stepId: string): TaskPipelineStepResult | undefined =>
+    pipeline.results.find(result => result.stepId === stepId);
+
+  // The header refresh button is the only manual recovery when an SSE stream misses a
+  // terminal frame. Reloading the task list alone left an expanded task showing its old
+  // Run status forever, so the expanded Run list has to be refreshed too.
+  const refreshTasks = useCallback(async () => {
+    await loadTasks();
+    if (expandedId) await loadRuns(expandedId);
+  }, [expandedId, loadRuns, loadTasks]);
 
   useEffect(() => () => {
     liveAbortRef.current?.abort();
@@ -128,6 +312,7 @@ export function TasksView() {
           if (event.type === 'completed' || event.type === 'failed' || event.type === 'cancelled') {
             finished = true;
             void loadRuns(run.taskId);
+            void loadTasks();
             break;
           }
         }
@@ -140,7 +325,7 @@ export function TasksView() {
       if (liveAbortRef.current === controller) liveAbortRef.current = null;
       controller.abort();
     }
-  }, [loadRuns, stopRunStream, t]);
+  }, [loadRuns, loadTasks, stopRunStream, t]);
 
   const toggleTask = (taskId: string) => {
     if (expandedId === taskId) {
@@ -172,6 +357,7 @@ export function TasksView() {
       const payload = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(payload?.error ?? t(`tasks.${action}Run` as KeyPath));
       await loadRuns(run.taskId);
+      await loadTasks();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t(`tasks.${action}Run` as KeyPath));
       if (isExecute) await loadRuns(run.taskId);
@@ -193,6 +379,7 @@ export function TasksView() {
       const payload = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(payload?.error ?? t('tasks.cancelRun'));
       await loadRuns(run.taskId);
+      await loadTasks();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('tasks.cancelRun'));
     } finally {
@@ -210,12 +397,81 @@ export function TasksView() {
             <h2><ListTodo size={18} aria-hidden="true" /> {t('tasks.title')}</h2>
             <p>{t('tasks.description')}</p>
           </div>
-          <button className="icon-button" type="button" onClick={() => void loadTasks()} aria-label={t('common.refresh')} title={t('common.refresh')}>
-            <RefreshCw size={18} />
-          </button>
+          <div className="tasks-actions">
+            <button className="icon-button" type="button" onClick={() => void refreshTasks()} aria-label={t('common.refresh')} title={t('common.refresh')}>
+              <RefreshCw size={18} />
+            </button>
+            <button className="quiet-button" type="button" onClick={startCreate}><Plus size={16} aria-hidden="true" /> {t('tasks.newTask')}</button>
+          </div>
         </div>
 
         {error && <p className="error">{error}</p>}
+
+        {showCreate && (
+          <div className="task-form">
+            <h3>{t('tasks.newTaskTitle')}</h3>
+            <div className="task-form-grid">
+              <label>{t('tasks.repo')}<input value={taskForm.repo} onChange={e => updateTaskForm('repo', e.target.value)} placeholder={t('tasks.repoPlaceholder')} /></label>
+              <label>{t('tasks.baseRef')}<input value={taskForm.baseRef} onChange={e => updateTaskForm('baseRef', e.target.value)} placeholder={t('tasks.baseRefPlaceholder')} /></label>
+            </div>
+            <label>{t('tasks.formTitle')}<input value={taskForm.title} onChange={e => updateTaskForm('title', e.target.value)} placeholder={t('tasks.titlePlaceholder')} /></label>
+            <label>{t('tasks.objective')}<textarea rows={3} value={taskForm.objective} onChange={e => updateTaskForm('objective', e.target.value)} /></label>
+            <div className="task-form-grid">
+              <label>{t('tasks.priority')}
+                <select value={taskForm.priority} onChange={e => updateTaskForm('priority', e.target.value as TaskForm['priority'])}>
+                  <option value="low">{t('tasks.priorityLow')}</option>
+                  <option value="medium">{t('tasks.priorityMedium')}</option>
+                  <option value="high">{t('tasks.priorityHigh')}</option>
+                </select>
+              </label>
+              <label>{t('tasks.taskRole')}
+                <select value={taskForm.roleId} onChange={e => updateTaskForm('roleId', e.target.value)}>
+                  <option value="">{t('tasks.roleNone')}</option>
+                  {roles.map(role => <option value={role.id} key={role.id}>{`${role.name} (${role.id})`}</option>)}
+                </select>
+              </label>
+            </div>
+            <label>{t('tasks.criteria')}<textarea rows={3} value={taskForm.acceptanceCriteria} onChange={e => updateTaskForm('acceptanceCriteria', e.target.value)} placeholder={t('tasks.criteriaPlaceholder')} /></label>
+
+            <label className="pipeline-toggle"><input type="checkbox" checked={taskForm.pipelineEnabled} onChange={e => updateTaskForm('pipelineEnabled', e.target.checked)} /> {t('tasks.pipelineEnabled')}</label>
+
+            {taskForm.pipelineEnabled && (
+              <div className="pipeline-editor">
+                <h4>{t('tasks.pipelineSteps')}</h4>
+                {taskForm.steps.map((step, index) => (
+                  <div className="pipeline-step" key={index}>
+                    <div className="pipeline-step-head">
+                      <strong>{t('tasks.pipelineStepIndex', { index: index + 1 })}</strong>
+                      <button className="icon-button" type="button" onClick={() => removeStep(index)} aria-label={t('common.delete')} title={t('common.delete')}><Trash2 size={14} /></button>
+                    </div>
+                    <div className="task-form-grid">
+                      <label>{t('tasks.stepName')}<input value={step.name} onChange={e => updateStep(index, 'name', e.target.value)} placeholder={t('tasks.stepNamePlaceholder')} /></label>
+                      <label>{t('tasks.stepRole')}
+                        <select value={step.roleId} onChange={e => updateStep(index, 'roleId', e.target.value)}>
+                          <option value="">{t('tasks.roleNone')}</option>
+                          {roles.map(role => <option value={role.id} key={role.id}>{`${role.name} (${role.id})`}</option>)}
+                        </select>
+                      </label>
+                    </div>
+                    <label>{t('tasks.stepPrompt')}<textarea rows={2} value={step.prompt} onChange={e => updateStep(index, 'prompt', e.target.value)} /></label>
+                    <label className="pipeline-step-approval">
+                      <input type="checkbox" checked={step.requiresApproval} onChange={e => updateStep(index, 'requiresApproval', e.target.checked)} />
+                      {t('tasks.stepRequiresApproval')}
+                    </label>
+                  </div>
+                ))}
+                <button className="quiet-button" type="button" onClick={addStep}><Plus size={14} aria-hidden="true" /> {t('tasks.addStep')}</button>
+              </div>
+            )}
+
+            <div className="task-form-actions">
+              <button className="secondary-button" type="button" onClick={cancelCreate} disabled={creating}><X size={14} aria-hidden="true" /> {t('common.cancel')}</button>
+              <button className="primary-button" type="button" onClick={() => void submitTask()} disabled={creating || !taskForm.repo.trim() || !taskForm.baseRef.trim() || !taskForm.title.trim()}>
+                <Check size={14} aria-hidden="true" /> {creating ? t('common.saving') : t('tasks.create')}
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="task-table" role="table" aria-label={t('tasks.title')}>
           <div className="task-head" role="row">
@@ -247,6 +503,44 @@ export function TasksView() {
 
                 {expandedId === task.id && (
                   <div className="run-list">
+                    {task.pipeline && (() => {
+                      const pipeline = task.pipeline;
+                      return (
+                        <div className="pipeline-panel">
+                          <div className="pipeline-head">
+                            <span className={`state ${pipeline.status}`}>{t(`tasks.pipelineStatus.${pipeline.status}` as KeyPath)}</span>
+                            {(pipeline.status === 'idle' || pipeline.status === 'failed') && (
+                              <button className="secondary-button" type="button" onClick={() => void executePipeline(task)} disabled={pipelineBusyId === task.id}>
+                                <Play size={14} aria-hidden="true" /> {pipelineBusyId === task.id ? t('tasks.pipelineRunning') : t('tasks.pipelineExecute')}
+                              </button>
+                            )}
+                            {pipeline.status === 'awaiting_approval' && (
+                              <>
+                                <button className="secondary-button" type="button" onClick={() => void approvePipeline(task)} disabled={pipelineBusyId === task.id}>
+                                  <Check size={14} aria-hidden="true" /> {t('tasks.pipelineApprove')}
+                                </button>
+                                <button className="secondary-button" type="button" onClick={() => void rejectPipeline(task)} disabled={pipelineBusyId === task.id}>
+                                  <X size={14} aria-hidden="true" /> {t('tasks.pipelineReject')}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                          <div className="pipeline-steps">
+                            {pipeline.steps.map(step => {
+                              const result = pipelineStepResult(pipeline, step.id);
+                              return (
+                                <div className="pipeline-step-row" key={step.id}>
+                                  <strong>{step.name}</strong>
+                                  <span className="pipeline-step-identity">{stepIdentity(step)}</span>
+                                  <span className={`state ${result?.status ?? 'pending'}`}>{t(`tasks.pipelineStepStatus.${result?.status ?? 'pending'}` as KeyPath)}</span>
+                                  {result?.commitSha ? <span className="pipeline-step-commit">{result.commitSha.slice(0, 10)}</span> : null}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {taskRuns(task.id).length === 0 ? (
                       <p className="run-empty">{t('tasks.noRuns')}</p>
                     ) : (
@@ -260,7 +554,7 @@ export function TasksView() {
                         {taskRuns(task.id).map(run => (
                           <div className="run-record" key={run.id}>
                             <div className="run-row" role="row">
-                              <span className="run-agent">{run.agentId}</span>
+                              <span className="run-agent" title={run.agentId}>{run.runtimeId ?? run.agentId}</span>
                               <span className={`state ${run.status}`}>{stateLabel(run.status)}</span>
                               <span className="run-diff">{run.diffStat || '—'}</span>
                               <span className="run-actions">
@@ -286,6 +580,14 @@ export function TasksView() {
                                 )}
                               </span>
                             </div>
+
+                            {(run.roleId || run.runtimeId || run.commitSha) && (
+                              <div className="run-evidence-meta run-identity">
+                                <span>{t('tasks.role')}: {run.roleId ?? '—'}</span>
+                                <span>{t('tasks.runtime')}: {run.runtimeId ?? '—'}</span>
+                                <span>{t('tasks.commit')}: {run.commitSha ? run.commitSha.slice(0, 10) : '—'}</span>
+                              </div>
+                            )}
 
                             {run.status === 'running' && (
                               <details className="run-evidence" open>

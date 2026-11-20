@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
-import type { KernelStore, RunEvent } from '@agent-ops/storage-core';
+import type { KernelStore, RunEvent, CreateRoleInput, UpdateRoleInput } from '@agent-ops/storage-core';
 import {
   type CodexProcessRunner,
   type CustomAgentInput,
@@ -13,6 +13,10 @@ import {
   isAgentExecutable,
   agentProfileCreateSchema,
   agentProfileUpdateSchema,
+  agentRoleCreateSchema,
+  agentRoleUpdateSchema,
+  resolveRoleRuntime,
+  type AgentRole,
 } from '@agent-ops/agent-runtime';
 import { createTokenAuthMiddleware } from './auth.js';
 import { loadCustomAgents, saveCustomAgents } from './agent-catalog.js';
@@ -23,6 +27,20 @@ export { daemonTokenPath, loadOrCreateDaemonToken, createTokenAuthMiddleware } f
 // layer) into a callable service. It has zero dependency on the webapp-delivery plugin,
 // so a daemon can serve this surface without mounting Project/Blueprint/Apply/Release.
 
+const pipelineStepSchema = z.object({
+  id: z.string().trim().min(1).max(100).optional(),
+  name: z.string().trim().min(1).max(100),
+  roleId: z.string().trim().min(1).max(100).optional(),
+  profileId: z.string().trim().min(1).max(100).optional(),
+  agentId: z.string().trim().min(1).max(100).optional(),
+  prompt: z.string().trim().max(10_000).optional(),
+  requiresApproval: z.boolean().optional(),
+}).refine(step => Boolean(step.roleId || step.profileId || step.agentId), 'A pipeline step needs a roleId, profileId, or agentId.');
+
+const pipelineSchema = z.object({
+  steps: z.array(pipelineStepSchema).min(1).max(20),
+});
+
 const createTaskSchema = z.object({
   repo: z.string().trim().min(1),
   baseRef: z.string().trim().min(1),
@@ -30,10 +48,16 @@ const createTaskSchema = z.object({
   objective: z.string().optional(),
   recipe: z.string().optional(),
   worktreePath: z.string().optional(),
+  acceptanceCriteria: z.array(z.string().trim().min(1).max(500)).max(20).optional(),
+  priority: z.enum(['low', 'medium', 'high']).optional(),
+  baseCommit: z.string().trim().optional(),
+  roleId: z.string().trim().min(1).optional(),
+  pipeline: pipelineSchema.optional(),
 });
 
 const createRunSchema = z.object({
   agentId: z.string().trim().min(1),
+  roleId: z.string().trim().min(1).optional(),
 });
 
 const customAgentSchema = z.object({
@@ -60,10 +84,45 @@ export type KernelAppOptions = {
 function errorResponse(context: Context, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes('was not found')) return context.json({ error: message }, 404);
-  if (message.includes('cannot be') || message.includes('no worktree')) {
+  if (message.includes('cannot be') || message.includes('no worktree') || message.includes('nothing is awaiting approval')) {
     return context.json({ error: message }, 409);
   }
   return context.json({ error: message }, 500);
+}
+
+/**
+ * A Role may point at an existing Profile or carry its own baseAgentId. Resolve the effective
+ * binding here so API validation and RoleResolver cannot disagree about which Agent will run.
+ */
+async function validateRoleBinding(
+  store: KernelStore,
+  input: CreateRoleInput | UpdateRoleInput,
+  existing?: AgentRole,
+): Promise<{ baseAgentId?: string; profileId?: string; error?: string }> {
+  const profileId = input.profileId ?? existing?.profileId;
+  // Switching to a Profile should let that Profile's base agent win; keeping the old base agent
+  // here would turn every Profile change into a false mismatch.
+  const baseAgentId = input.baseAgentId ?? (input.profileId ? undefined : existing?.baseAgentId);
+  const profile = profileId ? await store.profiles.getProfile(profileId) : null;
+
+  if (profileId && !profile) return { profileId, baseAgentId, error: `Profile "${profileId}" was not found.` };
+  if (profile && baseAgentId && baseAgentId !== profile.baseAgentId) {
+    return {
+      profileId,
+      baseAgentId,
+      error: `Role baseAgentId "${baseAgentId}" conflicts with Profile "${profile.id}" (${profile.baseAgentId}).`,
+    };
+  }
+  const effectiveBaseAgentId = profile?.baseAgentId ?? baseAgentId;
+  if (!effectiveBaseAgentId) return { profileId, baseAgentId, error: 'A Role must name a baseAgentId or reference a profileId.' };
+  if (!isAgentExecutable(effectiveBaseAgentId)) {
+    return {
+      profileId,
+      baseAgentId: effectiveBaseAgentId,
+      error: `Base agent "${effectiveBaseAgentId}" is not verified. Roles can only bind verified agents in this version.`,
+    };
+  }
+  return { profileId, baseAgentId: effectiveBaseAgentId };
 }
 
 export function createKernelApp(store: KernelStore, options: KernelAppOptions = {}): Hono {
@@ -152,6 +211,63 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
   });
   }
 
+  app.get('/api/roles', async (c) => c.json({ roles: await store.roles.listRoles() }));
+
+  app.get('/api/roles/:roleId/resolve', async (c) => {
+    const role = await store.roles.getRole(c.req.param('roleId'));
+    if (!role) return c.json({ error: 'Role not found.' }, 404);
+    return c.json({
+      resolution: await resolveRoleRuntime(role, {
+        getProfile: id => store.profiles.getProfile(id),
+      }),
+    });
+  });
+
+  app.get('/api/roles/:roleId', async (c) => {
+    const role = await store.roles.getRole(c.req.param('roleId'));
+    return role ? c.json({ role }) : c.json({ error: 'Role not found.' }, 404);
+  });
+
+  app.post('/api/roles', async (c) => {
+    const parsed = agentRoleCreateSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'Invalid role input.', details: parsed.error.flatten() }, 400);
+    const binding = await validateRoleBinding(store, parsed.data);
+    if (binding.error) return c.json({ error: binding.error }, 400);
+    try {
+      const role = await store.roles.createRole({
+        ...parsed.data,
+        baseAgentId: binding.baseAgentId,
+      });
+      return c.json({ role }, 201);
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  app.put('/api/roles/:roleId', async (c) => {
+    const parsed = agentRoleUpdateSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'Invalid role update.', details: parsed.error.flatten() }, 400);
+    const roleId = c.req.param('roleId');
+    const existing = await store.roles.getRole(roleId);
+    if (!existing) return c.json({ error: 'Role not found.' }, 404);
+    const binding = await validateRoleBinding(store, parsed.data, existing);
+    if (binding.error) return c.json({ error: binding.error }, 400);
+    try {
+      const role = await store.roles.updateRole(roleId, {
+        ...parsed.data,
+        baseAgentId: binding.baseAgentId,
+      });
+      return role ? c.json({ role }) : c.json({ error: 'Role not found.' }, 404);
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  app.delete('/api/roles/:roleId', async (c) => {
+    const deleted = await store.roles.deleteRole(c.req.param('roleId'));
+    return deleted ? c.json({ deleted: true }) : c.json({ error: 'Role not found.' }, 404);
+  });
+
   app.post('/api/tasks', async (c) => {
     const parsed = createTaskSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'Invalid task payload.', details: parsed.error.issues }, 400);
@@ -185,11 +301,41 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     }
   });
 
+  app.get('/api/tasks/:id/pipeline', (c) => {
+    const task = store.getTask(c.req.param('id'));
+    if (!task) return c.json({ error: `Task ${c.req.param('id')} was not found.` }, 404);
+    return task.pipeline ? c.json(task.pipeline) : c.json({ error: `Task ${task.id} has no pipeline.` }, 404);
+  });
+
+  app.post('/api/tasks/:id/pipeline/execute', async (c) => {
+    try {
+      return c.json(await store.executeTaskPipeline(c.req.param('id'), options.runner));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  app.post('/api/tasks/:id/pipeline/approve', async (c) => {
+    try {
+      return c.json(await store.approvePipelineStep(c.req.param('id'), options.runner));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  app.post('/api/tasks/:id/pipeline/reject', async (c) => {
+    try {
+      return c.json(await store.rejectPipelineStep(c.req.param('id')));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
   app.post('/api/tasks/:id/runs', async (c) => {
     const parsed = createRunSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'Invalid run payload.', details: parsed.error.issues }, 400);
     try {
-      return c.json(await store.createRun(c.req.param('id'), parsed.data.agentId), 201);
+      return c.json(await store.createRun(c.req.param('id'), parsed.data.agentId, parsed.data.roleId), 201);
     } catch (error) {
       return errorResponse(c, error);
     }

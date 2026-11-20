@@ -46,6 +46,14 @@ describe('task-run workflow', () => {
     fromReview.stop();
   });
 
+  it('cancels a running task into an independent terminal state', () => {
+    const actor = createTaskRunActor('task-1');
+    actor.send({ type: 'START' });
+    actor.send({ type: 'CANCEL' });
+    expect(actor.getSnapshot().value).toBe('cancelled');
+    actor.stop();
+  });
+
   it('restores a persisted review gate and continues', () => {
     const original = createTaskRunActor('task-1');
     original.send({ type: 'START' });

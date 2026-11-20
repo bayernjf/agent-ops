@@ -1929,3 +1929,225 @@ select option {
 .state.review { color: var(--accent-3) !important; background: color-mix(in srgb, var(--accent-3) 14%, var(--surface)); }
 .state.done { color: var(--status-ok) !important; background: color-mix(in srgb, var(--status-ok) 14%, var(--surface)); }
 .state.failed { color: var(--status-fail) !important; background: color-mix(in srgb, var(--status-fail) 14%, var(--surface)); }
+.state.cancelled { color: var(--status-pending) !important; background: color-mix(in srgb, var(--status-pending) 14%, var(--surface)); }
+.state.awaiting_approval { color: var(--accent-3) !important; background: color-mix(in srgb, var(--accent-3) 14%, var(--surface)); }
+
+/* Kernel role registry: role list + inline create/edit form. It reuses the task board chrome. */
+.roles-view .error { margin: 16px 0 0; }
+
+.roles-actions { display: flex; gap: 8px; align-items: center; }
+
+.role-table { margin-top: 20px; border-top: 1px solid var(--line); }
+
+.role-head,
+.role-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1.2fr 0.7fr 0.6fr auto;
+  gap: 16px;
+  align-items: center;
+}
+
+.role-head {
+  padding: 11px 12px;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--line);
+}
+
+.role-row {
+  padding: 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  color: var(--text-1);
+  font-size: 13px;
+}
+
+.role-row:hover { background: var(--surface-muted); }
+
+.role-name strong { display: block; font-size: 14px; }
+.role-name small { color: var(--text-3); font-size: 12px; }
+
+.role-binding {
+  color: var(--text-2);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.role-status {
+  justify-self: start;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  background: var(--surface);
+}
+
+.role-status.on { color: var(--status-ok); }
+.role-status.off { color: var(--text-3); }
+.role-status:disabled { cursor: wait; opacity: .65; }
+
+.role-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+.role-form {
+  margin-top: 18px;
+  padding: 16px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.role-form h3 { margin: 0 0 12px; color: var(--text-1); font-size: 14px; }
+
+.role-form label {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.role-form input,
+.role-form select,
+.role-form textarea {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text-1);
+  font-size: 13px;
+}
+
+.role-form textarea { resize: vertical; }
+
+.role-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.role-enabled { display: flex !important; align-items: center; gap: 8px; }
+.role-enabled input { width: auto !important; margin-top: 0 !important; }
+
+.role-form-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* Kernel task create form: the human entry point into the task control plane. */
+.tasks-actions { display: flex; gap: 8px; align-items: center; }
+
+.task-form {
+  margin-top: 18px;
+  padding: 16px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.task-form h3 { margin: 0 0 12px; color: var(--text-1); font-size: 14px; }
+
+.task-form label {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.task-form input,
+.task-form select,
+.task-form textarea {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text-1);
+  font-size: 13px;
+}
+
+.task-form textarea { resize: vertical; }
+
+.task-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.task-form-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* Kernel pipeline editor + status panel. */
+.pipeline-toggle { display: flex !important; align-items: center; gap: 8px; }
+.pipeline-toggle input { width: auto !important; margin-top: 0 !important; }
+
+.pipeline-editor {
+  margin-top: 4px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+}
+
+.pipeline-editor h4 { margin: 0 0 10px; color: var(--text-1); font-size: 13px; }
+
+.pipeline-step {
+  padding: 10px;
+  margin-bottom: 10px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.pipeline-step-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.pipeline-step-head strong { color: var(--text-1); font-size: 12px; }
+
+.pipeline-panel {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.pipeline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.pipeline-steps { display: flex; flex-direction: column; gap: 6px; }
+
+.pipeline-step-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 0.8fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 12px;
+}
+
+.pipeline-step-row strong { color: var(--text-1); }
+
+.pipeline-step-identity {
+  color: var(--text-2);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  overflow-wrap: anywhere;
+}
+
+.pipeline-step-commit {
+  color: var(--text-3);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+}
+
+.pipeline-step-approval { display: flex !important; align-items: center; gap: 8px; margin-top: 8px; }
+.pipeline-step-approval input { width: auto !important; margin-top: 0 !important; }

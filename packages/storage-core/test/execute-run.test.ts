@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -40,7 +40,7 @@ describe('KernelStore executeRun', () => {
       const repo = await initRepo(join(directory, 'repo'));
       const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
       const task = await provisionedTask(store, repo);
-      const run = await store.createRun(task.id, 'codex');
+      const run = await store.createRun(task.id, 'local-codex');
 
       // Simulate the agent producing a change inside the worktree.
       await writeFile(join(task.worktreePath, 'NEW.md'), '# new\n', 'utf8');
@@ -49,6 +49,7 @@ describe('KernelStore executeRun', () => {
 
       const executed = await store.executeRun(run.id, fakeRunner(0));
       expect(executed.status).toBe('review');
+      expect(executed.runtimeId).toBe('codex');
       expect(executed.diffStat).toContain('NEW.md');
       expect(executed.artifacts).toMatchObject({ output: 'ok', exitCode: 0, timedOut: false });
       expect(executed.artifacts.diff).toContain('NEW.md');
@@ -58,9 +59,75 @@ describe('KernelStore executeRun', () => {
       await store.close();
 
       const reopened = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      expect(reopened.getRun(run.id)?.runtimeId).toBe('codex');
       expect(reopened.getRun(run.id)?.artifacts.diff).toContain('NEW.md');
       expect(reopened.getRun(run.id)?.artifacts.changedFiles).toContain('NEW.md');
       await reopened.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('runs a read-only reviewer Role without allowing a write', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const reviewer = await store.roles.createRole({
+        name: 'Reviewer',
+        baseAgentId: 'codex',
+        runtimePolicy: { allowedTools: ['Read', 'Grep', 'Glob'], blockedTools: [], approvalMode: 'human' },
+      });
+      const run = await store.createRun(task.id, 'codex', reviewer.id);
+      let prompt = '';
+
+      const guardedRunner: CodexProcessRunner = async (_command, arguments_, options) => {
+        prompt = arguments_[arguments_.length - 1] ?? '';
+        const sandboxIndex = arguments_.indexOf('--sandbox');
+        if (arguments_[sandboxIndex + 1] !== 'read-only') {
+          await writeFile(join(options.cwd, 'LEAK.md'), '# leaked\n', 'utf8');
+        }
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'review complete',
+          startedAt: new Date(Date.now() - 10).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+
+      const executed = await store.executeRun(run.id, guardedRunner);
+      expect(executed.status).toBe('review');
+      expect(executed.runtimeId).toBe('codex');
+      expect(prompt).toContain('Acting Role: Reviewer (reviewer)');
+      expect(prompt).toContain('Allowed tools: Read, Grep, Glob');
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: task.worktreePath })).stdout.trim()).toBe('');
+      await expect(access(join(task.worktreePath, 'LEAK.md'))).rejects.toThrow();
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('refuses a restricted Role on a Runtime that cannot enforce it', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const restricted = await store.roles.createRole({
+        name: 'Hermes reviewer',
+        baseAgentId: 'hermes',
+        runtimePolicy: { allowedTools: [], blockedTools: ['Bash'], approvalMode: 'strict' },
+      });
+      const run = await store.createRun(task.id, 'hermes', restricted.id);
+
+      await expect(store.executeRun(run.id, fakeRunner(0))).rejects.toThrow('cannot enforce a Role tool policy');
+      expect(store.getRun(run.id)?.status).toBe('queued');
+      expect(store.getTask(task.id)?.status).toBe('queued');
+      await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
@@ -151,6 +218,30 @@ describe('KernelStore executeRun', () => {
     }
   });
 
+  it('replays run events after reopening the store and keeps seq monotonic', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const run = await store.createRun(task.id, 'codex');
+      await store.executeRun(run.id, fakeRunner(0));
+      const before = store.getRunEvents(run.id);
+      expect(before.map(event => event.type)).toEqual(['started', 'completed']);
+      await store.close();
+
+      const reopened = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      expect(reopened.getRunEvents(run.id).map(event => event.type)).toEqual(['started', 'completed']);
+      const nextRun = await reopened.createRun(task.id, 'codex');
+      await reopened.executeRun(nextRun.id, fakeRunner(0));
+      const nextEvents = reopened.getRunEvents(nextRun.id);
+      expect(nextEvents[0]?.seq).toBeGreaterThan(before.at(-1)?.seq ?? 0);
+      await reopened.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   it('cancels an active run and persists cancelled evidence', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
     try {
@@ -175,15 +266,20 @@ describe('KernelStore executeRun', () => {
       });
 
       const execution = store.executeRun(run.id, slowRunner);
+      const terminalStatuses: string[] = [];
+      store.subscribeRunEvents(run.id, event => {
+        if (event.type === 'cancelled') terminalStatuses.push(store.getRun(run.id)?.status ?? 'missing');
+      });
       for (let attempt = 0; attempt < 100 && store.getRun(run.id)?.status !== 'running'; attempt++) {
         await new Promise(resolve => setTimeout(resolve, 10));
       }
       await store.cancelRun(run.id);
       const executed = await execution;
 
-      expect(executed.status).toBe('failed');
+      expect(executed.status).toBe('cancelled');
       expect(executed.artifacts).toMatchObject({ cancelled: true, output: 'stopped' });
-      expect(store.getTask(task.id)?.status).toBe('failed');
+      expect(store.getTask(task.id)?.status).toBe('cancelled');
+      expect(terminalStatuses).toEqual(['cancelled']);
       expect(store.getRunEvents(run.id).map(event => event.type))
         .toEqual(expect.arrayContaining(['started', 'stdout', 'cancelled']));
       await store.close();
@@ -253,7 +349,62 @@ describe('KernelStore executeRun', () => {
 
       const accepted = await store.acceptRun(run.id);
       expect(accepted.status).toBe('done');
+      expect(accepted.commitSha).toMatch(/^[0-9a-f]{40}$/);
       expect(store.getTask(task.id)?.status).toBe('done');
+      const head = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: task.worktreePath })).stdout.trim();
+      expect(accepted.commitSha).toBe(head);
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: task.worktreePath })).stdout.trim()).toBe('');
+      expect(
+        (await execFileAsync('git', ['rev-parse', `refs/agent-ops/tasks/${task.id}`], { cwd: repo })).stdout.trim(),
+      ).toBe(accepted.commitSha);
+
+      await store.releaseTask(task.id);
+      expect(store.getTask(task.id)?.worktreePath).toBe('');
+      expect((await execFileAsync('git', ['cat-file', '-t', accepted.commitSha], { cwd: repo })).stdout.trim()).toBe('commit');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('commits an uncommitted agent change when the run is accepted', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const run = await store.createRun(task.id, 'codex');
+      await writeFile(join(task.worktreePath, 'NEW.md'), '# new\n', 'utf8');
+      await store.executeRun(run.id, fakeRunner(0));
+      expect(store.getRun(run.id)?.status).toBe('review');
+
+      const accepted = await store.acceptRun(run.id);
+      expect(accepted.commitSha).toMatch(/^[0-9a-f]{40}$/);
+      expect((await execFileAsync('git', ['log', '-1', '--format=%s'], { cwd: task.worktreePath })).stdout.trim())
+        .toBe('task: accept Rename bin');
+      expect((await execFileAsync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: task.worktreePath })).stdout)
+        .toContain('NEW.md');
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: task.worktreePath })).stdout.trim()).toBe('');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('refuses to accept a run that would commit a .env file', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const run = await store.createRun(task.id, 'codex');
+      await writeFile(join(task.worktreePath, '.env'), 'SECRET=1\n', 'utf8');
+      await store.executeRun(run.id, fakeRunner(0));
+
+      await expect(store.acceptRun(run.id)).rejects.toThrow('would enter the repository');
+      expect(store.getRun(run.id)?.status).toBe('review');
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: task.worktreePath })).stdout)
+        .toContain('.env');
       await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
@@ -276,6 +427,10 @@ describe('KernelStore executeRun', () => {
       const rejected = await store.rejectRun(run.id);
       expect(rejected.status).toBe('queued');
       expect(store.getTask(task.id)?.status).toBe('queued');
+      // Reject resets the worktree to the provisioned base commit, including the agent's commit.
+      expect((await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: task.worktreePath })).stdout.trim()).toBe(store.getTask(task.id)?.baseCommit);
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: task.worktreePath })).stdout.trim()).toBe('');
+      await expect(access(join(task.worktreePath, 'NEW.md'))).rejects.toThrow();
       // The rejected run is queued again and can be re-executed.
       await expect(store.executeRun(run.id, fakeRunner(0))).resolves.toMatchObject({ status: 'review' });
       // A new attempt must not replay the previous terminal event to SSE subscribers.

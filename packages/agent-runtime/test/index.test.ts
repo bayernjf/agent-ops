@@ -7,10 +7,11 @@ import type { AgentProfile } from '../src/profiles.js';
 
 describe('Local Codex Runtime', () => {
   it('builds a non-executing sandboxed plan for an approved task', () => {
-    const plan = buildAgentExecutionPlan({ id: 'task-1', title: 'Add list', objective: 'Show saved items.', acceptanceCriteria: ['Items render.'] }, '/tmp/agent-task', 'codex');
+    const plan = buildAgentExecutionPlan({ id: 'task-1', title: 'Add list', objective: 'Show saved items.', acceptanceCriteria: ['Items render.'], priority: 'high' }, '/tmp/agent-task', 'codex');
     expect(plan).toMatchObject({ mode: 'dry-run', executionAllowed: false, noExternalChanges: true, workspacePath: '/tmp/agent-task' });
     expect(plan.command).toEqual(expect.arrayContaining(['exec', '--json', '--sandbox', 'workspace-write', '--cd', '/tmp/agent-task']));
     expect(plan.command.at(-1)).toContain('Items render.');
+    expect(plan.command.at(-1)).toContain('Priority: high');
   });
 
   it('reports CLI presence without claiming authenticated execution', () => {

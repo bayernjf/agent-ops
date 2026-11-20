@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { eq } from 'drizzle-orm';
+import { eq, asc } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/sql-js';
 import initSqlJs, { type Database } from 'sql.js';
 import {
@@ -12,22 +12,71 @@ import {
   describeRuntimeExecutorRejection,
   executeCodexPlan,
   resolveRuntimeExecutor,
+  runtimeProviderAgentId,
+  type AgentRole,
   type ApprovedTask,
   type CodexExecutionResult,
   type CodexProcessRunner,
 } from '@agent-ops/agent-runtime';
 import type { TaskRunState } from '@agent-ops/workflow';
-import { tasks, runs } from './schema.js';
+import { tasks, runs, runEvents } from './schema.js';
 import { kernelMigrations, type Migration } from './migrations.js';
 import { ProfileStore } from './profiles-store.js';
-import { addWorktree, removeWorktree } from './worktree.js';
+import { RoleStore } from './roles-store.js';
+import { addWorktree, pinWorktreeCommit, removeWorktree } from './worktree.js';
+import { assertWorktreeClean, commitWorktreeChanges, resetWorktree } from './commit.js';
 
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
 
 function createKernelOrm(database: Database) {
-  return drizzle(database, { schema: { tasks, runs } });
+  return drizzle(database, { schema: { tasks, runs, runEvents } });
 }
+
+export type TaskPriority = 'low' | 'medium' | 'high';
+
+export type TaskPipelineStepInput = {
+  id?: string;
+  name: string;
+  roleId?: string;
+  profileId?: string;
+  agentId?: string;
+  prompt?: string;
+  requiresApproval?: boolean;
+};
+
+export type TaskPipelineStep = {
+  id: string;
+  name: string;
+  roleId?: string;
+  profileId?: string;
+  agentId?: string;
+  prompt?: string;
+  requiresApproval?: boolean;
+};
+
+export type TaskPipelineStepResult = {
+  stepId: string;
+  status: 'pending' | 'running' | 'awaiting_approval' | 'completed' | 'failed';
+  runId?: string;
+  commitSha?: string;
+  output?: string;
+  error?: string;
+  startedAt?: string;
+  completedAt?: string;
+};
+
+export type TaskPipeline = {
+  steps: TaskPipelineStep[];
+  results: TaskPipelineStepResult[];
+  status: 'idle' | 'running' | 'awaiting_approval' | 'completed' | 'failed';
+  startedAt?: string;
+  completedAt?: string;
+};
+
+export type TaskPipelineInput = {
+  steps: TaskPipelineStepInput[];
+};
 
 export type CreateTaskInput = {
   repo: string;
@@ -36,6 +85,11 @@ export type CreateTaskInput = {
   objective?: string;
   recipe?: string;
   worktreePath?: string;
+  acceptanceCriteria?: string[];
+  priority?: TaskPriority;
+  baseCommit?: string;
+  roleId?: string;
+  pipeline?: TaskPipelineInput;
 };
 
 export type TaskRecord = {
@@ -46,10 +100,54 @@ export type TaskRecord = {
   recipe: string;
   title: string;
   objective: string;
+  acceptanceCriteria: string[];
+  priority: TaskPriority;
+  baseCommit: string;
+  roleId: string | null;
+  pipeline: TaskPipeline | null;
   status: TaskRunState;
   createdAt: string;
   updatedAt: string;
 };
+
+type TaskRow = Omit<TaskRecord, 'acceptanceCriteria' | 'roleId' | 'pipeline'> & {
+  acceptanceCriteria: string;
+  roleId: string;
+  pipeline: string;
+};
+
+function parseTaskPipeline(raw: string): TaskPipeline | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as TaskPipeline;
+    if (!parsed || !Array.isArray(parsed.steps)) return null;
+    const status = parsed.status === 'running' || parsed.status === 'awaiting_approval' || parsed.status === 'completed' || parsed.status === 'failed' ? parsed.status : 'idle';
+    return {
+      steps: parsed.steps,
+      results: Array.isArray(parsed.results) ? parsed.results : [],
+      status,
+      startedAt: parsed.startedAt,
+      completedAt: parsed.completedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function toTaskRecord(row: TaskRow): TaskRecord {
+  let acceptanceCriteria: string[] = [];
+  try {
+    const parsed = JSON.parse(row.acceptanceCriteria) as unknown;
+    if (Array.isArray(parsed)) {
+      acceptanceCriteria = parsed.filter((item): item is string => typeof item === 'string');
+    }
+  } catch {
+    acceptanceCriteria = [];
+  }
+  const priority: TaskPriority =
+    row.priority === 'low' || row.priority === 'high' ? row.priority : 'medium';
+  return { ...row, acceptanceCriteria, priority, roleId: row.roleId || null, pipeline: parseTaskPipeline(row.pipeline) };
+}
 
 export type RunArtifacts = {
   /** Combined stdout/stderr from the agent process, capped before persistence. */
@@ -109,11 +207,22 @@ export type RunRecord = {
   status: TaskRunState;
   diffStat: string;
   artifacts: RunArtifacts;
+  commitSha: string;
+  /** Role selected for this run; null when the run was created without a Role. */
+  roleId: string | null;
+  /** Adapter actually resolved at execution time; null before execution. */
+  runtimeId: string | null;
+  /** Pipeline step or caller instruction appended to the task prompt; empty when none. */
+  instruction: string;
   createdAt: string;
   updatedAt: string;
 };
 
-type RunRow = Omit<RunRecord, 'artifacts'> & { artifacts: string };
+type RunRow = Omit<RunRecord, 'artifacts' | 'roleId' | 'runtimeId'> & {
+  artifacts: string;
+  roleId: string;
+  runtimeId: string;
+};
 
 function parseRunArtifacts(raw: string): RunArtifacts {
   const defaults = emptyRunArtifacts();
@@ -144,7 +253,12 @@ function parseRunArtifacts(raw: string): RunArtifacts {
 }
 
 function toRunRecord(row: RunRow): RunRecord {
-  return { ...row, artifacts: parseRunArtifacts(row.artifacts) };
+  return {
+    ...row,
+    roleId: row.roleId || null,
+    runtimeId: row.runtimeId || null,
+    artifacts: parseRunArtifacts(row.artifacts),
+  };
 }
 
 function boundedText(value: string, limit: number): { text: string; truncated: boolean } {
@@ -185,19 +299,23 @@ export async function loadDatabase(databasePath: string): Promise<Database> {
 export class KernelStore {
   private readonly kernelOrm: ReturnType<typeof createKernelOrm>;
   readonly profiles: ProfileStore;
+  readonly roles: RoleStore;
   protected readonly sqlite: Database;
   protected readonly databasePath: string;
   protected migrations: readonly Migration[] = kernelMigrations;
   private readonly activeRuns = new Map<string, AbortController>();
-  private readonly runEvents = new Map<string, RunEvent[]>();
+  private readonly activePipelines = new Set<string>();
   private readonly runEventListeners = new Map<string, Set<(event: RunEvent) => void>>();
   private nextRunEventSeq = 1;
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  private persistChain: Promise<void> = Promise.resolve();
 
   protected constructor(sqlite: Database, databasePath: string) {
     this.sqlite = sqlite;
     this.databasePath = databasePath;
     this.kernelOrm = createKernelOrm(sqlite);
     this.profiles = new ProfileStore(dirname(databasePath));
+    this.roles = new RoleStore(dirname(databasePath));
   }
 
   /** Where the platform keeps its own state and the workspaces it creates. */
@@ -216,10 +334,63 @@ export class KernelStore {
   async initialize(): Promise<void> {
     this.sqlite.run('PRAGMA foreign_keys = ON;');
     this.runMigrations();
+    this.nextRunEventSeq = this.maxRunEventSeq() + 1;
     await this.persist();
   }
 
+  private async normalizePipeline(input: TaskPipelineInput | undefined): Promise<TaskPipeline | null> {
+    if (!input) return null;
+    if (!Array.isArray(input.steps) || input.steps.length === 0) throw new Error('A pipeline must have at least one step.');
+    const usedIds = new Set<string>();
+    const steps: TaskPipelineStep[] = [];
+    for (const [index, raw] of input.steps.entries()) {
+      const id = raw.id?.trim() || `step-${index + 1}`;
+      if (usedIds.has(id)) throw new Error(`Pipeline step id ${id} is duplicated.`);
+      usedIds.add(id);
+      const roleId = raw.roleId?.trim() || undefined;
+      const profileId = raw.profileId?.trim() || undefined;
+      const agentId = raw.agentId?.trim() || undefined;
+      if (!roleId && !profileId && !agentId) throw new Error(`Pipeline step ${id} must name a roleId, profileId, or agentId.`);
+
+      if (roleId) {
+        const role = await this.roles.getRole(roleId);
+        if (!role) throw new Error(`Role ${roleId} was not found.`);
+        if (!role.enabled) throw new Error(`Role ${roleId} is disabled.`);
+      }
+      if (profileId) {
+        const profile = await this.profiles.getProfile(profileId);
+        if (!profile) throw new Error(`Profile ${profileId} was not found.`);
+        if (roleId) {
+          const role = await this.roles.getRole(roleId);
+          const roleBase = role?.profileId
+            ? (await this.profiles.getProfile(role.profileId))?.baseAgentId
+            : role?.baseAgentId;
+          if (roleBase && roleBase !== profile.baseAgentId) {
+            throw new Error(`Pipeline step ${id} binds Role ${roleId} (${roleBase}) to Profile ${profileId} (${profile.baseAgentId}).`);
+          }
+        }
+      }
+      steps.push({
+        id,
+        name: raw.name.trim(),
+        ...(roleId ? { roleId } : {}),
+        ...(profileId ? { profileId } : {}),
+        ...(agentId ? { agentId } : {}),
+        ...(raw.prompt?.trim() ? { prompt: raw.prompt.trim() } : {}),
+        ...(raw.requiresApproval ? { requiresApproval: true } : {}),
+      });
+    }
+    return { steps, results: [], status: 'idle' };
+  }
+
   async createTask(input: CreateTaskInput): Promise<TaskRecord> {
+    const linkedRoleId = input.roleId?.trim() || undefined;
+    if (linkedRoleId) {
+      const role = await this.roles.getRole(linkedRoleId);
+      if (!role) throw new Error(`Role ${linkedRoleId} was not found.`);
+      if (!role.enabled) throw new Error(`Role ${linkedRoleId} is disabled.`);
+    }
+    const pipeline = await this.normalizePipeline(input.pipeline);
     const now = new Date().toISOString();
     const record: TaskRecord = {
       id: randomUUID(),
@@ -229,21 +400,33 @@ export class KernelStore {
       recipe: input.recipe ?? '',
       title: input.title,
       objective: input.objective ?? '',
+      acceptanceCriteria: input.acceptanceCriteria ?? [],
+      priority: input.priority ?? 'medium',
+      baseCommit: input.baseCommit ?? '',
+      roleId: linkedRoleId ?? null,
+      pipeline,
       status: 'queued',
       createdAt: now,
       updatedAt: now,
     };
-    this.kernelOrm.insert(tasks).values(record).run();
+    this.kernelOrm.insert(tasks).values({
+      ...record,
+      acceptanceCriteria: JSON.stringify(record.acceptanceCriteria),
+      roleId: record.roleId ?? '',
+      pipeline: record.pipeline ? JSON.stringify(record.pipeline) : '',
+    }).run();
     await this.persist();
     return record;
   }
 
   getTask(id: string): TaskRecord | undefined {
-    return this.kernelOrm.select().from(tasks).where(eq(tasks.id, id)).get() as TaskRecord | undefined;
+    const row = this.kernelOrm.select().from(tasks).where(eq(tasks.id, id)).get() as TaskRow | undefined;
+    return row ? toTaskRecord(row) : undefined;
   }
 
   listTasks(): TaskRecord[] {
-    return this.kernelOrm.select().from(tasks).all() as TaskRecord[];
+    const rows = this.kernelOrm.select().from(tasks).all() as TaskRow[];
+    return rows.map(toTaskRecord);
   }
 
   async updateTaskStatus(id: string, status: TaskRunState): Promise<TaskRecord> {
@@ -260,17 +443,22 @@ export class KernelStore {
     if (!existing) throw new Error(`Task ${id} was not found.`);
     if (existing.worktreePath) return existing;
     const path = join(this.dataDirectory, 'tasks', id, 'work');
-    await addWorktree(existing.repo, existing.baseRef, path);
+    const { headCommit } = await addWorktree(existing.repo, existing.baseRef, path);
     const now = new Date().toISOString();
-    this.kernelOrm.update(tasks).set({ worktreePath: path, updatedAt: now }).where(eq(tasks.id, id)).run();
+    this.kernelOrm.update(tasks).set({
+      worktreePath: path,
+      baseCommit: headCommit,
+      updatedAt: now,
+    }).where(eq(tasks.id, id)).run();
     await this.persist();
-    return { ...existing, worktreePath: path, updatedAt: now };
+    return { ...existing, worktreePath: path, baseCommit: headCommit, updatedAt: now };
   }
 
   async releaseTask(id: string): Promise<TaskRecord> {
     const existing = this.getTask(id);
     if (!existing) throw new Error(`Task ${id} was not found.`);
     if (!existing.worktreePath) return existing;
+    await assertWorktreeClean(existing.worktreePath);
     await removeWorktree(existing.repo, existing.worktreePath);
     const now = new Date().toISOString();
     this.kernelOrm.update(tasks).set({ worktreePath: '', updatedAt: now }).where(eq(tasks.id, id)).run();
@@ -278,8 +466,37 @@ export class KernelStore {
     return { ...existing, worktreePath: '', updatedAt: now };
   }
 
-  async createRun(taskId: string, agentId: string): Promise<RunRecord> {
-    if (!this.getTask(taskId)) throw new Error(`Task ${taskId} was not found.`);
+  private async resolveRunRole(task: TaskRecord, requestedRoleId: string | undefined, agentId: string): Promise<AgentRole | null> {
+    const linkedRoleId = requestedRoleId?.trim() || task.roleId || undefined;
+    if (!linkedRoleId) return null;
+    const role = await this.roles.getRole(linkedRoleId);
+    if (!role) throw new Error(`Role ${linkedRoleId} was not found.`);
+    if (!role.enabled) throw new Error(`Role ${linkedRoleId} is disabled.`);
+
+    const agentProfile = await this.profiles.getProfile(agentId);
+    const agentBaseId = agentProfile?.baseAgentId ?? runtimeProviderAgentId(agentId);
+
+    if (role.profileId) {
+      const profile = await this.profiles.getProfile(role.profileId);
+      if (!profile) throw new Error(`Role ${role.id} profile ${role.profileId} was not found.`);
+      if (agentBaseId !== profile.baseAgentId) {
+        throw new Error(`Role ${role.id} targets ${role.profileId} (${profile.baseAgentId}), not run agent ${agentId}.`);
+      }
+      return role;
+    }
+
+    const baseAgentId = role.baseAgentId;
+    if (!baseAgentId) throw new Error(`Role ${role.id} has no base agent.`);
+    if (agentBaseId !== baseAgentId) {
+      throw new Error(`Role ${role.id} targets ${baseAgentId}, not run agent ${agentId}.`);
+    }
+    return role;
+  }
+
+  async createRun(taskId: string, agentId: string, roleId?: string, instruction?: string): Promise<RunRecord> {
+    const task = this.getTask(taskId);
+    if (!task) throw new Error(`Task ${taskId} was not found.`);
+    const role = await this.resolveRunRole(task, roleId, agentId);
     const now = new Date().toISOString();
     const artifacts = emptyRunArtifacts();
     const record: RunRecord = {
@@ -289,10 +506,27 @@ export class KernelStore {
       status: 'queued',
       diffStat: '',
       artifacts,
+      commitSha: '',
+      roleId: role?.id ?? null,
+      runtimeId: null,
+      instruction: instruction?.trim() ?? '',
       createdAt: now,
       updatedAt: now,
     };
-    this.kernelOrm.insert(runs).values({ ...record, artifacts: JSON.stringify(artifacts) }).run();
+    this.kernelOrm.insert(runs).values({
+      id: record.id,
+      taskId: record.taskId,
+      agentId: record.agentId,
+      status: record.status,
+      diffStat: record.diffStat,
+      artifacts: JSON.stringify(artifacts),
+      commitSha: record.commitSha,
+      roleId: record.roleId ?? '',
+      runtimeId: '',
+      instruction: record.instruction,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    }).run();
     await this.persist();
     return record;
   }
@@ -308,7 +542,25 @@ export class KernelStore {
   }
 
   getRunEvents(id: string): RunEvent[] {
-    return [...(this.runEvents.get(id) ?? [])];
+    const rows = this.kernelOrm
+      .select()
+      .from(runEvents)
+      .where(eq(runEvents.runId, id))
+      .orderBy(asc(runEvents.seq))
+      .all() as Array<{
+        runId: string;
+        seq: number;
+        type: string;
+        data: string | null;
+        at: string;
+      }>;
+    return rows.map(row => ({
+      runId: row.runId,
+      seq: row.seq,
+      type: row.type as RunEventType,
+      ...(row.data !== null ? { data: row.data } : {}),
+      at: row.at,
+    }));
   }
 
   subscribeRunEvents(id: string, listener: (event: RunEvent) => void): () => void {
@@ -338,6 +590,7 @@ export class KernelStore {
     status: TaskRunState,
     diffStat?: string,
     artifacts?: RunArtifacts,
+    commitSha?: string,
   ): Promise<RunRecord> {
     const existing = this.getRun(id);
     if (!existing) throw new Error(`Run ${id} was not found.`);
@@ -347,6 +600,7 @@ export class KernelStore {
       updatedAt: now,
       ...(diffStat !== undefined ? { diffStat } : {}),
       ...(artifacts !== undefined ? { artifacts: JSON.stringify(artifacts) } : {}),
+      ...(commitSha !== undefined ? { commitSha } : {}),
     }).where(eq(runs.id, id)).run();
     await this.persist();
     return {
@@ -355,7 +609,19 @@ export class KernelStore {
       updatedAt: now,
       ...(diffStat !== undefined ? { diffStat } : {}),
       ...(artifacts !== undefined ? { artifacts } : {}),
+      ...(commitSha !== undefined ? { commitSha } : {}),
     };
+  }
+
+  async updateRunRuntime(id: string, runtimeId: string): Promise<RunRecord> {
+    const existing = this.getRun(id);
+    if (!existing) throw new Error(`Run ${id} was not found.`);
+    const normalized = runtimeId.trim();
+    if (!normalized) throw new Error('Runtime id must not be empty.');
+    const now = new Date().toISOString();
+    this.kernelOrm.update(runs).set({ runtimeId: normalized, updatedAt: now }).where(eq(runs.id, id)).run();
+    await this.persist();
+    return { ...existing, runtimeId: normalized, updatedAt: now };
   }
 
   async executeRun(id: string, runner?: CodexProcessRunner): Promise<RunRecord> {
@@ -370,15 +636,32 @@ export class KernelStore {
 
     const resolved = await resolveRuntimeExecutor(run.agentId, profileId => this.profiles.getProfile(profileId));
     if (!resolved.ok) throw new Error(describeRuntimeExecutorRejection(resolved));
+    await this.updateRunRuntime(id, resolved.agentId);
 
-    const approvedTask: ApprovedTask = { id: task.id, title: task.title, objective: task.objective, acceptanceCriteria: [] };
-    const plan = buildAgentExecutionPlan(approvedTask, task.worktreePath, resolved.agentId, { execute: true, profile: resolved.profile });
+    const role = run.roleId ? await this.roles.getRole(run.roleId) : null;
+    if (run.roleId && !role) throw new Error(`Role ${run.roleId} was not found.`);
+
+    const approvedTask: ApprovedTask = {
+      id: task.id,
+      title: task.title,
+      objective: task.objective,
+      acceptanceCriteria: task.acceptanceCriteria,
+      priority: task.priority,
+    };
+    const plan = buildAgentExecutionPlan(approvedTask, task.worktreePath, resolved.agentId, {
+      execute: true,
+      profile: resolved.profile,
+      role: role ?? undefined,
+      toolPolicy: role?.runtimePolicy,
+      roleId: role?.id,
+      instruction: run.instruction || undefined,
+    });
 
     const controller = new AbortController();
     this.activeRuns.set(id, controller);
     // A rejected run can be executed again under the same run id; stale terminal events
     // would make a new SSE subscriber close on the previous attempt.
-    this.runEvents.delete(id);
+    await this.clearRunEvents(id);
     await this.updateTaskStatus(task.id, 'running');
     await this.updateRunStatus(id, 'running');
     this.emitRunEvent(id, 'started');
@@ -406,42 +689,256 @@ export class KernelStore {
     const cancelled = result.cancelled === true || controller.signal.aborted;
     const evidence = await this.collectEvidence(task, result, cancelled);
     if (cancelled) {
+      await this.updateTaskStatus(task.id, 'cancelled');
+      const record = await this.updateRunStatus(id, 'cancelled', evidence.diffStat, evidence.artifacts);
       this.emitRunEvent(id, 'cancelled');
-      await this.updateTaskStatus(task.id, 'failed');
-      return this.updateRunStatus(id, 'failed', evidence.diffStat, evidence.artifacts);
+      return record;
     }
     if (result.exitCode === 0 && !result.timedOut) {
-      this.emitRunEvent(id, 'completed');
       await this.updateTaskStatus(task.id, 'review');
-      return this.updateRunStatus(id, 'review', evidence.diffStat, evidence.artifacts);
+      const record = await this.updateRunStatus(id, 'review', evidence.diffStat, evidence.artifacts);
+      this.emitRunEvent(id, 'completed');
+      return record;
     }
-    this.emitRunEvent(id, 'failed');
     await this.updateTaskStatus(task.id, 'failed');
-    return this.updateRunStatus(id, 'failed', evidence.diffStat, evidence.artifacts);
+    const record = await this.updateRunStatus(id, 'failed', evidence.diffStat, evidence.artifacts);
+    this.emitRunEvent(id, 'failed');
+    return record;
+  }
+
+  private async saveTaskPipeline(taskId: string, pipeline: TaskPipeline): Promise<void> {
+    const now = new Date().toISOString();
+    this.kernelOrm.update(tasks).set({ pipeline: JSON.stringify(pipeline), updatedAt: now }).where(eq(tasks.id, taskId)).run();
+    await this.persist();
+  }
+
+  private async resolvePipelineStepAgent(step: TaskPipelineStep): Promise<string> {
+    if (step.agentId) return step.agentId;
+    if (step.profileId) return step.profileId;
+    if (step.roleId) {
+      const role = await this.roles.getRole(step.roleId);
+      if (!role) throw new Error(`Role ${step.roleId} was not found.`);
+      if (!role.enabled) throw new Error(`Role ${step.roleId} is disabled.`);
+      if (role.profileId) return role.profileId;
+      if (role.baseAgentId) return role.baseAgentId;
+    }
+    throw new Error(`Pipeline step ${step.id} has no resolvable agent.`);
+  }
+
+  async executeTaskPipeline(id: string, runner?: CodexProcessRunner): Promise<TaskPipeline> {
+    if (this.activePipelines.has(id)) throw new Error(`Task ${id} already has a running pipeline.`);
+    this.activePipelines.add(id);
+    try {
+      const task = this.getTask(id);
+      if (!task) throw new Error(`Task ${id} was not found.`);
+      if (!task.pipeline || task.pipeline.steps.length === 0) throw new Error(`Task ${id} has no pipeline configured.`);
+      if (!task.worktreePath) throw new Error(`Task ${id} has no worktree. Provision it before executing its pipeline.`);
+      if (task.pipeline.status !== 'idle') {
+        throw new Error(`Task ${id} pipeline is ${task.pipeline.status}; only an idle pipeline can start. Retry hygiene is not implemented yet.`);
+      }
+
+      const pipeline: TaskPipeline = {
+        steps: task.pipeline.steps,
+        results: [],
+        status: 'running',
+        startedAt: new Date().toISOString(),
+      };
+      await this.saveTaskPipeline(id, pipeline);
+      return await this.runPipelineSteps(id, pipeline, 0, runner);
+    } finally {
+      this.activePipelines.delete(id);
+    }
+  }
+
+  private async runPipelineSteps(id: string, initial: TaskPipeline, startIndex: number, runner?: CodexProcessRunner): Promise<TaskPipeline> {
+    let pipeline = initial;
+    for (let index = startIndex; index < pipeline.steps.length; index++) {
+      const step = pipeline.steps[index];
+      const startedAt = new Date().toISOString();
+      const updateResult = (result: TaskPipelineStepResult) => {
+        pipeline = {
+          ...pipeline,
+          results: [...pipeline.results.filter(existing => existing.stepId !== step.id), result],
+        };
+      };
+      updateResult({ stepId: step.id, status: 'running', startedAt });
+      await this.saveTaskPipeline(id, pipeline);
+
+      let runId: string | undefined;
+      try {
+        const agentId = await this.resolvePipelineStepAgent(step);
+        const instruction = `Pipeline step ${index + 1}/${pipeline.steps.length}: ${step.name}${step.prompt ? `\n\n${step.prompt}` : ''}`;
+        const run = await this.createRun(id, agentId, step.roleId, instruction);
+        runId = run.id;
+        updateResult({ stepId: step.id, status: 'running', runId, startedAt });
+        await this.saveTaskPipeline(id, pipeline);
+
+        const executed = await this.executeRun(run.id, runner);
+        if (executed.status !== 'review') {
+          updateResult({
+            stepId: step.id,
+            status: 'failed',
+            runId,
+            error: `Run ended in ${executed.status}, expected review.`,
+            startedAt,
+            completedAt: new Date().toISOString(),
+          });
+          pipeline = { ...pipeline, status: 'failed', completedAt: new Date().toISOString() };
+          await this.saveTaskPipeline(id, pipeline);
+          return pipeline;
+        }
+
+        if (step.requiresApproval) {
+          updateResult({
+            stepId: step.id,
+            status: 'awaiting_approval',
+            runId,
+            output: executed.artifacts.output.slice(0, 2000),
+            startedAt,
+            completedAt: new Date().toISOString(),
+          });
+          pipeline = { ...pipeline, status: 'awaiting_approval' };
+          await this.saveTaskPipeline(id, pipeline);
+          return pipeline;
+        }
+
+        const accepted = await this.acceptRun(run.id);
+        updateResult({
+          stepId: step.id,
+          status: 'completed',
+          runId,
+          commitSha: accepted.commitSha,
+          output: executed.artifacts.output.slice(0, 2000),
+          startedAt,
+          completedAt: new Date().toISOString(),
+        });
+        await this.saveTaskPipeline(id, pipeline);
+      } catch (error) {
+        updateResult({
+          stepId: step.id,
+          status: 'failed',
+          ...(runId ? { runId } : {}),
+          error: error instanceof Error ? error.message : String(error),
+          startedAt,
+          completedAt: new Date().toISOString(),
+        });
+        pipeline = { ...pipeline, status: 'failed', completedAt: new Date().toISOString() };
+        await this.saveTaskPipeline(id, pipeline);
+        return pipeline;
+      }
+    }
+
+    pipeline = { ...pipeline, status: 'completed', completedAt: new Date().toISOString() };
+    await this.saveTaskPipeline(id, pipeline);
+    return pipeline;
+  }
+
+  private async awaitingPipelineStep(id: string): Promise<{ pipeline: TaskPipeline; index: number; runId: string; stepId: string }> {
+    const task = this.getTask(id);
+    if (!task) throw new Error(`Task ${id} was not found.`);
+    const pipeline = task.pipeline;
+    if (!pipeline) throw new Error(`Task ${id} has no pipeline configured.`);
+    if (pipeline.status !== 'awaiting_approval') {
+      throw new Error(`Task ${id} pipeline is ${pipeline.status}; nothing is awaiting approval.`);
+    }
+    const awaiting = [...pipeline.results].reverse().find(result => result.status === 'awaiting_approval');
+    if (!awaiting?.runId) throw new Error(`Task ${id} has no step awaiting approval.`);
+    const index = pipeline.steps.findIndex(step => step.id === awaiting.stepId);
+    if (index < 0) throw new Error(`Pipeline step ${awaiting.stepId} was not found.`);
+    return { pipeline, index, runId: awaiting.runId, stepId: awaiting.stepId };
+  }
+
+  async approvePipelineStep(id: string, runner?: CodexProcessRunner): Promise<TaskPipeline> {
+    if (this.activePipelines.has(id)) throw new Error(`Task ${id} already has a running pipeline.`);
+    this.activePipelines.add(id);
+    try {
+      const { pipeline, index, runId, stepId } = await this.awaitingPipelineStep(id);
+      const accepted = await this.acceptRun(runId);
+      const resumed: TaskPipeline = {
+        ...pipeline,
+        results: pipeline.results.map(result => (
+          result.stepId === stepId ? { ...result, status: 'completed' as const, commitSha: accepted.commitSha } : result
+        )),
+        status: 'running',
+      };
+      await this.saveTaskPipeline(id, resumed);
+      return await this.runPipelineSteps(id, resumed, index + 1, runner);
+    } finally {
+      this.activePipelines.delete(id);
+    }
+  }
+
+  async rejectPipelineStep(id: string): Promise<TaskPipeline> {
+    if (this.activePipelines.has(id)) throw new Error(`Task ${id} already has a running pipeline.`);
+    this.activePipelines.add(id);
+    try {
+      const { pipeline, runId, stepId } = await this.awaitingPipelineStep(id);
+      await this.rejectRun(runId);
+      await this.updateTaskStatus(id, 'failed');
+      const failed: TaskPipeline = {
+        ...pipeline,
+        results: pipeline.results.map(result => (
+          result.stepId === stepId
+            ? { ...result, status: 'failed' as const, error: 'Rejected by operator.' }
+            : result
+        )),
+        status: 'failed',
+        completedAt: new Date().toISOString(),
+      };
+      await this.saveTaskPipeline(id, failed);
+      return failed;
+    } finally {
+      this.activePipelines.delete(id);
+    }
   }
 
   async acceptRun(id: string): Promise<RunRecord> {
     const run = this.getRun(id);
     if (!run) throw new Error(`Run ${id} was not found.`);
     if (run.status !== 'review') throw new Error(`Run ${id} cannot be accepted from status ${run.status}.`);
+    const task = this.getTask(run.taskId);
+    if (!task) throw new Error(`Task ${run.taskId} was not found.`);
+    if (!task.worktreePath) throw new Error(`Task ${run.taskId} has no worktree.`);
+
+    const commit = await commitWorktreeChanges(task.worktreePath, `task: accept ${task.title}`);
+    await pinWorktreeCommit(task.repo, task.id, commit.sha);
     await this.updateTaskStatus(run.taskId, 'done');
-    return this.updateRunStatus(id, 'done');
+    return this.updateRunStatus(id, 'done', run.diffStat, run.artifacts, commit.sha);
   }
 
   async rejectRun(id: string): Promise<RunRecord> {
     const run = this.getRun(id);
     if (!run) throw new Error(`Run ${id} was not found.`);
     if (run.status !== 'review') throw new Error(`Run ${id} cannot be rejected from status ${run.status}.`);
+    const task = this.getTask(run.taskId);
+    if (!task) throw new Error(`Task ${run.taskId} was not found.`);
+    if (task.worktreePath) {
+      await resetWorktree(task.worktreePath, task.baseCommit || undefined);
+    }
     await this.updateTaskStatus(run.taskId, 'queued');
     return this.updateRunStatus(id, 'queued');
   }
 
   private emitRunEvent(runId: string, type: RunEventType, data?: string): void {
     const event: RunEvent = { runId, type, seq: this.nextRunEventSeq++, at: new Date().toISOString(), ...(data !== undefined ? { data } : {}) };
-    const events = this.runEvents.get(runId) ?? [];
-    events.push(event);
-    if (events.length > RUN_EVENT_LIMIT) events.splice(0, events.length - RUN_EVENT_LIMIT);
-    this.runEvents.set(runId, events);
+    this.kernelOrm.insert(runEvents).values({
+      id: `${runId}:${event.seq}`,
+      runId,
+      seq: event.seq,
+      type: event.type,
+      data: data ?? null,
+      at: event.at,
+    }).run();
+    if (event.seq > RUN_EVENT_LIMIT) {
+      this.sqlite.run(
+        'DELETE FROM run_events WHERE run_id = ? AND seq <= ?;',
+        [runId, event.seq - RUN_EVENT_LIMIT],
+      );
+    }
+    // Output chunks can be frequent; debounce their writes. Lifecycle events are
+    // persisted immediately so a daemon restart cannot lose the terminal frame.
+    if (type === 'stdout' || type === 'stderr') this.schedulePersist();
+    else void this.persist().catch(() => {});
     for (const listener of this.runEventListeners.get(runId) ?? []) {
       try {
         listener(event);
@@ -449,6 +946,17 @@ export class KernelStore {
         // SSE clients disconnect; a listener must not break the execution path.
       }
     }
+  }
+
+  private async clearRunEvents(id: string): Promise<void> {
+    this.kernelOrm.delete(runEvents).where(eq(runEvents.runId, id)).run();
+    await this.persist();
+  }
+
+  private maxRunEventSeq(): number {
+    const result = this.sqlite.exec('SELECT COALESCE(MAX(seq), 0) FROM run_events;');
+    const value = result[0]?.values[0]?.[0];
+    return Number(value ?? 0);
   }
 
   private async collectEvidence(
@@ -537,8 +1045,11 @@ export class KernelStore {
 
   async close(): Promise<void> {
     this.activeRuns.clear();
-    this.runEvents.clear();
     this.runEventListeners.clear();
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
     await this.persist();
     this.sqlite.close();
   }
@@ -561,7 +1072,25 @@ export class KernelStore {
     }
   }
 
+  private schedulePersist(): void {
+    if (this.persistTimer) return;
+    const timer = setTimeout(() => {
+      this.persistTimer = null;
+      void this.persist().catch(() => {});
+    }, 200);
+    timer.unref?.();
+    this.persistTimer = timer;
+  }
+
   protected async persist(): Promise<void> {
+    // All writes share one atomic temp-file rename path; serialize them so a
+    // debounced output flush cannot race a status/artifact write.
+    const next = this.persistChain.then(() => this.writeDatabase());
+    this.persistChain = next.catch(() => undefined);
+    await next;
+  }
+
+  private async writeDatabase(): Promise<void> {
     await mkdir(dirname(this.databasePath), { recursive: true });
     // Atomic replace (2026-11-02 review P2-1): the daemon lives for days and a
     // single agent run can take 15 minutes, so an in-place write killed mid-way
@@ -574,6 +1103,9 @@ export class KernelStore {
   }
 }
 
-export { ProfileStore, addWorktree, removeWorktree, kernelMigrations, type Migration };
+export { ProfileStore, RoleStore, addWorktree, removeWorktree, kernelMigrations, type Migration };
+export type { CreateRoleInput, UpdateRoleInput } from './roles-store.js';
+export { assertWorktreeClean, commitWorktreeChanges, resetWorktree, UnsafeCommitError } from './commit.js';
+export type { CommitWorktreeResult } from './commit.js';
 export type { CreateProfileInput, UpdateProfileInput, ProfileValidationResult } from './profiles-store.js';
 export type { WorktreeResult } from './worktree.js';

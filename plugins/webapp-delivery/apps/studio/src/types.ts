@@ -352,7 +352,8 @@ export type View =
   | { kind: 'credentials' }
   | { kind: 'agents' }
   | { kind: 'activity' }
-  | { kind: 'tasks' };
+  | { kind: 'tasks' }
+  | { kind: 'roles' };
 
 export type ProjectTab =
   | 'blueprint'
@@ -363,7 +364,7 @@ export type ProjectTab =
 // The kernel Task/Run control plane (server-core). Studio only renders these records; it never
 // derives state from them, so the shapes mirror `TaskRecord`/`RunRecord` from @agent-ops/storage-core
 // without pulling that package into the webapp plugin.
-export type KernelTaskState = 'queued' | 'running' | 'review' | 'done' | 'failed';
+export type KernelTaskState = 'queued' | 'running' | 'review' | 'done' | 'failed' | 'cancelled';
 
 export type KernelTask = {
   id: string;
@@ -374,8 +375,38 @@ export type KernelTask = {
   title: string;
   objective: string;
   status: KernelTaskState;
+  pipeline?: TaskPipeline | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type TaskPipelineStep = {
+  id: string;
+  name: string;
+  roleId?: string;
+  profileId?: string;
+  agentId?: string;
+  prompt?: string;
+  requiresApproval?: boolean;
+};
+
+export type TaskPipelineStepResult = {
+  stepId: string;
+  status: 'pending' | 'running' | 'awaiting_approval' | 'completed' | 'failed';
+  runId?: string;
+  commitSha?: string;
+  output?: string;
+  error?: string;
+  startedAt?: string;
+  completedAt?: string;
+};
+
+export type TaskPipeline = {
+  steps: TaskPipelineStep[];
+  results: TaskPipelineStepResult[];
+  status: 'idle' | 'running' | 'awaiting_approval' | 'completed' | 'failed';
+  startedAt?: string;
+  completedAt?: string;
 };
 
 export type KernelRunArtifacts = {
@@ -400,6 +431,32 @@ export type KernelRun = {
   status: KernelTaskState;
   diffStat: string;
   artifacts?: KernelRunArtifacts;
+  commitSha?: string;
+  roleId?: string | null;
+  runtimeId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RoleApprovalMode = 'auto' | 'human' | 'strict';
+
+export type RoleRuntimePolicy = {
+  allowedTools: string[];
+  blockedTools: string[];
+  approvalMode: RoleApprovalMode;
+};
+
+/** Mirrors `AgentRole` in `@agent-ops/agent-runtime/roles` for the browser. */
+export type AgentRole = {
+  id: string;
+  name: string;
+  description?: string;
+  baseAgentId?: string;
+  profileId?: string;
+  systemPrompt?: string;
+  acceptanceCriteria: string[];
+  runtimePolicy: RoleRuntimePolicy;
+  enabled: boolean;
   createdAt: string;
   updatedAt: string;
 };

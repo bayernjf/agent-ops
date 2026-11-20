@@ -97,7 +97,7 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? 30_000;
 
-  const callDaemon = async (method: 'GET' | 'POST' | 'PUT', path: string, body?: unknown): Promise<DaemonResponse> => {
+  const callDaemon = async (method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<DaemonResponse> => {
     let response: Response;
     try {
       response = await fetchImpl(`${options.daemonBaseUrl}${path}`, {
@@ -339,6 +339,70 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
   const runIdSchema = {
     runId: z.string().min(1).describe('Run id as listed by agent_ops_list_runs.'),
   };
+  const roleIdSchema = {
+    roleId: z.string().min(1).describe('Role id as listed by agent_ops_list_roles.'),
+  };
+  const rolePolicySchema = z.object({
+    allowedTools: z.array(z.string()).max(100).optional(),
+    blockedTools: z.array(z.string()).max(100).optional(),
+    approvalMode: z.enum(['auto', 'human', 'strict']).optional(),
+  }).optional();
+  const roleFieldsSchema = {
+    name: z.string().trim().min(1).max(100).optional().describe('Human-readable role name.'),
+    description: z.string().max(500).optional().describe('What this role is for.'),
+    baseAgentId: z.string().trim().min(1).max(100).optional().describe('Verified base agent, e.g. "codex".'),
+    profileId: z.string().trim().min(1).max(100).optional().describe('Existing Agent Profile id; its base agent wins.'),
+    systemPrompt: z.string().max(10_000).optional().describe('Role-specific instructions appended to the task prompt.'),
+    acceptanceCriteria: z.array(z.string().trim().min(1).max(500)).max(20).optional().describe('Role-level acceptance criteria.'),
+    runtimePolicy: rolePolicySchema.describe('Allowed/blocked tools and the human approval mode.'),
+    enabled: z.boolean().optional().describe('Whether the role may be assigned to new tasks.'),
+  };
+
+  server.registerTool('agent_ops_list_roles', {
+    title: 'List roles',
+    description: 'List the local roles: name, base agent or Profile, enabled state and runtime policy.',
+    annotations: READ_ONLY,
+  }, () => callDaemon('GET', '/api/roles').then(toResult));
+
+  server.registerTool('agent_ops_get_role', {
+    title: 'Get role',
+    description: 'Get one role and its base agent or Profile binding.',
+    inputSchema: roleIdSchema,
+    annotations: READ_ONLY,
+  }, args => callDaemon('GET', `/api/roles/${encodeURIComponent(args.roleId)}`).then(toResult));
+
+  server.registerTool('agent_ops_create_role', {
+    title: 'Create role',
+    description: 'Create a role bound to a verified base agent or an existing Agent Profile.',
+    inputSchema: {
+      name: z.string().trim().min(1).max(100).describe('Human-readable role name.'),
+      description: z.string().max(500).optional().describe('What this role is for.'),
+      baseAgentId: z.string().trim().min(1).max(100).optional().describe('Verified base agent, e.g. "codex".'),
+      profileId: z.string().trim().min(1).max(100).optional().describe('Existing Agent Profile id; its base agent wins.'),
+      systemPrompt: z.string().max(10_000).optional().describe('Role-specific instructions appended to the task prompt.'),
+      acceptanceCriteria: z.array(z.string().trim().min(1).max(500)).max(20).optional().describe('Role-level acceptance criteria.'),
+      runtimePolicy: rolePolicySchema.describe('Allowed/blocked tools and the human approval mode.'),
+      enabled: z.boolean().optional().describe('Whether the role may be assigned to new tasks.'),
+    },
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', '/api/roles', args).then(toResult));
+
+  server.registerTool('agent_ops_update_role', {
+    title: 'Update role',
+    description: 'Update a role without recreating it. At least one field must change.',
+    inputSchema: { ...roleIdSchema, ...roleFieldsSchema },
+    annotations: ADDITIVE,
+  }, args => {
+    const { roleId, ...fields } = args;
+    return callDaemon('PUT', `/api/roles/${encodeURIComponent(roleId)}`, fields).then(toResult);
+  });
+
+  server.registerTool('agent_ops_delete_role', {
+    title: 'Delete role',
+    description: 'Delete a role definition. Existing tasks and runs keep their recorded role id.',
+    inputSchema: roleIdSchema,
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  }, args => callDaemon('DELETE', `/api/roles/${encodeURIComponent(args.roleId)}`).then(toResult));
 
   server.registerTool('agent_ops_list_tasks', {
     title: 'List tasks',
@@ -362,6 +426,19 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
       title: z.string().trim().min(1).describe('Short task title.'),
       objective: z.string().trim().max(2000).optional().describe('What the task should achieve.'),
       recipe: z.string().trim().max(500).optional().describe('Optional preset or product type, e.g. "webapp-golden-path".'),
+      acceptanceCriteria: z.array(z.string().trim().min(1).max(500)).max(20).optional().describe('Verifiable acceptance criteria.'),
+      priority: z.enum(['low', 'medium', 'high']).optional().describe('Task priority; defaults to medium.'),
+      roleId: z.string().trim().min(1).optional().describe('Optional Role that owns this task; see agent_ops_list_roles.'),
+      pipeline: z.object({
+        steps: z.array(z.object({
+          id: z.string().trim().min(1).max(100).optional(),
+          name: z.string().trim().min(1).max(100),
+          roleId: z.string().trim().min(1).max(100).optional(),
+          profileId: z.string().trim().min(1).max(100).optional(),
+          agentId: z.string().trim().min(1).max(100).optional(),
+          prompt: z.string().trim().max(10_000).optional(),
+        })).min(1).max(20),
+      }).optional().describe('Optional serial pipeline; each step needs roleId, profileId, or agentId.'),
     },
     annotations: ADDITIVE,
   }, args => callDaemon('POST', '/api/tasks', {
@@ -370,6 +447,10 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     title: args.title,
     ...(args.objective ? { objective: args.objective } : {}),
     ...(args.recipe ? { recipe: args.recipe } : {}),
+    ...(args.acceptanceCriteria ? { acceptanceCriteria: args.acceptanceCriteria } : {}),
+    ...(args.priority ? { priority: args.priority } : {}),
+    ...(args.roleId ? { roleId: args.roleId } : {}),
+    ...(args.pipeline ? { pipeline: args.pipeline } : {}),
   }).then(toResult));
 
   server.registerTool('agent_ops_provision_task', {
@@ -378,6 +459,13 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     inputSchema: taskIdSchema,
     annotations: ADDITIVE,
   }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/provision`).then(toResult));
+
+  server.registerTool('agent_ops_execute_pipeline', {
+    title: 'Execute pipeline',
+    description: 'Run a task pipeline serially. Each successful step is reviewed and committed before the next step starts. Synchronous and may take minutes.',
+    inputSchema: taskIdSchema,
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/pipeline/execute`).then(toResult));
 
   server.registerTool('agent_ops_release_task', {
     title: 'Release task',
@@ -399,9 +487,13 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     inputSchema: {
       ...taskIdSchema,
       agentId: z.string().trim().min(1).describe('Agent id, e.g. "codex" or "claude-code"; see agent_ops_get_runtime.'),
+      roleId: z.string().trim().min(1).optional().describe('Optional Role id to record on the run; see agent_ops_list_roles.'),
     },
     annotations: ADDITIVE,
-  }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/runs`, { agentId: args.agentId }).then(toResult));
+  }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/runs`, {
+    agentId: args.agentId,
+    ...(args.roleId ? { roleId: args.roleId } : {}),
+  }).then(toResult));
 
   server.registerTool('agent_ops_get_run', {
     title: 'Get run',
@@ -419,7 +511,7 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
 
   server.registerTool('agent_ops_cancel_run', {
     title: 'Cancel run',
-    description: 'Cancel a currently running run. The run records cancelled evidence and ends in failed so it can be retried.',
+    description: 'Cancel a currently running run. The run records cancelled evidence and ends in cancelled.',
     inputSchema: runIdSchema,
     annotations: ADDITIVE,
   }, args => callDaemon('POST', `/api/runs/${encodeURIComponent(args.runId)}/cancel`).then(toResult));

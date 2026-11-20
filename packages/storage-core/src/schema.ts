@@ -1,4 +1,4 @@
-import { sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 // Task/Run are the Agent Ops kernel model, independent of the webapp-delivery plugin
 // (Project/Blueprint/Apply/Release). A task binds one real repository and base ref; its
@@ -11,6 +11,11 @@ export const tasks = sqliteTable('tasks', {
   recipe: text('recipe').notNull().default(''),
   title: text('title').notNull(),
   objective: text('objective').notNull().default(''),
+  acceptanceCriteria: text('acceptance_criteria').notNull().default('[]'),
+  priority: text('priority').notNull().default('medium'),
+  baseCommit: text('base_commit').notNull().default(''),
+  roleId: text('role_id').notNull().default(''),
+  pipeline: text('pipeline').notNull().default(''),
   status: text('status').notNull(),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
@@ -23,6 +28,21 @@ export const runs = sqliteTable('runs', {
   status: text('status').notNull(),
   diffStat: text('diff_stat').notNull().default(''),
   artifacts: text('artifacts').notNull().default('{}'),
+  commitSha: text('commit_sha').notNull().default(''),
+  roleId: text('role_id').notNull().default(''),
+  runtimeId: text('runtime_id').notNull().default(''),
+  instruction: text('instruction').notNull().default(''),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
+});
+
+// Run events are append-only evidence for SSE replay. `seq` is the store-wide
+// monotonic cursor; `id` is run-scoped so a deleted/re-run run cannot collide.
+export const runEvents = sqliteTable('run_events', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').notNull(),
+  seq: integer('seq').notNull(),
+  type: text('type').notNull(),
+  data: text('data'),
+  at: text('at').notNull(),
 });

@@ -124,10 +124,13 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_cancel_run',
       'agent_ops_create_feature_task',
       'agent_ops_create_project',
+      'agent_ops_create_role',
       'agent_ops_create_run',
       'agent_ops_create_task',
+      'agent_ops_delete_role',
       'agent_ops_doctor',
       'agent_ops_dry_run',
+      'agent_ops_execute_pipeline',
       'agent_ops_execute_run',
       'agent_ops_get_acceptance',
       'agent_ops_get_apply',
@@ -140,10 +143,12 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_get_quality_gate',
       'agent_ops_get_release',
       'agent_ops_get_release_plan',
+      'agent_ops_get_role',
       'agent_ops_get_run',
       'agent_ops_get_runtime',
       'agent_ops_get_task',
       'agent_ops_list_projects',
+      'agent_ops_list_roles',
       'agent_ops_list_runs',
       'agent_ops_list_tasks',
       'agent_ops_provision_task',
@@ -152,6 +157,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_request_release',
       'agent_ops_revise_blueprint',
       'agent_ops_submit_acceptance',
+      'agent_ops_update_role',
     ]);
     // Acceptance submissions are exposed by design; the approval acts never are.
     expect(names.some(name => name.includes('approve'))).toBe(false);
@@ -167,6 +173,42 @@ describe('agent-ops MCP bridge', () => {
     expect(byName.get('agent_ops_submit_acceptance')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
 
     expect(client.getServerVersion()).toMatchObject({ name: 'agent-ops', version: packageJson.version });
+  });
+
+  it('creates and manages a role through the daemon', async () => {
+    const client = await startBridge();
+
+    const created = await client.callTool({
+      name: 'agent_ops_create_role',
+      arguments: {
+        name: 'Reviewer',
+        baseAgentId: 'codex',
+        acceptanceCriteria: ['Read the diff without writes.'],
+        runtimePolicy: { allowedTools: ['Read'], blockedTools: ['Write', 'Edit'], approvalMode: 'strict' },
+      },
+    });
+    expect(created.isError).toBeFalsy();
+    const { role } = JSON.parse(textOf(created)) as { role: { id: string; name: string } };
+    expect(role).toMatchObject({ id: 'reviewer', name: 'Reviewer' });
+
+    const listed = await client.callTool({ name: 'agent_ops_list_roles', arguments: {} });
+    expect(listed.isError).toBeFalsy();
+    expect(textOf(listed)).toContain(role.id);
+
+    const single = await client.callTool({ name: 'agent_ops_get_role', arguments: { roleId: role.id } });
+    expect(single.isError).toBeFalsy();
+    expect(JSON.parse(textOf(single))).toMatchObject({ role: { name: 'Reviewer' } });
+
+    const updated = await client.callTool({
+      name: 'agent_ops_update_role',
+      arguments: { roleId: role.id, enabled: false },
+    });
+    expect(updated.isError).toBeFalsy();
+    expect(JSON.parse(textOf(updated))).toMatchObject({ role: { enabled: false } });
+
+    const deleted = await client.callTool({ name: 'agent_ops_delete_role', arguments: { roleId: role.id } });
+    expect(deleted.isError).toBeFalsy();
+    expect(JSON.parse(textOf(deleted))).toMatchObject({ deleted: true });
   });
 
   it('creates and reads a project through the daemon', async () => {
@@ -366,16 +408,40 @@ describe('agent-ops MCP bridge', () => {
 
   it('creates and lists kernel tasks and runs through the daemon', async () => {
     const client = await startBridge();
+    const roleCreated = await client.callTool({
+      name: 'agent_ops_create_role',
+      arguments: { name: 'MCP Runner', baseAgentId: 'codex' },
+    });
+    expect(roleCreated.isError).toBeUndefined();
+    const role = JSON.parse(textOf(roleCreated)) as { role: { id: string } };
+
     const created = await client.callTool({
       name: 'agent_ops_create_task',
-      arguments: { repo: '/Users/jiangfeng/000mycodes/agent-ops', baseRef: 'dev', title: 'MCP kernel probe', objective: 'Verify the task/run tools reach the daemon.', recipe: 'storefront' },
+      arguments: {
+        repo: '/Users/jiangfeng/000mycodes/agent-ops',
+        baseRef: 'dev',
+        title: 'MCP kernel probe',
+        objective: 'Verify the task/run tools reach the daemon.',
+        recipe: 'storefront',
+        acceptanceCriteria: ['The task and run tools reach the daemon.'],
+        priority: 'high',
+        roleId: role.role.id,
+        pipeline: {
+          steps: [{ id: 'mcp-step', name: 'MCP step', roleId: role.role.id, prompt: 'Do the work.' }],
+        },
+      },
     });
     expect(created.isError).toBeUndefined();
-    const task = JSON.parse(textOf(created)) as { id: string; title: string; repo: string; baseRef: string; recipe: string; status: string };
+    const task = JSON.parse(textOf(created)) as { id: string; title: string; repo: string; baseRef: string; recipe: string; status: string; roleId: string | null; acceptanceCriteria: string[]; priority: string; pipeline: { status: string; steps: { id: string; name: string; roleId?: string }[] } | null };
     expect(task.id).toBeTruthy();
     expect(task.title).toBe('MCP kernel probe');
     expect(task.status).toBe('queued');
     expect(task.recipe).toBe('storefront');
+    expect(task.roleId).toBe(role.role.id);
+    expect(task.acceptanceCriteria).toEqual(['The task and run tools reach the daemon.']);
+    expect(task.priority).toBe('high');
+    expect(task.pipeline?.status).toBe('idle');
+    expect(task.pipeline?.steps[0]).toMatchObject({ id: 'mcp-step', name: 'MCP step', roleId: role.role.id });
 
     const listed = await client.callTool({ name: 'agent_ops_list_tasks', arguments: {} });
     const tasks = JSON.parse(textOf(listed)) as { id: string }[];
@@ -387,10 +453,12 @@ describe('agent-ops MCP bridge', () => {
 
     const runCreated = await client.callTool({ name: 'agent_ops_create_run', arguments: { taskId: task.id, agentId: 'codex' } });
     expect(runCreated.isError).toBeUndefined();
-    const run = JSON.parse(textOf(runCreated)) as { id: string; agentId: string; status: string };
+    const run = JSON.parse(textOf(runCreated)) as { id: string; agentId: string; status: string; roleId: string | null; runtimeId: string | null };
     expect(run.id).toBeTruthy();
     expect(run.agentId).toBe('codex');
     expect(run.status).toBe('queued');
+    expect(run.roleId).toBe(role.role.id);
+    expect(run.runtimeId).toBeNull();
 
     const runs = await client.callTool({ name: 'agent_ops_list_runs', arguments: { taskId: task.id } });
     const runList = JSON.parse(textOf(runs)) as { id: string }[];
