@@ -70,3 +70,17 @@ export const runHandoffs = sqliteTable('run_handoffs', {
   artifacts: text('artifacts').notNull().default('[]'),
   createdAt: text('created_at').notNull(),
 });
+
+// Audit events replay who changed the kernel model and what the human gates decided: role and
+// team edits, task assignment, accepted/rejected runs, pipeline approvals and handoffs. They are
+// append-only and ordered by a store-wide `seq`, so a task's history can be read back in order.
+export const auditEvents = sqliteTable('audit_events', {
+  id: text('id').primaryKey(),
+  seq: integer('seq').notNull(),
+  taskId: text('task_id').notNull().default(''),
+  teamId: text('team_id').notNull().default(''),
+  actor: text('actor').notNull().default('operator'),
+  type: text('type').notNull(),
+  data: text('data').notNull().default('{}'),
+  at: text('at').notNull(),
+});

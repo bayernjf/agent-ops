@@ -28,6 +28,11 @@ export type UpdateTeamInput = {
 /** Only the fields the store checks; kept structural so the caller can pass RoleStore.getRole. */
 export type TeamRoleLookup = (id: string) => Promise<{ id: string; enabled: boolean } | null>;
 
+export type TeamStoreChange = {
+  action: 'created' | 'updated' | 'deleted';
+  team: AgentTeam;
+};
+
 /**
  * Teams live beside Roles and Profiles as a user-level JSON store. A team is a roster plus handoff
  * edges, so a single-user file keeps one source of truth while the model is still moving; a SQL table
@@ -36,12 +41,18 @@ export type TeamRoleLookup = (id: string) => Promise<{ id: string; enabled: bool
 export class TeamStore {
   private readonly filePath: string;
   private readonly lookupRole: TeamRoleLookup;
+  private readonly onChange?: (change: TeamStoreChange) => void | Promise<void>;
   private cache: AgentTeam[] | null = null;
   private corrupted = false;
 
-  constructor(dataDirectory: string, lookupRole: TeamRoleLookup) {
+  constructor(
+    dataDirectory: string,
+    lookupRole: TeamRoleLookup,
+    onChange?: (change: TeamStoreChange) => void | Promise<void>,
+  ) {
     this.filePath = join(dataDirectory, 'agent-teams.json');
     this.lookupRole = lookupRole;
+    this.onChange = onChange;
   }
 
   async listTeams(): Promise<AgentTeam[]> {
@@ -77,6 +88,7 @@ export class TeamStore {
     existing.push(team);
     await this.saveToDisk(existing);
     this.cache = existing;
+    await this.onChange?.({ action: 'created', team });
     return team;
   }
 
@@ -98,6 +110,7 @@ export class TeamStore {
     teams[index] = updated;
     await this.saveToDisk(teams);
     this.cache = teams;
+    await this.onChange?.({ action: 'updated', team: updated });
     return updated;
   }
 
@@ -105,9 +118,10 @@ export class TeamStore {
     const teams = await this.listTeams();
     const index = teams.findIndex(team => team.id === id);
     if (index === -1) return false;
-    teams.splice(index, 1);
+    const [removed] = teams.splice(index, 1);
     await this.saveToDisk(teams);
     this.cache = teams;
+    if (removed) await this.onChange?.({ action: 'deleted', team: removed });
     return true;
   }
 

@@ -133,4 +133,25 @@ export const kernelMigrations: readonly Migration[] = [
         ON run_handoffs(to_run_id);
     `,
   },
+  {
+    id: '0018_audit_events',
+    sql: `
+      CREATE TABLE IF NOT EXISTS audit_events (
+        id TEXT PRIMARY KEY NOT NULL,
+        seq INTEGER NOT NULL,
+        task_id TEXT NOT NULL DEFAULT '',
+        team_id TEXT NOT NULL DEFAULT '',
+        actor TEXT NOT NULL DEFAULT 'operator',
+        type TEXT NOT NULL,
+        data TEXT NOT NULL DEFAULT '{}',
+        at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_audit_events_task_seq
+        ON audit_events(task_id, seq);
+
+      CREATE INDEX IF NOT EXISTS idx_audit_events_seq
+        ON audit_events(seq);
+    `,
+  },
 ];
