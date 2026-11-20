@@ -601,6 +601,13 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: ADDITIVE,
   }, args => callDaemon('POST', `/api/runs/${encodeURIComponent(args.runId)}/execute`).then(toResult));
 
+  server.registerTool('agent_ops_export_task', {
+    title: 'Export task evidence',
+    description: 'Export one task as a single JSON document: task and pipeline, every run with diff, output and exit code, handoff receipts, the audit trail and usage totals. Usage totals are null when no run reported them.',
+    inputSchema: taskIdSchema,
+    annotations: READ_ONLY,
+  }, args => callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}/export`).then(toResult));
+
   server.registerTool('agent_ops_cancel_run', {
     title: 'Cancel run',
     description: 'Cancel a currently running run. The run records cancelled evidence and ends in cancelled.',

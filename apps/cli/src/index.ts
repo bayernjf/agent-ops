@@ -1,4 +1,8 @@
 import { spawnSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { runConnectorPreflight } from '@agent-ops/policy';
 import { startDaemon } from '@agent-ops/daemon';
 
@@ -45,7 +49,37 @@ async function main() {
     return;
   }
 
-  console.log('Usage: agent-ops <doctor|start|mcp>');
+  if (command === 'export') {
+    const taskId = process.argv[3];
+    if (!taskId || taskId.startsWith('--')) {
+      console.error('Usage: agent-ops export <taskId> [--out <file>]');
+      process.exitCode = 1;
+      return;
+    }
+    const daemonBaseUrl = process.env.AGENT_OPS_DAEMON_URL ?? 'http://127.0.0.1:3737';
+    const tokenPath = process.env.AGENT_OPS_DAEMON_TOKEN_PATH ?? join(homedir(), '.agent-ops', 'daemon-token');
+    const authToken = process.env.AGENT_OPS_DAEMON_TOKEN ?? (existsSync(tokenPath) ? readFileSync(tokenPath, 'utf8').trim() : '');
+    const response = await fetch(`${daemonBaseUrl}/api/tasks/${encodeURIComponent(taskId)}/export`, {
+      headers: authToken ? { authorization: `Bearer ${authToken}` } : {},
+    });
+    const body = await response.text();
+    if (!response.ok) {
+      console.error(body);
+      process.exitCode = 1;
+      return;
+    }
+    const outIndex = process.argv.indexOf('--out');
+    const outPath = outIndex >= 0 ? process.argv[outIndex + 1] : undefined;
+    if (outPath) {
+      await writeFile(outPath, body.endsWith('\n') ? body : `${body}\n`, 'utf8');
+      console.log(JSON.stringify({ written: outPath, bytes: Buffer.byteLength(body, 'utf8') }, null, 2));
+      return;
+    }
+    console.log(body);
+    return;
+  }
+
+  console.log('Usage: agent-ops <doctor|start|mcp|export>');
   process.exitCode = 1;
 }
 

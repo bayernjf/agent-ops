@@ -134,6 +134,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_dry_run',
       'agent_ops_execute_pipeline',
       'agent_ops_execute_run',
+      'agent_ops_export_task',
       'agent_ops_get_acceptance',
       'agent_ops_get_apply',
       'agent_ops_get_baseline_plan',
@@ -267,6 +268,23 @@ describe('agent-ops MCP bridge', () => {
     expect(audit.isError).toBeFalsy();
     const { events } = JSON.parse(textOf(audit)) as { events: Array<{ type: string; data: { name?: string } }> };
     expect(events).toContainEqual(expect.objectContaining({ type: 'role.created', data: expect.objectContaining({ name: 'Audit role' }) }));
+  });
+
+  it('exports a task through the daemon', async () => {
+    const client = await startBridge();
+    const created = await client.callTool({
+      name: 'agent_ops_create_task',
+      arguments: { repo: '/r', baseRef: 'main', title: 'MCP export' },
+    });
+    expect(created.isError).toBeFalsy();
+    const { id } = JSON.parse(textOf(created)) as { id: string };
+
+    const exported = await client.callTool({ name: 'agent_ops_export_task', arguments: { taskId: id } });
+    expect(exported.isError).toBeFalsy();
+    const body = JSON.parse(textOf(exported)) as { task: { id: string }; totals: { runs: number; costUsd: number | null } };
+    expect(body.task.id).toBe(id);
+    expect(body.totals.runs).toBe(0);
+    expect(body.totals.costUsd).toBeNull();
   });
 
   it('creates and reads a project through the daemon', async () => {
