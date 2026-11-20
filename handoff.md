@@ -340,4 +340,15 @@
 - [x] server：`POST /api/tasks/:id/parallel/execute`（`maxConcurrency` 1–8，越界 400）；MCP：新增 `agent_ops_execute_parallel`。
 - [x] 测试：3 角色团队按并发 2 跑 3 条 lane，实测最大并发 = 2、三个独立 worktree、每 lane 自有文件 + 两条 lane 共享的 `SHARED.md` 被列为冲突、任务落 `review`、审计含 `parallel.executed`；一个 lane 失败时另一个仍成功且任务仍 `review`；未 provision 的任务报 `no worktree`；server 200/400。全仓 typecheck 0，58 文件 / 698 tests 绿。
 - [x] 本轮提交：`2411c85 feat(storage-core): add parallel team lanes`、`a63ef21 feat(server-core): expose parallel lanes`、`64033fb feat(cli): add the parallel lane tool`。
-- [ ] 未做：**没有自动合并或合成**——lane 产出的 commit 需要人工逐个接受或放弃；现有 `acceptRun` 会把任务直接置 `done`，并行任务的接受语义尚未定义；`releaseTask` 不会清理 lane worktree；Studio 没有并行入口；真实模型的并行执行未跑（CLI 登录仍阻塞）。
+- [ ] 未做：**没有自动合并或合成**——lane 产出的 commit 需要人工逐个接受或放弃（接受语义见下节）；`releaseTask` 不会清理 lane worktree；Studio 没有并行入口；真实模型的并行执行未跑（CLI 登录仍阻塞）。
+
+## 并行任务接受语义 — 已完成（2026-11-20）
+
+- [x] migration `0019_run_lane`：`runs.worktree_path` / `runs.lane_id`；`RunRecord.worktreePath` / `laneId` 随 API 返回，普通 Run 为 null。
+- [x] `executeRun` 接受 `laneId` 并把实际 worktree 与 lane 落到 Run 上；并行 lane 走各自 worktree，普通 Run 仍用任务 worktree。
+- [x] `acceptRun` 在 Run 自己的 worktree 里提交；lane commit pin 到 `refs/agent-ops/tasks/<taskId>/lanes/<laneId>`，多条 lane 接受互不覆盖。
+- [x] 并行任务状态：接受一条 lane 后，若仍有 `queued`/`running`/`review` 的 lane，任务保持 `review`；全部决定后才置 `done`。驳回一条 lane 只 reset 该 lane 的 worktree，任务保持 `review`，该 Run 回到 `queued` 可重跑。
+- [x] `run.accepted` / `run.rejected` 审计新增 `laneId`；Studio Run 身份行显示 `Lane`（并行通道）。
+- [x] 测试：两条 lane 各自接受后任务才 `done`、主 worktree 未被污染、lane commit 在各自 worktree HEAD 且 pin ref 存在；驳回 lane 后任务仍 `review`、lane worktree 干净、文件被清掉。全仓 typecheck 0，58 文件 / 700 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
+- [x] 本轮提交：`5b32c6f feat(storage-core): accept parallel lanes`、`6bee0e6 feat(studio): label parallel lane runs`。
+- [ ] 未做：仍然**不自动合并**多 lane 结果，也没有“选哪条 lane 作为最终交付”的一等操作；`releaseTask` 不清理 lane worktree；并行任务没有专用 UI 入口（接受/驳回仍走普通 Run 操作）。
