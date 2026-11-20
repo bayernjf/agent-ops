@@ -279,9 +279,9 @@ E0 基础闭环修复
 
 **F4-01/F4-02/F4-03 完成记录（2026-11-20）**：migration `0012_task_role` 给 `tasks` 增加 `role_id`；`createTask` 校验 Role 存在且启用；`createRun` 默认继承 Task Role，显式 role 可覆盖，并校验 Role baseAgent 与 run agent（含 `local-*` 前缀和 Profile base）一致。`buildAgentExecutionPlan` 追加 Role 职责、systemPrompt、验收标准、allowed/blocked tools 与 approval mode。server 与 MCP Task 创建支持 roleId；MCP create_task 同时开放 acceptanceCriteria/priority。全仓 typecheck 0、48 文件 / 639 tests 绿。Team 字段、F4-04 版本/成本、F4-05 重跑 hygiene、F4-06 预算未做；Run 不会自动采用 Role 的 profileId 作为执行 Profile。
 
-**F6-01/F6-02/F6-03 完成记录（2026-11-20）**：migration `0013_task_pipeline` 给 `tasks` 增加 `pipeline`，`0014_run_instruction` 给 `runs` 增加 `instruction`；`TaskPipeline` 支持 `roleId/profileId/agentId/prompt`，`createTask` 校验执行身份和 Role/Profile base 一致。`executeTaskPipeline` 仅允许 `idle` 启动，用 `activePipelines` 拒绝并发；每步创建 Run 并写入 step instruction，成功后必须 `review` 再 `acceptRun` 自动提交，然后才进入下一步；失败即停并记录 step error。所有 step 共用同一 worktree，下游基于上一步 commit。server 提供 pipeline 读取/执行端点，MCP 提供 create_task pipeline 入参与 execute_pipeline 工具。两步串行成功、失败即停、server 路由和 MCP 透传均有测试；全仓 typecheck 0、49 文件 / 643 tests 绿。F6-04、F6-05 已在后续完成；F6-06 并行 DAG 未做；completed pipeline 仍不支持直接重跑。
+**F6-01/F6-02/F6-03 完成记录（2026-11-20）**：migration `0013_task_pipeline` 给 `tasks` 增加 `pipeline`，`0014_run_instruction` 给 `runs` 增加 `instruction`；`TaskPipeline` 支持 `roleId/profileId/agentId/prompt`，`createTask` 校验执行身份和 Role/Profile base 一致。`executeTaskPipeline` 仅允许 `idle` 启动，用 `activePipelines` 拒绝并发；每步创建 Run 并写入 step instruction，成功后必须 `review` 再 `acceptRun` 自动提交，然后才进入下一步；失败即停并记录 step error。所有 step 共用同一 worktree，下游基于上一步 commit。server 提供 pipeline 读取/执行端点，MCP 提供 create_task pipeline 入参与 execute_pipeline 工具。两步串行成功、失败即停、server 路由和 MCP 透传均有测试；全仓 typecheck 0、49 文件 / 643 tests 绿。F6-04、F6-05、F6-06 已在后续完成；completed pipeline 仍不支持直接重跑。
 
-**F6-04/F6-05 完成记录（2026-11-20）**：F6-04 给 step 增加 `requiresApproval`，Run 进入 `review` 后暂停为 `awaiting_approval`，`approvePipelineStep` 接受当前 Run 并继续，`rejectPipelineStep` 重置到当前 step 的前置 commit 后置 failed；server 提供 approve/reject，Studio 提供审批开关与按钮。F6-05 新增 `retryTaskPipeline`：只接受 failed pipeline，重置到失败 step 的前置 commit（首步回 `baseCommit`），保留已完成 step 的 result/commit，清掉 failed 及后续结果后从失败 step 重跑；server `POST /api/tasks/:id/pipeline/retry`，MCP `agent_ops_retry_pipeline`，Studio failed 状态改为重试按钮。修复 reject 会重置到任务 base 并抹掉已完成 step commit 的缺陷。测试 49 文件 / 652 tests 绿；completed pipeline 重跑、step output 模板、F6-06 并行 DAG 未做。
+**F6-04/F6-05 完成记录（2026-11-20）**：F6-04 给 step 增加 `requiresApproval`，Run 进入 `review` 后暂停为 `awaiting_approval`，`approvePipelineStep` 接受当前 Run 并继续，`rejectPipelineStep` 重置到当前 step 的前置 commit 后置 failed；server 提供 approve/reject，Studio 提供审批开关与按钮。F6-05 新增 `retryTaskPipeline`：只接受 failed pipeline，重置到失败 step 的前置 commit（首步回 `baseCommit`），保留已完成 step 的 result/commit，清掉 failed 及后续结果后从失败 step 重跑；server `POST /api/tasks/:id/pipeline/retry`，MCP `agent_ops_retry_pipeline`，Studio failed 状态改为重试按钮。修复 reject 会重置到任务 base 并抹掉已完成 step commit 的缺陷。测试 49 文件 / 652 tests 绿；completed pipeline 重跑、step output 模板未做；F6-06 并行 DAG 已在后续完成。
 
 **F4-04/F7-05 完成记录（2026-11-20）**：migration `0015_run_execution_evidence` 给 `runs` 增加 `runtime_version` / `command` / `input_tokens` / `output_tokens` / `cost_usd`；`RunRecord` 与 server Run 详情直接暴露这些字段。`executeRun` 在构造计划后写入实际命令行（4000 字符截断），runner 返回后写入版本与 usage；`agent-runtime` 新增 `probeAgentVersion`，spawn 前探测版本，失败返回 null 且不阻塞执行。未上报的 token/cost 保持 null，不写 0。Studio Run 身份行展示 role/runtime/version/commit/tokens/cost，证据面板展示 command。测试 49 文件 / 654 tests 绿。真实 CLI 尚未提供 usage，UI 显示 `—`；命令含 prompt，仅限长不脱敏。
 
@@ -289,7 +289,7 @@ E0 基础闭环修复
 
 
 
-**角色与团队功能面完成记录（2026-11-20）**：F5-01 Team schema（`agent-teams.json`，花名册 + 无环交接边）、F5-02 `/api/teams` CRUD 与 MCP 5 个团队工具、F5-03 Task `team_id` 派活；F5-04 交接收据 `run_handoffs`（上游 commit + changedFiles，可按任务/Run 查询并进导出）；F5-05/F7-03 Studio TeamsView（花名册 / 交接边 / 队列 / 团队计划 / 卡点 / 用量）；F5-06 串行 Coordinator（按花名册与交接边确定性推导 Pipeline，人工点“应用”才落库，并有不调模型的分步汇总）；F5-07 并行 lanes（每角色独立 worktree、`maxConcurrency` 有界、文件冲突只报告不自动合并；接受按 lane 独立提交并 pin，任务需全部 lane 决定后才 done）；F7-06 指标支持 `teamId` 过滤；F8-02 `audit_events` 回放、F8-03 单任务证据导出、F8-04 `getMetrics`；F1-06 5 个角色模板、F1-07 角色 dry-run 试跑；F3-04 工具调用审计（拿不到标 unknown）、F3-05 `@agent-ops/policy` 统一策略层；F4-05 重跑 hygiene（auto/keep/fresh）、F4-06 Role/Team 成本预算；F10-03 README/AGENTS/handoff 同步。全仓 typecheck 0、61 文件 / 725 tests 绿；Studio 14 文件 / 257 tests 与 `vite build` 通过。M1 退出标准中的真实模型 UI E2E 仍 blocked（CLI 未登录），F10-01 dogfood 尚未开始；F6-06 并行 DAG 未实现，F5-06 的“自动拆子任务”仍需模型。
+**角色与团队功能面完成记录（2026-11-20）**：F5-01 Team schema（`agent-teams.json`，花名册 + 无环交接边）、F5-02 `/api/teams` CRUD 与 MCP 5 个团队工具、F5-03 Task `team_id` 派活；F5-04 交接收据 `run_handoffs`（上游 commit + changedFiles，可按任务/Run 查询并进导出）；F5-05/F7-03 Studio TeamsView（花名册 / 交接边 / 队列 / 团队计划 / 卡点 / 用量）；F5-06 串行 Coordinator（按花名册与交接边确定性推导 Pipeline，人工点“应用”才落库，并有不调模型的分步汇总）；F5-07 并行 lanes（每角色独立 worktree、`maxConcurrency` 有界、文件冲突只报告不自动合并；接受按 lane 独立提交并 pin，任务需全部 lane 决定后才 done）；F7-06 指标支持 `teamId` 过滤；F8-02 `audit_events` 回放、F8-03 单任务证据导出、F8-04 `getMetrics`；F1-06 5 个角色模板、F1-07 角色 dry-run 试跑；F3-04 工具调用审计（拿不到标 unknown）、F3-05 `@agent-ops/policy` 统一策略层；F4-05 重跑 hygiene（auto/keep/fresh）、F4-06 Role/Team 成本预算；F10-03 README/AGENTS/handoff 同步。全仓 typecheck 0、61 文件 / 725 tests 绿；Studio 14 文件 / 257 tests 与 `vite build` 通过。M1 退出标准中的真实模型 Run 已用 CodeBuddy v2.185.0 跑通：先通过内核 API 创建文件并 accept，再在 Studio UI 用“角色 + 一步 Pipeline + Run pipeline”完成第二条并落 commit `ea4553f7d2`（Claude Code / Codex 仍受 CC Switch 阻塞），F10-01 dogfood 尚未开始；F6-06 并行 DAG（v1：多依赖只从最后一个依赖检出、无自动合并）已实现，F5-06 的“自动拆子任务”仍需模型。
 
 ### M2 团队与狗粮（2026-12-11 → 2026-12-24）
 
@@ -312,7 +312,7 @@ E0 基础闭环修复
 - 3–5 个 dogfood 完成，记录接受率/测试通过率/返工率。
 - 无 P0 数据丢失/权限违规。
 
-**状态（2026-11-20）**：上表第 1–4、6 项已完成并有测试；第 5 项（3–5 个 dogfood）仍 blocked 于真实模型登录，退出标准里的“5 角色团队完成真实仓库任务”因此尚未验收。
+**状态（2026-11-21）**：上表第 1–4、6 项已完成并有测试；第 5 项已用 CodeBuddy 完成 3 条真实 dogfood（接受率 3/3、检查通过 3/3、返工 1 次人工小修）。退出标准里的“5 角色团队完成真实仓库任务”已用真实模型跑通一轮串行（架构→实现→审查→测试→汇总，5 个 commit + 4 条 handoff，产物为 `docs/dogfood/team-run/`），但该轮只产出文档笔记、未落盘 README 指定小节，暴露“落盘 owner 未指派”的缺口，记为限制而非通过。
 
 ### M3 并行与扩展（2026-12-25 → 2027-01-14）
 
@@ -607,3 +607,7 @@ npm --workspace @agent-ops/studio run build
 | 2026-11-19 | 同步 PD-1～PD-9：自有 Harness 不投入；Pi/DSH 保留实验；Q8 关闭 |
 | 2026-11-20 | M0 完成：accept commit/SHA、release guard、reject reset、Task criteria/priority；614 tests 绿 |
 | 2026-11-20 | M2 功能面完成：Team/Handoff/TeamsView、串行 Coordinator、并行 lanes（有界并发、冲突报告、按 lane 接受）、审计/导出/指标、角色模板/试跑、工具审计、统一策略层、重跑 hygiene、成本预算、文档同步；725 tests 绿；真实模型验收与 dogfood 仍 blocked |
+| 2026-11-20 | 真实模型 Run（API 路径）完成：CodeBuddy v2.185.0 创建文件并 accept 成 commit；M1 的 UI 点击验收与 dogfood 待做 |
+| 2026-11-20 | 真实模型 Run（UI 路径）完成：Studio 建角色 + 一步 Pipeline 后点 Run pipeline，CodeBuddy 落 commit `ea4553f7d2`；同时修复 UI 不 provision / 不刷新 Run 列表两个缺陷 |
+| 2026-11-21 | 真实 dogfood 3 条完成（Studio 重跑策略 / Studio 预算面板 / CLI export --summary）：接受率 3/3、检查通过 3/3、返工 1 次小修；5 角色团队真实任务待跑 |
+| 2026-11-21 | 五角色团队串行真实跑通：5 步全 completed、5 个 agent commit、4 条 handoff、420 s；产物为 docs 笔记，暴露“落盘 owner 未指派”缺口 |

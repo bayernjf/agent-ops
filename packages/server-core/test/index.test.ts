@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { KernelStore } from '@agent-ops/storage-core';
@@ -749,6 +749,63 @@ describe('createKernelApp', () => {
       expect(body.conflicts).toEqual([{ file: 'lane.md', roleIds: [left.id, right.id] }]);
 
       const invalid = await app.request(`/api/tasks/${task.id}/parallel/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ maxConcurrency: 0 }),
+      });
+      expect(invalid.status).toBe(400);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('executes a DAG pipeline over the API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        await writeFile(join(options.cwd, `${basename(options.cwd)}.md`), 'ok\n', 'utf8');
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'ok',
+          startedAt: new Date(Date.now() - 5).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+      const app = createKernelApp(store, { runner });
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'DAG over HTTP',
+        pipeline: {
+          steps: [
+            { id: 'left', name: 'Left', agentId: 'codex', dependsOn: [] },
+            { id: 'right', name: 'Right', agentId: 'codex', dependsOn: [] },
+            { id: 'join', name: 'Join', agentId: 'codex', dependsOn: ['left', 'right'] },
+          ],
+        },
+      });
+      await store.provisionTask(task.id);
+
+      const response = await app.request(`/api/tasks/${task.id}/pipeline/dag`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ maxConcurrency: 2 }),
+      });
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        steps: Array<{ stepId: string; status: string }>;
+        conflicts: unknown[];
+        taskStatus: string;
+      };
+      expect(body.steps.map(step => step.status)).toEqual(['completed', 'completed', 'completed']);
+      expect(body.taskStatus).toBe('review');
+      expect(body.conflicts).toEqual([]);
+
+      const invalid = await app.request(`/api/tasks/${task.id}/pipeline/dag`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ maxConcurrency: 0 }),

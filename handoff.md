@@ -7,12 +7,11 @@
 >
 > 产品规划（非活跃待办，不计入上方待办）：多 Agent 角色与团队 v0.2/v0.3，PRD 见 `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md`，实施拆解见 `docs/prd/Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md`；PD-1～PD-9 已于 2026-11-19 拍板；后续方向备忘（Tier 0 能力包 / 现有 Harness / Personal Agent）见 PRD §12.1–12.2。
 
-- [ ] **真实模型 UI E2E** — 状态：blocked；阻塞：Claude Code / Codex 未登录，OpenCode `serve --service` 启动超过 80 秒无产出；下一步：owner 登录后跑真实写任务。
-- [ ] **登录后真实写任务验收** — 状态：blocked；当前 UI 完成路径使用确定性 E2E runner，不代表真实模型任务已验收。
-- [ ] **3–5 个本仓 dogfood** — 状态：open；下一步：收集 diff / 测试 / 失败率，验证是否能替代手工。
+- [x] **真实模型 UI E2E** — 已完成（2026-11-20）。UI 里新建 CodeBuddy 角色与一步 Pipeline 任务，点 `Run pipeline` 由真实 CodeBuddy 2.185.0 执行，任务 done、Run 可见（commit `ea4553f7d2`）。Claude Code / Codex 仍受 CC Switch `base_url` 阻塞，但不影响 CodeBuddy 路径；真实模型 API 路径与 UI 路径均已有证据。
+- [x] **3–5 个本仓 dogfood** — 已完成 3 条真实任务 + 1 次五角色团队运行（2026-11-21）：单任务接受率 3/3、检查通过率 3/3、返工 1 次人工小修；五角色串行 5 步全部完成并落 5 个 commit（发现“落盘 owner 未指派”的产品缺口）。详见下方 “F10-01/F10-02 Dogfood” 章节。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
-> 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；**M1 退出标准中的“真实模型 UI E2E”仍 blocked**，M2 的 3–5 个 dogfood 因此尚未开始。
+> 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
 > 迁移方案与执行记录见 `bayjf/docs/tier0/Tier0-agent-dev并入AgentOps-迁移方案-2026-11-18.md`。
 
 ## 迁移（move 阶段）— 已完成
@@ -137,7 +136,7 @@
 - [x] MCP `agent_ops_create_task` 接受 `pipeline.steps`；新增 `agent_ops_execute_pipeline`（POST execute，`ADDITIVE` 注解）。
 - [x] 测试：pipeline 持久化/自动 id/重开 DB、两步串行成功（每步不同文件、第二步可见第一步文件、两个不同 commit SHA、Role 分别正确、Task done、worktree clean）、第一步失败即停（仅 1 个 Run、pipeline failed、Task failed）、server pipeline 读取与执行、MCP create_task pipeline 透传；全仓 typecheck 0，49 文件 / 643 tests 绿。
 - [x] 本轮提交：`79644d3 feat(storage-core): add serial task pipelines`、`dffa9db test(storage-core): cover pipeline execution`。
-- [ ] F6 只覆盖 F6-01/F6-02/F6-03；每步审批/暂停恢复（F6-04）、失败重跑与 step base reset（F6-05）、并行 DAG（F6-06）未做。
+- [ ] F6 只覆盖 F6-01/F6-02/F6-03；每步审批/暂停恢复（F6-04）、失败重跑与 step base reset（F6-05）、并行 DAG（F6-06）在后续完成（见 F6-04/F6-05/F6-06 章节）。
 - [ ] Pipeline 当前只允许 `idle` 启动，completed/failed 不能直接重跑；step 间不替换 output 模板，下游只依赖上一步 commit 的 worktree 状态。
 
 ## 技术债 — 已完成
@@ -177,7 +176,7 @@
 - [x] Studio：建任务表单每步新增"需要人工审批后继续"开关；pipeline 面板与 step 行渲染 `awaiting_approval`，暂停时显示 Approve / Reject 按钮；zh/en 文案与状态配色补齐。
 - [x] 测试：storage-core 3 例（暂停、approve 继续、驳回 reset、无门禁拒绝）、server-core 2 例 HTTP approve/reject；全仓 typecheck 0，49 文件 / 649 tests 绿。
 - [x] 本轮提交：`e6e4658 feat(storage-core): pause pipeline steps for approval`、`d4ddacc feat(server-core): expose pipeline approval routes`、`4b4ba7c feat(studio): gate pipeline steps in the task board`。
-- [ ] F6-04 只覆盖串行 Pipeline 的单点审批门禁；F6-06 并行 DAG、F7-05 Run 详情扩展仍未做。
+- [ ] F6-04 只覆盖串行 Pipeline 的单点审批门禁；F6-06 并行 DAG 已在后续完成，F7-05 Run 详情扩展也在后续完成。
 
 ## F6-05 失败重跑 — 已完成（2026-11-20）
 
@@ -189,7 +188,7 @@
 - [x] MCP 新增 `agent_ops_retry_pipeline`；Studio failed 状态的按钮从错误的 execute 改为 Retry failed step，并沿用 busy/错误处理。
 - [x] 测试：三步 Pipeline 首步保留、第二步失败后重试成功、失败文件被清掉、首步 runner 不重复执行、首步 commit 不变、最终 4 个 commit 且 worktree clean；驳回第二步时保留第一步 commit 与文件；server HTTP 重试与 completed 再重试 409；全仓 typecheck 0，49 文件 / 652 tests 绿。
 - [x] 本轮提交：`20d707a feat(storage-core): retry failed pipelines`、`4ec87aa feat(server-core): expose pipeline retry`、`53687f3 feat(studio): retry failed pipeline steps`、`28e4e5a test(storage-core): cover pipeline retry`。
-- [ ] F6-05 只支持 failed pipeline 的重试；completed pipeline 仍不支持 reset 后重跑，step 间 output 模板替换也未做。F6-06 并行 DAG、F7-05 Run 详情扩展仍未做。
+- [ ] F6-05 只支持 failed pipeline 的重试；completed pipeline 仍不支持 reset 后重跑，step 间 output 模板替换也未做。F6-06 并行 DAG 已在后续完成，F7-05 Run 详情扩展也在后续完成。
 
 ## M1 退出验收 — 4 步串行完整组合 — 已完成（2026-11-20）
 
@@ -340,7 +339,7 @@
 - [x] server：`POST /api/tasks/:id/parallel/execute`（`maxConcurrency` 1–8，越界 400）；MCP：新增 `agent_ops_execute_parallel`。
 - [x] 测试：3 角色团队按并发 2 跑 3 条 lane，实测最大并发 = 2、三个独立 worktree、每 lane 自有文件 + 两条 lane 共享的 `SHARED.md` 被列为冲突、任务落 `review`、审计含 `parallel.executed`；一个 lane 失败时另一个仍成功且任务仍 `review`；未 provision 的任务报 `no worktree`；server 200/400。全仓 typecheck 0，58 文件 / 698 tests 绿。
 - [x] 本轮提交：`2411c85 feat(storage-core): add parallel team lanes`、`a63ef21 feat(server-core): expose parallel lanes`、`64033fb feat(cli): add the parallel lane tool`。
-- [ ] 未做：**没有自动合并或合成**——lane 产出的 commit 需要人工逐个接受或放弃（接受语义见下节）；`releaseTask` 不会清理 lane worktree；Studio 没有并行入口；真实模型的并行执行未跑（CLI 登录仍阻塞）。
+- [ ] 未做：**没有自动合并或合成**——lane 产出的 commit 需要人工逐个接受或放弃（接受语义见下节）；Studio 没有并行入口；真实模型的并行执行未跑（CLI 登录仍阻塞）。
 
 ## 并行任务接受语义 — 已完成（2026-11-20）
 
@@ -351,7 +350,13 @@
 - [x] `run.accepted` / `run.rejected` 审计新增 `laneId`；Studio Run 身份行显示 `Lane`（并行通道）。
 - [x] 测试：两条 lane 各自接受后任务才 `done`、主 worktree 未被污染、lane commit 在各自 worktree HEAD 且 pin ref 存在；驳回 lane 后任务仍 `review`、lane worktree 干净、文件被清掉。全仓 typecheck 0，58 文件 / 700 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
 - [x] 本轮提交：`5b32c6f feat(storage-core): accept parallel lanes`、`6bee0e6 feat(studio): label parallel lane runs`。
-- [ ] 未做：仍然**不自动合并**多 lane 结果，也没有“选哪条 lane 作为最终交付”的一等操作；`releaseTask` 不清理 lane worktree；并行任务没有专用 UI 入口（接受/驳回仍走普通 Run 操作）。
+- [ ] 未做：仍然**不自动合并**多 lane 结果，也没有“选哪条 lane 作为最终交付”的一等操作；并行任务没有专用 UI 入口（接受/驳回仍走普通 Run 操作）。
+
+## F5-07 收尾 — release 清理 lane worktree — 已完成（2026-11-20）
+
+- [x] `releaseTask` 现在会先收集所有 Run 记录的非主 worktree（并行 lane 与 DAG step 各一个），逐个 `git status` 检查后再统一删除；任一路径有未提交改动即拒绝释放，主 worktree 保持原样（不会半释放）。
+- [x] 测试：两条 lane 接受并 release 后，主 worktree 与两条 lane worktree 均不存在；存在失败 lane（留下 `DIRTY.md`）时 release 抛 `uncommitted changes` 且主 worktree 未被删除。全仓 typecheck 0，62 文件 / 730 tests 绿。
+- [ ] 未做：release 不清理 `refs/agent-ops/tasks/<id>/lanes/*` 的 pin（保留可审计的 commit）；Studio 的 release 按钮未在浏览器验证。
 
 ## F7-06 团队看板 — 已完成（2026-11-20）
 
@@ -417,3 +422,57 @@
 - [x] 本轮提交：文档同步提交（README、AGENTS、本 handoff 段落）。
 - [x] 后续补齐：`docs/prd/...实施拆解` 已加入“角色与团队功能面完成记录（2026-11-20）”、M2 状态行与 §11 变更记录行（725 tests 基线）。
 - [ ] 未做：README 的能力表按模块描述，不逐条列出 API 路由。
+
+## F6-06 并行 DAG — 已完成（内核版，2026-11-20）
+
+- [x] pipeline step 增加 `dependsOn`：显式 `[]` 表示 DAG 根，未写则沿用串行“上一步”语义；`normalizePipeline` 校验依赖存在、禁自依赖、禁环。
+- [x] `KernelStore.executeDagPipeline(taskId, { runner?, maxConcurrency? })`：按依赖层级调度 ready steps，`maxConcurrency`（默认 2，1–8）分波执行；每步独立 worktree `tasks/<taskId>/dag/<stepId>`，从**最后一个依赖的 commit** 检出。
+- [x] 失败步骤的依赖者标记 `skipped`，其余分支继续跑；任务最终状态：任一 completed → `review`，全部失败 → `failed`。
+- [x] 每步成功后 accept 并 pin 到 `refs/agent-ops/tasks/<taskId>/lanes/dag-<stepId>`；`pipeline.results` 落库（skipped 记为 failed + error）。
+- [x] 新增 `evidenceBase`：DAG step 的 diff 以它自己的 branch base 为准，避免把上游依赖的文件算成本步改动（否则 join 的 changedFiles 会重复上游文件并制造假冲突）。
+- [x] 多依赖时记录 warning（只从最后一个依赖检出，其它依赖 commit 不合并）；跨步骤 changedFiles 交集作为 conflicts 报告，不自动合并。
+- [x] 暂不支持 DAG 中的 `requiresApproval`（显式拒绝并提示改用串行 Pipeline）。
+- [x] server：`POST /api/tasks/:id/pipeline/dag`；MCP：`agent_ops_execute_dag`，`create_task` 的 step 接受 `dependsOn`。
+- [x] 测试：两个根并发（实测 maxActive=2）、join 从 right 检出（可见 RIGHT.md、不可见 LEFT.md）、冲突报告 `SHARED.md`、warning 说明 left 未合并；失败根导致 child skipped 而 other 完成；环 / 未知依赖在 createTask 被拒；requiresApproval 在 DAG 被拒；server 200/400。全仓 typecheck 0，62 文件 / 729 tests 绿。
+- [x] 本轮提交：`30f09ff feat(storage-core): run pipelines as a DAG`、`8f4688a feat(server-core): expose DAG pipeline runs`、`3b307cd feat(cli): add the DAG run tool`。
+- [ ] 未做：没有 DAG 级别的自动合并/合成，多依赖只从最后一个依赖检出；Studio 没有 DAG 编辑器或运行入口；DAG 不支持审批门；真实模型下未验证。
+
+## 真实模型 Run（CodeBuddy）— 已完成（API + UI，2026-11-20）
+
+- [x] 阻塞复盘：Claude Code / Codex 仍被 CC Switch 的 `base_url` 缺失挡住，但本机已安装并登录的 **CodeBuddy v2.185.0** 在 registry 中是 `verified` adapter，可直接使用。
+- [x] 真实执行路径：内核 daemon（`npx tsx apps/cli/src/index.ts start`，端口 3737，DB 落仓库 `.agent-ops/`）→ 建任务 “Real model acceptance” → provision → `agentId: codebuddy` 建 Run → `POST /api/runs/:id/execute`。
+  - 结果：`status=review`、`exitCode=0`、`durationMs=15064`、`runtimeId=codebuddy`、`runtimeVersion=2.185.0`、`changedFiles=['REAL_MODEL.md']`，diff 恰为 `hello from codebuddy` 一行。
+- [x] 内容与提交验收：worktree 中 `REAL_MODEL.md` 精确为 `hello from codebuddy`；`accept` 后 commit `202033823e4ad7f7f12dcbc47717718016688c8a`，worktree clean，任务 `done`。
+- [x] 证据导出：`GET /api/tasks/<id>/export` 确认 `runs=1 / acceptedCommits=1 / changedFiles=1 / durationMs=15064`；usage 三字段为 `null`、tool audit 为 `unknown`（CodeBuddy 不上报），按“不伪造”口径记录。
+- [x] `.agent-ops/` 加入 `.gitignore`（daemon 从仓库根启动时 DB 与任务 worktree 都落在这里）。
+- [x] Studio UI 验收（2026-11-20）：Roles 页新建角色 `UI CodeBuddy`（base agent `codebuddy`）→ Tasks 页新建任务 “UI real model run”（pipeline 一步 `Implement` 绑定该角色）→ 点 `Run pipeline` → 真实 CodeBuddy 执行 → 任务 `done`。
+  - 结果：run `669f2e22-abc2-4432-a22a-5265b3205398`、`codebuddy` 2.185.0、exit 0、14.7s、`changedFiles=['UI_REAL.md']`、commit `ea4553f7d2`；文件内容精确为 `hello from the studio UI`。
+  - UI 中可见：step “Implement / ui-codebuddy / Completed / ea4553f7d2”，Run 列表 “codebuddy Done UI_REAL.md | untracked”。
+- [x] UI 验收过程中发现并修复两个真实缺陷：① 新建任务表单不 provision worktree，`Run pipeline` 直接 409 “no worktree”；② 执行后不刷新已展开任务的 Run 列表（显示 “No runs yet”）。提交 `902d864 fix(studio): provision and refresh pipeline runs`。
+- [ ] 剩余：Claude Code / Codex 仍受 CC Switch `base_url` 阻塞；CodeBuddy 不上报 usage 与工具调用（记录为 null / unknown）；M1 的“4 步串行完整组合”此前由确定性 runner 验收。
+
+## F10-01/F10-02 Dogfood（3 个真实任务 + 1 次五角色团队运行）— 已完成（2026-11-21）
+
+> 方法：在本仓为每个任务建一条一步 Pipeline（角色 `ui-codebuddy` → CodeBuddy 2.185.0）；执行后审阅 agent 的 commit，把 diff 应用到 `dev`，再用本仓自己的检查验收。Pipeline 步骤由系统自动 accept，人对最终 diff 负责。
+
+| # | 任务 | agent commit | 落入 dev | 文件 | 运行时长 | 验收 | 返工 |
+|---|---|---|---|---|---|---|---|
+| 1 | Studio 失败 Run 的 Keep/Fresh 重跑策略 | `dbb14d2` | `4784db0` | 3 | 199.9 s | Studio tsc + 257 tests + build 全过 | 0 |
+| 2 | 任务详情预算面板（role / team 两个 scope） | `ddd49a4` | `fc69c9e` | 5 | 291.7 s | 同上 | 0 |
+| 3 | `agent-ops export --summary` | `fef3658` | `27c47be` | 1 | 360.0 s | CLI typecheck + 实跑命令；审阅发现 `5m 60.0s` 取整缺陷 | 1 次人工小修（`bbeb927`） |
+
+- 接受率：**3/3**（三条全部应用进 `dev`）。
+- 检查通过率：**3/3**（改动应用后本仓检查全绿；检查由验收方执行，不是 agent 自证）。
+- 返工率：**1/3**（dogfood 3 的时长取整缺陷由人修复，未回退给 agent 重跑）。
+- CodeBuddy 不上报 usage，成本记为未上报；工具调用审计为 `unknown`。
+- 局限：任务都较小（1–5 文件、约 3–6 分钟）；固定使用 CodeBuddy；受限工具策略在 CodeBuddy 上无法执行（adapter `toolPolicy: unsupported`，受限角色会被直接拒绝）。
+- [ ] 未做：M2 退出标准还有一条“5 角色团队完成一个真实仓库任务（架构→实现→审查→测试→汇总）”，尚未用真实模型跑；现有 3 条 dogfood 不覆盖 5 角色串行。
+
+### Dogfood 4：五角色团队串行（2026-11-21）
+
+- 团队 `CB Delivery`（5 个角色，全部绑定 CodeBuddy），任务 “Dogfood 4: five-role team run”；Coordinator 按交接边推导出 5 步 Pipeline，全部在 `dev` 的同一 worktree 串行执行。
+- 结果：5 步全部 `completed`、5 个 agent commit（`2086d1f` → `a15a624` → `2caf8e3` → `e260347` → `fc0b54e`）、4 条 handoff 收据（artifacts 1→2→3→4）、总耗时 420 s；产物整体应用为 `c36df4d`。
+- 产物：`docs/dogfood/team-run/01-plan.md` … `05-summary.md`（385 行）。
+- 关键发现：五步只产出「笔记」，**落盘 owner 从未被指派**；summarizer 明确拒绝把本轮写成“通过”，并列出 reviewer/tester 一致确认的缺口（预算上限漏 `maxOutputTokens`、分桶字段说明不足、证据表述需区分单 Run 与汇总指标）。这是“不无证据声称通过”的约束在真实链路里生效的证据。
+- 结论：5 角色串行在真实模型下跑通（本轮交付物为 docs 目录）；但“团队任务需要一个落盘 / 最终集成 step 的 owner”是 Coordinator 推导 Pipeline 目前没有表达的，记为产品缺口。
+- [ ] 未做：没有让这 5 个角色产出真实代码改动（worktree 无 node_modules，跑测试不可行）；Coordinator 不会自动指定最后落盘/汇总 step 的 owner。

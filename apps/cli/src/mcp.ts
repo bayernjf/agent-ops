@@ -608,8 +608,9 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
           profileId: z.string().trim().min(1).max(100).optional(),
           agentId: z.string().trim().min(1).max(100).optional(),
           prompt: z.string().trim().max(10_000).optional(),
+          dependsOn: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
         })).min(1).max(20),
-      }).optional().describe('Optional serial pipeline; each step needs roleId, profileId, or agentId.'),
+      }).optional().describe('Optional pipeline; each step needs roleId, profileId, or agentId. dependsOn makes it a DAG.'),
     },
     annotations: ADDITIVE,
   }, args => callDaemon('POST', '/api/tasks', {
@@ -646,6 +647,19 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     blockedTools: args.blockedTools ?? [],
     approvalMode: args.approvalMode ?? 'human',
   }).then(toResult));
+
+  server.registerTool('agent_ops_execute_dag', {
+    title: 'Execute a pipeline as a DAG',
+    description: 'Run ready pipeline steps in parallel, each in its own worktree branched from its dependencies\' commits, bounded by maxConcurrency. Failed dependencies skip their dependents; file conflicts are reported, never merged. Synchronous and may take minutes.',
+    inputSchema: {
+      ...taskIdSchema,
+      maxConcurrency: z.number().int().min(1).max(8).optional().describe('How many ready steps may run at once; defaults to 2.'),
+    },
+    annotations: ADDITIVE,
+  }, args => {
+    const { taskId, maxConcurrency } = args;
+    return callDaemon('POST', `/api/tasks/${encodeURIComponent(taskId)}/pipeline/dag`, maxConcurrency ? { maxConcurrency } : {}).then(toResult);
+  });
 
   server.registerTool('agent_ops_execute_parallel', {
     title: 'Execute parallel lanes',
