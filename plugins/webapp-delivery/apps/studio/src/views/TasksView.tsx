@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, ListTodo, Play, Plus, RefreshCw, Square, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, ListTodo, Play, Plus, RefreshCw, RotateCcw, Square, Trash2, X } from 'lucide-react';
 import { useI18n, type KeyPath } from '../i18n/i18n';
 import type { AgentRole, KernelRun, KernelTask, KernelTaskState, TaskPipeline, TaskPipelineStep, TaskPipelineStepResult } from '../types';
 import { apiFetch, apiStreamFetch } from '../lib/api';
@@ -73,6 +73,7 @@ export function TasksView() {
   const [error, setError] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [runsByTask, setRunsByTask] = useState<Record<string, KernelRun[]>>({});
+  const [selectedFilesByRun, setSelectedFilesByRun] = useState<Record<string, string[]>>({});
   const [busyRunId, setBusyRunId] = useState<string | null>(null);
   const [executingRunId, setExecutingRunId] = useState<string | null>(null);
   const [liveOutputByRun, setLiveOutputByRun] = useState<Record<string, string>>({});
@@ -112,7 +113,25 @@ export function TasksView() {
         const body = payload as { error?: string } | null;
         throw new Error(body?.error ?? t('tasks.loadRuns'));
       }
-      setRunsByTask(prev => ({ ...prev, [taskId]: Array.isArray(payload) ? (payload as KernelRun[]) : [] }));
+      const runs = Array.isArray(payload) ? (payload as KernelRun[]) : [];
+      setRunsByTask(prev => ({ ...prev, [taskId]: runs }));
+      setSelectedFilesByRun(prev => {
+        const next = { ...prev };
+        for (const run of runs) {
+          if (run.status !== 'review') {
+            delete next[run.id];
+            continue;
+          }
+          const changed = run.artifacts?.changedFiles ?? [];
+          const current = next[run.id];
+          // Preserve an explicit selection across refreshes, but drop paths the new evidence no
+          // longer contains. A first sighting starts with every changed file accepted.
+          next[run.id] = current === undefined
+            ? changed
+            : current.filter(file => changed.includes(file));
+        }
+        return next;
+      });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('tasks.loadRuns'));
     }
@@ -212,6 +231,22 @@ export function TasksView() {
       await loadTasks();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('tasks.pipelineExecute'));
+    } finally {
+      setPipelineBusyId(null);
+    }
+  };
+
+  const retryPipeline = async (task: KernelTask) => {
+    setPipelineBusyId(task.id);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/retry`, { method: 'POST' });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineRetry'));
+      await loadTasks();
+      if (expandedId === task.id) await loadRuns(task.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.pipelineRetry'));
     } finally {
       setPipelineBusyId(null);
     }
@@ -336,7 +371,20 @@ export function TasksView() {
     if (!runsByTask[taskId]) void loadRuns(taskId);
   };
 
-  const runAction = async (run: KernelRun, action: RunAction) => {
+  const changedFilesFor = (run: KernelRun) => run.artifacts?.changedFiles ?? [];
+  const selectedFilesFor = (run: KernelRun) => selectedFilesByRun[run.id] ?? changedFilesFor(run);
+
+  const toggleRunFile = (run: KernelRun, file: string) => {
+    const current = selectedFilesFor(run);
+    setSelectedFilesByRun(prev => ({
+      ...prev,
+      [run.id]: current.includes(file)
+        ? current.filter(candidate => candidate !== file)
+        : [...current, file],
+    }));
+  };
+
+  const runAction = async (run: KernelRun, action: RunAction, files?: string[]) => {
     const isExecute = action === 'execute';
     if (isExecute) {
       setExecutingRunId(run.id);
@@ -353,7 +401,12 @@ export function TasksView() {
     }
     setError('');
     try {
-      const response = await apiFetch(`/api/runs/${encodeURIComponent(run.id)}/${action}`, { method: 'POST' });
+      const response = await apiFetch(`/api/runs/${encodeURIComponent(run.id)}/${action}`, {
+        method: 'POST',
+        ...(action === 'accept' && files !== undefined
+          ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ files }) }
+          : {}),
+      });
       const payload = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(payload?.error ?? t(`tasks.${action}Run` as KeyPath));
       await loadRuns(run.taskId);
@@ -509,9 +562,14 @@ export function TasksView() {
                         <div className="pipeline-panel">
                           <div className="pipeline-head">
                             <span className={`state ${pipeline.status}`}>{t(`tasks.pipelineStatus.${pipeline.status}` as KeyPath)}</span>
-                            {(pipeline.status === 'idle' || pipeline.status === 'failed') && (
+                            {pipeline.status === 'idle' && (
                               <button className="secondary-button" type="button" onClick={() => void executePipeline(task)} disabled={pipelineBusyId === task.id}>
                                 <Play size={14} aria-hidden="true" /> {pipelineBusyId === task.id ? t('tasks.pipelineRunning') : t('tasks.pipelineExecute')}
+                              </button>
+                            )}
+                            {pipeline.status === 'failed' && (
+                              <button className="secondary-button" type="button" onClick={() => void retryPipeline(task)} disabled={pipelineBusyId === task.id}>
+                                <RotateCcw size={14} aria-hidden="true" /> {pipelineBusyId === task.id ? t('tasks.pipelineRunning') : t('tasks.pipelineRetry')}
                               </button>
                             )}
                             {pipeline.status === 'awaiting_approval' && (
@@ -570,8 +628,14 @@ export function TasksView() {
                                 )}
                                 {run.status === 'review' && (
                                   <>
-                                    <button className="secondary-button" type="button" onClick={() => void runAction(run, 'accept')} disabled={busyRunId === run.id}>
-                                      <Check size={14} aria-hidden="true" /> {t('tasks.accept')}
+                                    <button
+                                      className="secondary-button"
+                                      type="button"
+                                      onClick={() => void runAction(run, 'accept', changedFilesFor(run).length ? selectedFilesFor(run) : undefined)}
+                                      disabled={busyRunId === run.id || (changedFilesFor(run).length > 0 && selectedFilesFor(run).length === 0)}
+                                    >
+                                      <Check size={14} aria-hidden="true" /> {t('tasks.acceptSelected')}
+                                      {changedFilesFor(run).length > 0 ? ` (${selectedFilesFor(run).length}/${changedFilesFor(run).length})` : ''}
                                     </button>
                                     <button className="secondary-button" type="button" onClick={() => void runAction(run, 'reject')} disabled={busyRunId === run.id}>
                                       <X size={14} aria-hidden="true" /> {t('tasks.reject')}
@@ -581,11 +645,22 @@ export function TasksView() {
                               </span>
                             </div>
 
-                            {(run.roleId || run.runtimeId || run.commitSha) && (
+                            {(run.roleId || run.runtimeId || run.commitSha || run.runtimeVersion || run.inputTokens != null || run.outputTokens != null || run.costUsd != null) && (
                               <div className="run-evidence-meta run-identity">
                                 <span>{t('tasks.role')}: {run.roleId ?? '—'}</span>
                                 <span>{t('tasks.runtime')}: {run.runtimeId ?? '—'}</span>
+                                <span>{t('tasks.version')}: {run.runtimeVersion ?? '—'}</span>
                                 <span>{t('tasks.commit')}: {run.commitSha ? run.commitSha.slice(0, 10) : '—'}</span>
+                                <span>{t('tasks.tokens')}: {run.inputTokens ?? '—'} / {run.outputTokens ?? '—'}</span>
+                                <span>{t('tasks.cost')}: {run.costUsd != null ? `$${run.costUsd.toFixed(4)}` : '—'}</span>
+                              </div>
+                            )}
+
+                            {run.handoff && (
+                              <div className="run-evidence-meta run-handoff">
+                                <span>{t('tasks.handoff')}: {run.handoff.fromStepId} → {run.handoff.toStepId}</span>
+                                <span>{t('tasks.commit')}: {run.handoff.fromCommitSha.slice(0, 10)}</span>
+                                <span>{t('tasks.changedFiles')}: {run.handoff.artifacts.length}</span>
                               </div>
                             )}
 
@@ -607,7 +682,29 @@ export function TasksView() {
                                   {run.artifacts?.cancelled && <span className="run-evidence-warning">{t('tasks.cancelled')}</span>}
                                 </div>
                                 {run.artifacts?.changedFiles.length ? (
-                                  <p className="run-evidence-files">{run.artifacts.changedFiles.join(', ')}</p>
+                                  run.status === 'review' ? (
+                                    <div className="run-file-picker">
+                                      <h4>{t('tasks.filesToAccept')}</h4>
+                                      {run.artifacts.changedFiles.map(file => (
+                                        <label className="run-file-row" key={file}>
+                                          <input
+                                            type="checkbox"
+                                            checked={selectedFilesFor(run).includes(file)}
+                                            onChange={() => toggleRunFile(run, file)}
+                                          />
+                                          <span>{file}</span>
+                                        </label>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="run-evidence-files">{run.artifacts.changedFiles.join(', ')}</p>
+                                  )
+                                ) : null}
+                                {run.command ? (
+                                  <>
+                                    <h4>{t('tasks.command')}</h4>
+                                    <pre className="run-evidence-pre">{run.command}</pre>
+                                  </>
                                 ) : null}
                                 <h4>{t('tasks.output')}</h4>
                                 <pre className="run-evidence-pre">{run.artifacts?.output || t('tasks.noOutput')}</pre>

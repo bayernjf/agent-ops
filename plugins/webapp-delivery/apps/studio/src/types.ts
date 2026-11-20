@@ -353,6 +353,7 @@ export type View =
   | { kind: 'agents' }
   | { kind: 'activity' }
   | { kind: 'tasks' }
+  | { kind: 'teams' }
   | { kind: 'roles' };
 
 export type ProjectTab =
@@ -375,6 +376,8 @@ export type KernelTask = {
   title: string;
   objective: string;
   status: KernelTaskState;
+  roleId?: string | null;
+  teamId?: string | null;
   pipeline?: TaskPipeline | null;
   createdAt: string;
   updatedAt: string;
@@ -424,6 +427,17 @@ export type KernelRunArtifacts = {
   durationMs: number;
 };
 
+export type KernelRunHandoff = {
+  id: string;
+  fromStepId: string;
+  toStepId: string;
+  fromRunId: string;
+  toRunId: string;
+  fromCommitSha: string;
+  artifacts: string[];
+  createdAt: string;
+};
+
 export type KernelRun = {
   id: string;
   taskId: string;
@@ -434,6 +448,13 @@ export type KernelRun = {
   commitSha?: string;
   roleId?: string | null;
   runtimeId?: string | null;
+  runtimeVersion?: string | null;
+  command?: string;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  costUsd?: number | null;
+  /** The handoff that delivered work into this run, when a pipeline step preceded it. */
+  handoff?: KernelRunHandoff | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -456,6 +477,25 @@ export type AgentRole = {
   systemPrompt?: string;
   acceptanceCriteria: string[];
   runtimePolicy: RoleRuntimePolicy;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** Mirrors `TeamHandoff` in `@agent-ops/agent-runtime/teams` for the browser. */
+export type TeamHandoff = {
+  fromRoleId: string;
+  toRoleId: string;
+  note?: string;
+};
+
+/** Mirrors `AgentTeam` in `@agent-ops/agent-runtime/teams` for the browser. */
+export type AgentTeam = {
+  id: string;
+  name: string;
+  description?: string;
+  roleIds: string[];
+  handoffs: TeamHandoff[];
   enabled: boolean;
   createdAt: string;
   updatedAt: string;

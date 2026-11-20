@@ -1,5 +1,5 @@
 import { Fragment, Suspense, lazy, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Activity, ArrowLeft, ArrowRight, CheckCircle2, CircleDot, FolderKanban, Gauge, KeyRound, ListTodo, Moon, PlugZap, RefreshCw, ShieldCheck, Sparkles, Sun,
+import { Activity, ArrowLeft, ArrowRight, CheckCircle2, CircleDot, FolderKanban, Gauge, KeyRound, ListTodo, Moon, PlugZap, RefreshCw, ShieldCheck, Sparkles, Sun, Users,
 } from 'lucide-react';
 import { useI18n, type KeyPath } from './i18n/i18n';
 import { useDomainText } from './lib/domain-text';
@@ -7,6 +7,7 @@ import { apiFetch } from './lib/api';
 import { Dashboard } from './views/Dashboard';
 import { TasksView } from './views/TasksView';
 import { RolesView } from './views/RolesView';
+import { TeamsView } from './views/TeamsView';
 import { useTheme } from './theme/theme';
 import { baselineProvidersFor, getBlueprintDecisions, isRuntimeProviderId, type BaselinePlan, type BlueprintAnswers, type DryRunPlan } from '@agent-ops/blueprint/client';
 // Import CONFIRMATIONS from the sub-path: the policy package's top-level entry re-exports
@@ -1827,6 +1828,7 @@ export function App() {
           <button className={`nav-item ${view.kind === 'dashboard' || view.kind === 'project' ? 'active' : ''}`} type="button" onClick={() => setView({ kind: 'dashboard' })}><FolderKanban size={18} aria-hidden="true" />{t('nav.projects')}</button>
           <button className={`nav-item ${view.kind === 'tasks' ? 'active' : ''}`} type="button" onClick={() => setView({ kind: 'tasks' })}><ListTodo size={18} aria-hidden="true" />{t('nav.tasks')}</button>
           <button className={`nav-item ${view.kind === 'roles' ? 'active' : ''}`} type="button" onClick={() => setView({ kind: 'roles' })}><ShieldCheck size={18} aria-hidden="true" />{t('nav.roles')}</button>
+          <button className={`nav-item ${view.kind === 'teams' ? 'active' : ''}`} type="button" onClick={() => setView({ kind: 'teams' })}><Users size={18} aria-hidden="true" />{t('nav.teams')}</button>
           <button className={`nav-item ${view.kind === 'credentials' ? 'active' : ''}`} type="button" onClick={() => setView({ kind: 'credentials' })}><KeyRound size={18} aria-hidden="true" />{t('nav.credentials')}</button>
           <button className={`nav-item ${view.kind === 'agents' ? 'active' : ''}`} type="button" onClick={() => setView({ kind: 'agents' })}><CircleDot size={18} aria-hidden="true" />{t('nav.agents')}</button>
           <button className={`nav-item ${view.kind === 'activity' ? 'active' : ''}`} type="button" onClick={() => setView({ kind: 'activity' })}><Activity size={18} aria-hidden="true" />{t('nav.activity')}</button>
@@ -2203,6 +2205,12 @@ export function App() {
         {view.kind === 'roles' && (
           <div className="standalone-view">
             <RolesView />
+          </div>
+        )}
+
+        {view.kind === 'teams' && (
+          <div className="standalone-view">
+            <TeamsView />
           </div>
         )}
       </section>

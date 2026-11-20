@@ -1895,6 +1895,25 @@ select option {
   overflow-wrap: anywhere;
 }
 
+.run-file-picker {
+  margin-bottom: 10px;
+}
+
+.run-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--text-2);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.run-file-row input {
+  accent-color: var(--accent);
+}
+
 .run-evidence h4 {
   margin: 12px 0 6px;
   color: var(--text-2);
@@ -2035,6 +2054,199 @@ select option {
 .role-enabled input { width: auto !important; margin-top: 0 !important; }
 
 .role-form-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* Kernel team registry: roster, handoff edges and the team's task queue. */
+.teams-view .error { margin: 16px 0 0; }
+
+.teams-actions { display: flex; gap: 8px; align-items: center; }
+
+.team-table { margin-top: 20px; border-top: 1px solid var(--line); }
+
+.team-head,
+.team-row {
+  display: grid;
+  grid-template-columns: 1.4fr 0.9fr 0.9fr 0.6fr auto;
+  gap: 16px;
+  align-items: center;
+}
+
+.team-head {
+  padding: 11px 12px;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--line);
+}
+
+.team-row {
+  padding: 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  color: var(--text-1);
+  font-size: 13px;
+}
+
+.team-row:hover,
+.team-row.selected { background: var(--surface-muted); }
+
+.team-name {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.team-name strong { display: block; font-size: 14px; }
+.team-name small { color: var(--text-3); font-size: 12px; }
+
+.team-status {
+  justify-self: start;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  background: var(--surface);
+}
+
+.team-status.on { color: var(--status-ok); }
+.team-status.off { color: var(--text-3); }
+.team-status:disabled { cursor: wait; opacity: .65; }
+
+.team-row-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+.team-form {
+  margin-top: 18px;
+  padding: 16px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.team-form h3 { margin: 0 0 12px; color: var(--text-1); font-size: 14px; }
+
+.team-form label {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.team-form input,
+.team-form select {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text-1);
+  font-size: 13px;
+}
+
+.team-roster,
+.team-handoffs {
+  margin: 0 0 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.team-roster legend,
+.team-handoffs legend {
+  padding: 0 6px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.team-roster-list { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+
+.team-roster-item {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  margin: 0 !important;
+  font-size: 13px;
+}
+
+.team-roster-item input { width: auto; margin: 0; }
+
+.team-handoff-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.4fr auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 10px;
+}
+
+.team-handoff-row label { margin-bottom: 0; }
+
+.team-hint { margin: 6px 0 0; color: var(--text-3); font-size: 12px; }
+
+.team-enabled { display: flex !important; align-items: center; gap: 8px; }
+.team-enabled input { width: auto !important; margin-top: 0 !important; }
+
+.team-form-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+.team-detail { margin-top: 26px; }
+
+.team-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.team-panel {
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.team-panel h3 { margin: 0 0 10px; color: var(--text-1); font-size: 14px; }
+
+.team-role-list,
+.team-handoff-list,
+.team-task-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.team-role-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.team-role-list small { color: var(--text-3); }
+
+.team-handoff-list li { display: grid; gap: 2px; font-size: 13px; }
+
+.team-edge {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+}
+
+.team-handoff-list small { color: var(--text-3); font-size: 12px; }
+
+.team-task-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
 
 /* Kernel task create form: the human entry point into the task control plane. */
 .tasks-actions { display: flex; gap: 8px; align-items: center; }

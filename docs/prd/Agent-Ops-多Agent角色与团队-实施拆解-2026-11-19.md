@@ -279,7 +279,15 @@ E0 基础闭环修复
 
 **F4-01/F4-02/F4-03 完成记录（2026-11-20）**：migration `0012_task_role` 给 `tasks` 增加 `role_id`；`createTask` 校验 Role 存在且启用；`createRun` 默认继承 Task Role，显式 role 可覆盖，并校验 Role baseAgent 与 run agent（含 `local-*` 前缀和 Profile base）一致。`buildAgentExecutionPlan` 追加 Role 职责、systemPrompt、验收标准、allowed/blocked tools 与 approval mode。server 与 MCP Task 创建支持 roleId；MCP create_task 同时开放 acceptanceCriteria/priority。全仓 typecheck 0、48 文件 / 639 tests 绿。Team 字段、F4-04 版本/成本、F4-05 重跑 hygiene、F4-06 预算未做；Run 不会自动采用 Role 的 profileId 作为执行 Profile。
 
-**F6-01/F6-02/F6-03 完成记录（2026-11-20）**：migration `0013_task_pipeline` 给 `tasks` 增加 `pipeline`，`0014_run_instruction` 给 `runs` 增加 `instruction`；`TaskPipeline` 支持 `roleId/profileId/agentId/prompt`，`createTask` 校验执行身份和 Role/Profile base 一致。`executeTaskPipeline` 仅允许 `idle` 启动，用 `activePipelines` 拒绝并发；每步创建 Run 并写入 step instruction，成功后必须 `review` 再 `acceptRun` 自动提交，然后才进入下一步；失败即停并记录 step error。所有 step 共用同一 worktree，下游基于上一步 commit。server 提供 pipeline 读取/执行端点，MCP 提供 create_task pipeline 入参与 execute_pipeline 工具。两步串行成功、失败即停、server 路由和 MCP 透传均有测试；全仓 typecheck 0、49 文件 / 643 tests 绿。F6-04 每步审批、F6-05 失败重跑/reset、F6-06 并行 DAG 未做；completed/failed pipeline 暂不支持直接重跑。
+**F6-01/F6-02/F6-03 完成记录（2026-11-20）**：migration `0013_task_pipeline` 给 `tasks` 增加 `pipeline`，`0014_run_instruction` 给 `runs` 增加 `instruction`；`TaskPipeline` 支持 `roleId/profileId/agentId/prompt`，`createTask` 校验执行身份和 Role/Profile base 一致。`executeTaskPipeline` 仅允许 `idle` 启动，用 `activePipelines` 拒绝并发；每步创建 Run 并写入 step instruction，成功后必须 `review` 再 `acceptRun` 自动提交，然后才进入下一步；失败即停并记录 step error。所有 step 共用同一 worktree，下游基于上一步 commit。server 提供 pipeline 读取/执行端点，MCP 提供 create_task pipeline 入参与 execute_pipeline 工具。两步串行成功、失败即停、server 路由和 MCP 透传均有测试；全仓 typecheck 0、49 文件 / 643 tests 绿。F6-04、F6-05 已在后续完成；F6-06 并行 DAG 未做；completed pipeline 仍不支持直接重跑。
+
+**F6-04/F6-05 完成记录（2026-11-20）**：F6-04 给 step 增加 `requiresApproval`，Run 进入 `review` 后暂停为 `awaiting_approval`，`approvePipelineStep` 接受当前 Run 并继续，`rejectPipelineStep` 重置到当前 step 的前置 commit 后置 failed；server 提供 approve/reject，Studio 提供审批开关与按钮。F6-05 新增 `retryTaskPipeline`：只接受 failed pipeline，重置到失败 step 的前置 commit（首步回 `baseCommit`），保留已完成 step 的 result/commit，清掉 failed 及后续结果后从失败 step 重跑；server `POST /api/tasks/:id/pipeline/retry`，MCP `agent_ops_retry_pipeline`，Studio failed 状态改为重试按钮。修复 reject 会重置到任务 base 并抹掉已完成 step commit 的缺陷。测试 49 文件 / 652 tests 绿；completed pipeline 重跑、step output 模板、F6-06 并行 DAG 未做。
+
+**F4-04/F7-05 完成记录（2026-11-20）**：migration `0015_run_execution_evidence` 给 `runs` 增加 `runtime_version` / `command` / `input_tokens` / `output_tokens` / `cost_usd`；`RunRecord` 与 server Run 详情直接暴露这些字段。`executeRun` 在构造计划后写入实际命令行（4000 字符截断），runner 返回后写入版本与 usage；`agent-runtime` 新增 `probeAgentVersion`，spawn 前探测版本，失败返回 null 且不阻塞执行。未上报的 token/cost 保持 null，不写 0。Studio Run 身份行展示 role/runtime/version/commit/tokens/cost，证据面板展示 command。测试 49 文件 / 654 tests 绿。真实 CLI 尚未提供 usage，UI 显示 `—`；命令含 prompt，仅限长不脱敏。
+
+**F7-04 完成记录（2026-11-20）**：`commitWorktreeChanges` 支持只 stage 选中路径；`acceptRun(id, files?)` 校验 files 必须非空且属于本次 `changedFiles`，提交选中文件后 reset/clean worktree 丢弃未选文件。server accept 路由支持可选 `{ files }`，malformed/未知路径返回 400，无 body 保持全量接受。Studio 在 review 证据面板提供逐文件 checkbox 和“接受选中文件 (n/m)”。测试 49 文件 / 656 tests 绿；本机 UI 实跑取消 `drop.txt` 后只提交 `keep.txt`，worktree clean。当前语义为一次性“接受选中、其余丢弃”，不支持保留未选文件留待后续。
+
+
 
 ### M2 团队与狗粮（2026-12-11 → 2026-12-24）
 
@@ -482,6 +490,8 @@ type RunArtifacts = {
 ```
 
 规则：能拿到就记；拿不到 `null`/`unknown`；不伪造。
+
+F4-04 实现说明：`runtimeVersion` / `command` / `inputTokens` / `outputTokens` / `costUsd` 落在 `RunRecord` 顶层，而不是嵌进 `RunArtifacts`。前者是 Run 级元数据，随 Run 查询返回；`RunArtifacts` 继续只存 output/diff/exitCode/timeout 等执行产物。
 
 ---
 

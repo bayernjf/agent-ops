@@ -106,6 +106,41 @@ describe('KernelStore task/run', () => {
     }
   });
 
+  it('records the assigned team on a task and validates its roster', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-task-'));
+    try {
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const architect = await store.roles.createRole({ name: 'Architect', baseAgentId: 'codex' });
+      const implementer = await store.roles.createRole({ name: 'Implementer', baseAgentId: 'codex' });
+      const outsider = await store.roles.createRole({ name: 'Outsider', baseAgentId: 'codex' });
+      const team = await store.teams.createTeam({
+        name: 'Delivery',
+        roleIds: [architect.id, implementer.id],
+        handoffs: [{ fromRoleId: architect.id, toRoleId: implementer.id }],
+      });
+
+      const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'T', teamId: team.id, roleId: architect.id });
+      expect(task.teamId).toBe(team.id);
+      expect((await store.createTask({ repo: '/r', baseRef: 'main', title: 'U', teamId: team.id })).teamId).toBe(team.id);
+
+      await expect(store.createTask({ repo: '/r', baseRef: 'main', title: 'T', teamId: 'missing-team' }))
+        .rejects.toThrow('Team missing-team was not found.');
+      await expect(store.createTask({ repo: '/r', baseRef: 'main', title: 'T', teamId: team.id, roleId: outsider.id }))
+        .rejects.toThrow(`Role ${outsider.id} is not on team ${team.id}.`);
+
+      await store.teams.updateTeam(team.id, { enabled: false });
+      await expect(store.createTask({ repo: '/r', baseRef: 'main', title: 'T', teamId: team.id }))
+        .rejects.toThrow(`Team ${team.id} is disabled.`);
+      await store.close();
+
+      const reopened = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      expect(reopened.getTask(task.id)?.teamId).toBe(team.id);
+      await reopened.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   it('records the selected role on a run and rejects an unknown role', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-task-'));
     try {

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -183,6 +183,59 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('serves handoff receipts for a task and its runs', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      let calls = 0;
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        calls++;
+        await writeFile(join(options.cwd, `handoff-${calls}.txt`), 'done\n', 'utf8');
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'ok',
+          startedAt: new Date(Date.now() - 10).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+      const app = createKernelApp(store, { runner });
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Handoff over HTTP',
+        pipeline: {
+          steps: [
+            { id: 'build', name: 'Build', agentId: 'codex' },
+            { id: 'ship', name: 'Ship', agentId: 'codex' },
+          ],
+        },
+      });
+      await store.provisionTask(task.id);
+      await app.request(`/api/tasks/${task.id}/pipeline/execute`, { method: 'POST' });
+
+      const listed = await app.request(`/api/tasks/${task.id}/handoffs`);
+      expect(listed.status).toBe(200);
+      const { handoffs } = (await listed.json()) as { handoffs: Array<{ fromStepId: string; toStepId: string; fromCommitSha: string; toRunId: string; teamId: string | null }> };
+      expect(handoffs).toHaveLength(1);
+      expect(handoffs[0]).toMatchObject({ fromStepId: 'build', toStepId: 'ship', teamId: null });
+      expect(handoffs[0]?.fromCommitSha).toMatch(/^[0-9a-f]{40}$/);
+      expect((await app.request('/api/tasks/missing/handoffs')).status).toBe(404);
+
+      const downstream = await app.request(`/api/runs/${handoffs[0]?.toRunId}`);
+      expect((await downstream.json()) as object).toMatchObject({
+        handoff: { fromStepId: 'build', fromCommitSha: handoffs[0]?.fromCommitSha },
+      });
+      const upstreamRunId = store.listRuns(task.id)[0]?.id ?? '';
+      const upstream = await app.request(`/api/runs/${upstreamRunId}`);
+      expect(((await upstream.json()) as { handoff: unknown }).handoff).toBeNull();
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('serves approval gates over the pipeline API', async () => {
     const { store, directory } = await openStore();
     try {
@@ -295,6 +348,66 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('retries a failed pipeline over the HTTP API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      let attempts = 0;
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        attempts++;
+        if (attempts === 1) {
+          await writeFile(join(options.cwd, 'failed.txt'), 'first attempt\n', 'utf8');
+          return {
+            exitCode: 1,
+            signal: null,
+            timedOut: false,
+            output: 'boom',
+            startedAt: new Date(Date.now() - 10).toISOString(),
+            completedAt: new Date().toISOString(),
+          };
+        }
+        await writeFile(join(options.cwd, 'retried.txt'), 'retry\n', 'utf8');
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'ok',
+          startedAt: new Date(Date.now() - 10).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+      const app = createKernelApp(store, { runner });
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Retry over HTTP',
+        pipeline: { steps: [{ id: 'deliver', name: 'Deliver', agentId: 'codex' }] },
+      });
+      const provisioned = await store.provisionTask(task.id);
+
+      const failed = await app.request(`/api/tasks/${task.id}/pipeline/execute`, { method: 'POST' });
+      expect(failed.status).toBe(200);
+      expect((await failed.json()) as object).toMatchObject({ status: 'failed' });
+
+      const retried = await app.request(`/api/tasks/${task.id}/pipeline/retry`, { method: 'POST' });
+      expect(retried.status).toBe(200);
+      expect((await retried.json()) as object).toMatchObject({
+        results: [{ stepId: 'deliver', status: 'completed' }],
+        status: 'completed',
+      });
+      expect(attempts).toBe(2);
+      expect(store.getTask(task.id)?.status).toBe('done');
+      expect((await execFileAsync('git', ['rev-list', '--count', 'HEAD'], { cwd: provisioned.worktreePath })).stdout.trim()).toBe('2');
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: provisioned.worktreePath })).stdout.trim()).toBe('');
+
+      const again = await app.request(`/api/tasks/${task.id}/pipeline/retry`, { method: 'POST' });
+      expect(again.status).toBe(409);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('creates, resolves, updates and deletes roles through the kernel API', async () => {
     const { store, directory } = await openStore();
     try {
@@ -342,6 +455,131 @@ describe('createKernelApp', () => {
       const deleted = await app.request(`/api/roles/${role.role.id}`, { method: 'DELETE' });
       expect(deleted.status).toBe(200);
       expect((await app.request(`/api/roles/${role.role.id}`)).status).toBe(404);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('creates, lists, updates and deletes teams through the kernel API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const createRole = async (name: string) => {
+        const res = await app.request('/api/roles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, baseAgentId: 'codex' }),
+        });
+        expect(res.status).toBe(201);
+        return ((await res.json()) as { role: { id: string } }).role;
+      };
+      const architect = await createRole('Architect');
+      const implementer = await createRole('Implementer');
+
+      const created = await app.request('/api/teams', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Delivery',
+          roleIds: [architect.id, implementer.id],
+          handoffs: [{ fromRoleId: architect.id, toRoleId: implementer.id, note: 'Hand over the plan.' }],
+        }),
+      });
+      expect(created.status).toBe(201);
+      const team = ((await created.json()) as { team: { id: string; handoffs: unknown[] } }).team;
+      expect(team.id).toBe('delivery');
+      expect(team.handoffs).toHaveLength(1);
+
+      expect(((await (await app.request('/api/teams')).json()) as { teams: unknown[] }).teams).toHaveLength(1);
+      expect((await app.request(`/api/teams/${team.id}`)).status).toBe(200);
+
+      const updated = await app.request(`/api/teams/${team.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Delivery team' }),
+      });
+      expect(updated.status).toBe(200);
+      expect((await updated.json()) as object).toMatchObject({ team: { name: 'Delivery team' } });
+
+      const cycle = await app.request('/api/teams', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Loop',
+          roleIds: [architect.id, implementer.id],
+          handoffs: [
+            { fromRoleId: architect.id, toRoleId: implementer.id },
+            { fromRoleId: implementer.id, toRoleId: architect.id },
+          ],
+        }),
+      });
+      expect(cycle.status).toBe(400);
+      expect(await cycle.text()).toContain('Handoff cycle detected');
+
+      const unknownRole = await app.request('/api/teams', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Ghost', roleIds: ['missing-role'] }),
+      });
+      expect(unknownRole.status).toBe(404);
+
+      const deleted = await app.request(`/api/teams/${team.id}`, { method: 'DELETE' });
+      expect(deleted.status).toBe(200);
+      expect((await app.request(`/api/teams/${team.id}`)).status).toBe(404);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('serves audit events with task, team and type filters', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const role = await store.roles.createRole({ name: 'Auditor', baseAgentId: 'codex' });
+      const team = await store.teams.createTeam({ name: 'Audit team', roleIds: [role.id] });
+      const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Audited', roleId: role.id, teamId: team.id });
+
+      const all = await app.request('/api/audit');
+      expect(all.status).toBe(200);
+      const { events } = (await all.json()) as { events: Array<{ type: string; taskId: string | null }> };
+      expect(events.map(event => event.type)).toEqual(['role.created', 'team.created', 'task.created']);
+
+      const byTask = await app.request(`/api/audit?taskId=${task.id}`);
+      expect(((await byTask.json()) as { events: unknown[] }).events).toHaveLength(1);
+
+      const byTeamAndType = await app.request(`/api/audit?teamId=${team.id}&type=team.created`);
+      expect(((await byTeamAndType.json()) as { events: Array<{ type: string }> }).events.map(event => event.type)).toEqual(['team.created']);
+
+      const limited = await app.request('/api/audit?limit=1');
+      expect(((await limited.json()) as { events: Array<{ type: string }> }).events.map(event => event.type)).toEqual(['task.created']);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('exports a task evidence bundle over the API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Export me' });
+
+      const response = await app.request(`/api/tasks/${task.id}/export`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-disposition')).toContain(task.id);
+      const body = (await response.json()) as {
+        task: { id: string };
+        totals: { runs: number; costUsd: number | null };
+        audit: Array<{ type: string }>;
+      };
+      expect(body.task.id).toBe(task.id);
+      expect(body.totals.runs).toBe(0);
+      expect(body.totals.costUsd).toBeNull();
+      expect(body.audit.map(event => event.type)).toContain('task.created');
+
+      expect((await app.request('/api/tasks/missing/export')).status).toBe(404);
     } finally {
       await store.close();
       await rm(directory, { recursive: true, force: true });
@@ -420,11 +658,26 @@ describe('createKernelApp', () => {
 
       const runDetail = await app.request(`/api/runs/${run.id}`);
       expect(runDetail.status).toBe(200);
-      expect((await runDetail.json()) as object).toMatchObject({
+      const runEvidence = (await runDetail.json()) as {
+        roleId: string | null;
+        runtimeId: string | null;
+        runtimeVersion: string | null;
+        command: string;
+        inputTokens: number | null;
+        outputTokens: number | null;
+        costUsd: number | null;
+        artifacts: { output: string; exitCode: number | null };
+      };
+      expect(runEvidence).toMatchObject({
         roleId: role.role.id,
         runtimeId: 'codex',
+        runtimeVersion: null,
+        inputTokens: null,
+        outputTokens: null,
+        costUsd: null,
         artifacts: { output: 'ok', exitCode: 0 },
       });
+      expect(runEvidence.command).toContain('codex exec');
 
       const events = await app.request(`/api/runs/${run.id}/events`);
       expect(events.status).toBe(200);
@@ -439,6 +692,65 @@ describe('createKernelApp', () => {
         artifacts: { output: 'ok' },
       });
       expect(acceptedRun.commitSha).toMatch(/^[0-9a-f]{40}$/);
+
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts only selected files over the HTTP API', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-server-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const twoFileRunner: CodexProcessRunner = async (_command, _arguments, options) => {
+        await writeFile(join(options.cwd, 'keep.txt'), 'keep\n', 'utf8');
+        await writeFile(join(options.cwd, 'drop.txt'), 'drop\n', 'utf8');
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'ok',
+          startedAt: new Date(Date.now() - 10).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+      const app = createKernelApp(store, { runner: twoFileRunner });
+
+      const task = await store.createTask({ repo, baseRef: 'main', title: 'Two files' });
+      await store.provisionTask(task.id);
+      const run = await store.createRun(task.id, 'codex');
+      expect((await app.request(`/api/runs/${run.id}/execute`, { method: 'POST' })).status).toBe(200);
+
+      const invalid = await app.request(`/api/runs/${run.id}/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: ['missing.txt'] }),
+      });
+      expect(invalid.status).toBe(400);
+      expect(store.getRun(run.id)?.status).toBe('review');
+
+      const malformed = await app.request(`/api/runs/${run.id}/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"files":',
+      });
+      expect(malformed.status).toBe(400);
+      expect(store.getRun(run.id)?.status).toBe('review');
+
+      const accepted = await app.request(`/api/runs/${run.id}/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: ['keep.txt'] }),
+      });
+      expect(accepted.status).toBe(200);
+      expect((await accepted.json()) as object).toMatchObject({ status: 'done' });
+      const worktree = store.getTask(task.id)?.worktreePath ?? '';
+      expect((await execFileAsync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: worktree })).stdout.trim())
+        .toBe('keep.txt');
+      await expect(access(join(worktree, 'drop.txt'))).rejects.toBeTruthy();
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: worktree })).stdout.trim()).toBe('');
 
       await store.close();
     } finally {

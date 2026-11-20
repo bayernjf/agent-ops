@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
-import type { KernelStore, RunEvent, CreateRoleInput, UpdateRoleInput } from '@agent-ops/storage-core';
+import type { KernelStore, RunEvent, CreateRoleInput, UpdateRoleInput, KernelAuditEventType } from '@agent-ops/storage-core';
 import {
   type CodexProcessRunner,
   type CustomAgentInput,
@@ -15,6 +15,8 @@ import {
   agentProfileUpdateSchema,
   agentRoleCreateSchema,
   agentRoleUpdateSchema,
+  agentTeamCreateSchema,
+  agentTeamUpdateSchema,
   resolveRoleRuntime,
   type AgentRole,
 } from '@agent-ops/agent-runtime';
@@ -52,12 +54,17 @@ const createTaskSchema = z.object({
   priority: z.enum(['low', 'medium', 'high']).optional(),
   baseCommit: z.string().trim().optional(),
   roleId: z.string().trim().min(1).optional(),
+  teamId: z.string().trim().min(1).optional(),
   pipeline: pipelineSchema.optional(),
 });
 
 const createRunSchema = z.object({
   agentId: z.string().trim().min(1),
   roleId: z.string().trim().min(1).optional(),
+});
+
+const acceptRunSchema = z.object({
+  files: z.array(z.string().trim().min(1).max(4_096)).min(1).max(1_000).optional(),
 });
 
 const customAgentSchema = z.object({
@@ -84,6 +91,10 @@ export type KernelAppOptions = {
 function errorResponse(context: Context, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes('was not found')) return context.json({ error: message }, 404);
+  if (message.includes('not part of run') || message.includes('Select at least one changed file') || message.includes('invalid worktree path')) {
+    return context.json({ error: message }, 400);
+  }
+  if (message.includes('is disabled')) return context.json({ error: message }, 400);
   if (message.includes('cannot be') || message.includes('no worktree') || message.includes('nothing is awaiting approval')) {
     return context.json({ error: message }, 409);
   }
@@ -268,6 +279,58 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     return deleted ? c.json({ deleted: true }) : c.json({ error: 'Role not found.' }, 404);
   });
 
+  app.get('/api/teams', async (c) => c.json({ teams: await store.teams.listTeams() }));
+
+  app.get('/api/teams/:teamId', async (c) => {
+    const team = await store.teams.getTeam(c.req.param('teamId'));
+    return team ? c.json({ team }) : c.json({ error: 'Team not found.' }, 404);
+  });
+
+  app.post('/api/teams', async (c) => {
+    const parsed = agentTeamCreateSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'Invalid team input.', details: parsed.error.flatten() }, 400);
+    try {
+      const team = await store.teams.createTeam(parsed.data);
+      return c.json({ team }, 201);
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  app.put('/api/teams/:teamId', async (c) => {
+    const parsed = agentTeamUpdateSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'Invalid team update.', details: parsed.error.flatten() }, 400);
+    const teamId = c.req.param('teamId');
+    if (!(await store.teams.getTeam(teamId))) return c.json({ error: 'Team not found.' }, 404);
+    try {
+      const team = await store.teams.updateTeam(teamId, parsed.data);
+      return team ? c.json({ team }) : c.json({ error: 'Team not found.' }, 404);
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  app.delete('/api/teams/:teamId', async (c) => {
+    const deleted = await store.teams.deleteTeam(c.req.param('teamId'));
+    return deleted ? c.json({ deleted: true }) : c.json({ error: 'Team not found.' }, 404);
+  });
+
+  app.get('/api/audit', (c) => {
+    const taskId = c.req.query('taskId')?.trim() || undefined;
+    const teamId = c.req.query('teamId')?.trim() || undefined;
+    const type = c.req.query('type')?.trim() || undefined;
+    const parsedLimit = Number(c.req.query('limit') ?? '');
+    const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
+    return c.json({
+      events: store.listAudit({
+        taskId,
+        teamId,
+        type: type as KernelAuditEventType | undefined,
+        limit,
+      }),
+    });
+  });
+
   app.post('/api/tasks', async (c) => {
     const parsed = createTaskSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'Invalid task payload.', details: parsed.error.issues }, 400);
@@ -307,9 +370,32 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     return task.pipeline ? c.json(task.pipeline) : c.json({ error: `Task ${task.id} has no pipeline.` }, 404);
   });
 
+  app.get('/api/tasks/:id/handoffs', (c) => {
+    const taskId = c.req.param('id');
+    const task = store.getTask(taskId);
+    if (!task) return c.json({ error: `Task ${taskId} was not found.` }, 404);
+    return c.json({ handoffs: store.listHandoffs(taskId) });
+  });
+
+  app.get('/api/tasks/:id/export', (c) => {
+    const taskId = c.req.param('id');
+    const exported = store.exportTask(taskId);
+    if (!exported) return c.json({ error: `Task ${taskId} was not found.` }, 404);
+    c.header('content-disposition', `attachment; filename="agent-ops-task-${taskId}.json"`);
+    return c.json(exported);
+  });
+
   app.post('/api/tasks/:id/pipeline/execute', async (c) => {
     try {
       return c.json(await store.executeTaskPipeline(c.req.param('id'), options.runner));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  app.post('/api/tasks/:id/pipeline/retry', async (c) => {
+    try {
+      return c.json(await store.retryTaskPipeline(c.req.param('id'), options.runner));
     } catch (error) {
       return errorResponse(c, error);
     }
@@ -341,11 +427,15 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     }
   });
 
-  app.get('/api/tasks/:id/runs', (c) => c.json(store.listRuns(c.req.param('id'))));
+  app.get('/api/tasks/:id/runs', (c) => {
+    const taskId = c.req.param('id');
+    return c.json(store.listRuns(taskId).map(run => ({ ...run, handoff: store.getHandoffForRun(run.id) })));
+  });
 
   app.get('/api/runs/:id', (c) => {
     const run = store.getRun(c.req.param('id'));
-    return run ? c.json(run) : c.json({ error: `Run ${c.req.param('id')} was not found.` }, 404);
+    if (!run) return c.json({ error: `Run ${c.req.param('id')} was not found.` }, 404);
+    return c.json({ ...run, handoff: store.getHandoffForRun(run.id) });
   });
 
   app.get('/api/runs/:id/events', (c) => {
@@ -436,7 +526,19 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
 
   app.post('/api/runs/:id/accept', async (c) => {
     try {
-      return c.json(await store.acceptRun(c.req.param('id')));
+      const raw = await c.req.text().catch(() => '');
+      if (!raw.trim()) return c.json(await store.acceptRun(c.req.param('id')));
+      let body: unknown;
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        return c.json({ error: 'Invalid accept payload.' }, 400);
+      }
+      const parsed = acceptRunSchema.safeParse(body);
+      if (!parsed.success) {
+        return c.json({ error: 'Invalid accept payload.', details: parsed.error.issues }, 400);
+      }
+      return c.json(await store.acceptRun(c.req.param('id'), parsed.data.files));
     } catch (error) {
       return errorResponse(c, error);
     }

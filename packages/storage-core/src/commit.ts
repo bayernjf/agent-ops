@@ -39,8 +39,21 @@ async function headSha(worktreePath: string): Promise<string> {
 export async function commitWorktreeChanges(
   worktreePath: string,
   message: string,
+  files?: readonly string[],
 ): Promise<CommitWorktreeResult> {
-  await execFileAsync('git', ['add', '-A'], { cwd: worktreePath });
+  // A partial accept must not inherit changes the agent happened to stage itself. Resetting the
+  // index keeps only the caller-selected paths in the commit; the worktree is untouched.
+  if (files) {
+    for (const file of files) {
+      if (!file || isAbsolute(file) || file.split('/').includes('..')) {
+        throw new UnsafeCommitError(`Refusing to commit an invalid worktree path: ${file}`);
+      }
+    }
+    await execFileAsync('git', ['reset', '-q'], { cwd: worktreePath });
+    await execFileAsync('git', ['add', '-A', '--', ...files], { cwd: worktreePath });
+  } else {
+    await execFileAsync('git', ['add', '-A'], { cwd: worktreePath });
+  }
   const staged = await execFileAsync('git', ['diff', '--cached', '--name-only', '-z'], {
     cwd: worktreePath,
   });

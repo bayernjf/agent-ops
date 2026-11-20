@@ -91,4 +91,67 @@ export const kernelMigrations: readonly Migration[] = [
       ALTER TABLE runs ADD COLUMN instruction TEXT NOT NULL DEFAULT '';
     `,
   },
+  {
+    id: '0015_run_execution_evidence',
+    sql: `
+      ALTER TABLE runs ADD COLUMN runtime_version TEXT NOT NULL DEFAULT '';
+      ALTER TABLE runs ADD COLUMN command TEXT NOT NULL DEFAULT '';
+      ALTER TABLE runs ADD COLUMN input_tokens INTEGER;
+      ALTER TABLE runs ADD COLUMN output_tokens INTEGER;
+      ALTER TABLE runs ADD COLUMN cost_usd REAL;
+    `,
+  },
+  {
+    id: '0016_task_team',
+    sql: `
+      ALTER TABLE tasks ADD COLUMN team_id TEXT NOT NULL DEFAULT '';
+    `,
+  },
+  {
+    id: '0017_run_handoffs',
+    sql: `
+      CREATE TABLE IF NOT EXISTS run_handoffs (
+        id TEXT PRIMARY KEY NOT NULL,
+        task_id TEXT NOT NULL,
+        team_id TEXT NOT NULL DEFAULT '',
+        from_step_id TEXT NOT NULL,
+        to_step_id TEXT NOT NULL,
+        from_run_id TEXT NOT NULL,
+        to_run_id TEXT NOT NULL,
+        from_role_id TEXT NOT NULL DEFAULT '',
+        to_role_id TEXT NOT NULL DEFAULT '',
+        from_commit_sha TEXT NOT NULL,
+        artifacts TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(task_id) REFERENCES tasks(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_run_handoffs_task
+        ON run_handoffs(task_id, created_at);
+
+      CREATE INDEX IF NOT EXISTS idx_run_handoffs_to_run
+        ON run_handoffs(to_run_id);
+    `,
+  },
+  {
+    id: '0018_audit_events',
+    sql: `
+      CREATE TABLE IF NOT EXISTS audit_events (
+        id TEXT PRIMARY KEY NOT NULL,
+        seq INTEGER NOT NULL,
+        task_id TEXT NOT NULL DEFAULT '',
+        team_id TEXT NOT NULL DEFAULT '',
+        actor TEXT NOT NULL DEFAULT 'operator',
+        type TEXT NOT NULL,
+        data TEXT NOT NULL DEFAULT '{}',
+        at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_audit_events_task_seq
+        ON audit_events(task_id, seq);
+
+      CREATE INDEX IF NOT EXISTS idx_audit_events_seq
+        ON audit_events(seq);
+    `,
+  },
 ];

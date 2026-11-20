@@ -37,13 +37,20 @@ export type UpdateRoleInput = {
  * as ProfileStore. A SQL table can follow when Team/Pipeline need relational queries; until then
  * a single-user JSON store avoids a second source of truth while the model is still moving.
  */
+export type RoleStoreChange = {
+  action: 'created' | 'updated' | 'deleted';
+  role: AgentRole;
+};
+
 export class RoleStore {
   private readonly filePath: string;
+  private readonly onChange?: (change: RoleStoreChange) => void | Promise<void>;
   private cache: AgentRole[] | null = null;
   private corrupted = false;
 
-  constructor(dataDirectory: string) {
+  constructor(dataDirectory: string, onChange?: (change: RoleStoreChange) => void | Promise<void>) {
     this.filePath = join(dataDirectory, 'agent-roles.json');
+    this.onChange = onChange;
   }
 
   async listRoles(): Promise<AgentRole[]> {
@@ -87,6 +94,7 @@ export class RoleStore {
     existing.push(role);
     await this.saveToDisk(existing);
     this.cache = existing;
+    await this.onChange?.({ action: 'created', role });
     return role;
   }
 
@@ -106,6 +114,7 @@ export class RoleStore {
     roles[index] = updated;
     await this.saveToDisk(roles);
     this.cache = roles;
+    await this.onChange?.({ action: 'updated', role: updated });
     return updated;
   }
 
@@ -113,9 +122,10 @@ export class RoleStore {
     const roles = await this.listRoles();
     const index = roles.findIndex(role => role.id === id);
     if (index === -1) return false;
-    roles.splice(index, 1);
+    const [removed] = roles.splice(index, 1);
     await this.saveToDisk(roles);
     this.cache = roles;
+    if (removed) await this.onChange?.({ action: 'deleted', role: removed });
     return true;
   }
 

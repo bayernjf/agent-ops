@@ -166,15 +166,119 @@
 - [x] `styles.css` 新增 task-form / tasks-actions / pipeline-toggle / pipeline-editor / pipeline-step / pipeline-panel / pipeline-step-row / pipeline-step-identity / pipeline-step-commit 样式。
 - [x] 门禁：全仓 typecheck 0，49 文件 / 644 tests 绿（studio 16 例含 owned-copy / cross-locale / smoke）。
 - [x] 本轮提交：`ab59175 feat(studio): add task creation and pipeline editing`。
-- [ ] F7-01 只覆盖串行 Pipeline 的建任务与执行 UI；F6-05 失败重跑、F7-05 Run 详情扩展仍未做。
+- [ ] F7-01 只覆盖串行 Pipeline 的建任务与执行 UI；F7-05 Run 详情扩展仍未做；F6-05 失败重跑已在后续完成。
 
 ## F6-04 每步审批 requiresApproval — 已完成（2026-11-20）
 
 - [x] `TaskPipelineStep` / `TaskPipelineStepInput` 增加 `requiresApproval`；step 成功进入 `review` 后若该步需审批，不自动 accept，pipeline 置 `awaiting_approval`，step result 同为 `awaiting_approval`，Run 保持 `review`。
-- [x] `approvePipelineStep`：接受当前待审 Run（commit），把该 step 置 `completed` 并继续执行剩余步骤；`rejectPipelineStep`：reset worktree 到 base，该 step 记 `Rejected by operator.`，pipeline 与任务均置 `failed`。
+- [x] `approvePipelineStep`：接受当前待审 Run（commit），把该 step 置 `completed` 并继续执行剩余步骤；`rejectPipelineStep`：reset worktree 到该 step 的前置 commit（首步回 `baseCommit`），该 step 记 `Rejected by operator.`，pipeline 与任务均置 `failed`。
 - [x] `parseTaskPipeline` 白名单补 `awaiting_approval`，否则 daemon 重载后暂停态会被折回 `idle`（由新测试抓到的真实缺陷）。
 - [x] server 新增 `POST /api/tasks/:id/pipeline/approve`、`/reject`；`createTaskSchema` step 接受 `requiresApproval`；无待审批时的 gate 调用返回 409。
 - [x] Studio：建任务表单每步新增"需要人工审批后继续"开关；pipeline 面板与 step 行渲染 `awaiting_approval`，暂停时显示 Approve / Reject 按钮；zh/en 文案与状态配色补齐。
 - [x] 测试：storage-core 3 例（暂停、approve 继续、驳回 reset、无门禁拒绝）、server-core 2 例 HTTP approve/reject；全仓 typecheck 0，49 文件 / 649 tests 绿。
 - [x] 本轮提交：`e6e4658 feat(storage-core): pause pipeline steps for approval`、`d4ddacc feat(server-core): expose pipeline approval routes`、`4b4ba7c feat(studio): gate pipeline steps in the task board`。
-- [ ] F6-04 只覆盖串行 Pipeline 的单点审批门禁；F6-05 失败重跑（reset 到 step base）、F6-06 并行 DAG、F7-05 Run 详情扩展仍未做。
+- [ ] F6-04 只覆盖串行 Pipeline 的单点审批门禁；F6-06 并行 DAG、F7-05 Run 详情扩展仍未做。
+
+## F6-05 失败重跑 — 已完成（2026-11-20）
+
+- [x] `retryTaskPipeline` 只接受 `failed` pipeline；completed / idle / awaiting_approval / running 均拒绝，避免把“重试”误用成“重跑已完成任务”。
+- [x] 找到第一个 `failed` 的 step，重跑前把 worktree hard reset 到该 step 的前置 commit：首步回 `baseCommit`，中间步回上一条 completed result 的 `commitSha`；同时清掉 failed step 及其后的结果，保留前面 completed step 的 commit 和 result。
+- [x] 重试会新建 Run，旧失败 Run 继续留在 Run 列表；重试成功后继续执行剩余 step，pipeline `completed`、Task `done`；再次失败则仍为 `failed`，可继续重试。
+- [x] 修复 F6-04 的真实缺陷：`rejectPipelineStep` 之前调用 `rejectRun` 会 reset 到任务 `baseCommit`，把前面已完成 step 的 commit 一并抹掉；现在 `rejectRun` 接受可选 reset target，pipeline 驳回只回退到当前 step 的前置 commit。
+- [x] server 新增 `POST /api/tasks/:id/pipeline/retry`，非 failed pipeline 返回 409。
+- [x] MCP 新增 `agent_ops_retry_pipeline`；Studio failed 状态的按钮从错误的 execute 改为 Retry failed step，并沿用 busy/错误处理。
+- [x] 测试：三步 Pipeline 首步保留、第二步失败后重试成功、失败文件被清掉、首步 runner 不重复执行、首步 commit 不变、最终 4 个 commit 且 worktree clean；驳回第二步时保留第一步 commit 与文件；server HTTP 重试与 completed 再重试 409；全仓 typecheck 0，49 文件 / 652 tests 绿。
+- [x] 本轮提交：`20d707a feat(storage-core): retry failed pipelines`、`4ec87aa feat(server-core): expose pipeline retry`、`53687f3 feat(studio): retry failed pipeline steps`、`28e4e5a test(storage-core): cover pipeline retry`。
+- [ ] F6-05 只支持 failed pipeline 的重试；completed pipeline 仍不支持 reset 后重跑，step 间 output 模板替换也未做。F6-06 并行 DAG、F7-05 Run 详情扩展仍未做。
+
+## M1 退出验收 — 4 步串行完整组合 — 已完成（2026-11-20）
+
+- [x] 新增 4 步串行 Pipeline 端到端测试：`Plan → Implement（requiresApproval）→ Review → Verify`，四个不同 Role，真实 git 仓库 + 真实 worktree + 注入 runner。
+- [x] 断言覆盖完整组合：执行到第 2 步停在 `awaiting_approval`（此时只有 2 次 runner 调用）；`approvePipelineStep` 后继续跑第 3、4 步；4 个 step 全部 `completed` 且各有一个互不相同的 40 位 commit SHA；worktree 累计 5 个 commit（init + 4 步）且 worktree clean；Task 最终 `done`、pipeline `completed`。
+- [x] 断言每步身份正确：4 条 Run 的 `roleId` 依序对应 Architect / Implementer / Reviewer / Verifier，prompt 中 `Pipeline step N/4` 标记与 `Acting Role` 段落逐步骤匹配，下游能读到上游已提交的文件。
+- [x] 发现的真实限制：`executeCodexPlan` 在 `adapter.status !== 'verified'` 时拒绝执行，`claude-code` 仍是 `candidate`，因此带 Claude 角色的 step 会直接失败。本条验收的组合因此使用 4 个 codex 角色；“同一 Codex 3 角色 + Claude/Hermes 角色”要等 Claude adapter 通过验证后才能组合。
+- [x] 全仓 `npm run typecheck` 0 错误，`npm test` 49 文件 / 657 tests 全绿。
+- [x] 本轮提交：`63fe913 test(storage-core): cover a four-step pipeline`。
+- [ ] 本条验收是确定性 runner 下的内核级验收，不是真实模型 UI 验收；真实模型 UI E2E 仍 blocked（见上方待办登记）。
+
+## F5-01/F5-02/F5-03 Team + Assignment — 已完成（2026-11-20）
+
+- [x] `agent-runtime` 新增 `teams.ts`：`AgentTeam` 只存 `roleIds` 花名册与 `handoffs` 交接边；`validateTeamGraph` 校验空花名册、重复成员、自交接、重复边、非成员边与环；stored/create/update schema 共用同一套规则。
+- [x] `storage-core` 新增 `TeamStore`（`agent-teams.json`，与 Role/Profile 相同的原子写、损坏保护和重开读取），挂在 `KernelStore.teams`；创建/更新时校验 Role 存在且启用。
+- [x] Task 增加 `team_id`（migration `0016_task_team`）：`createTask` 校验 Team 存在且启用；同时给 `roleId` 时校验该 Role 在该 Team 花名册内；`TaskRecord.teamId` 随 API 返回。
+- [x] `server-core` 新增 `GET/POST /api/teams` 与 `GET/PUT/DELETE /api/teams/:teamId`；`createTaskSchema` 接受 `teamId`；Store 抛出的 “is disabled” 映射 400，未知 Team 404。
+- [x] MCP 新增 `agent_ops_list_teams/get_team/create_team/update_team/delete_team`，`agent_ops_create_task` 接受 `teamId`。
+- [x] 测试：TeamStore 唯一 id/持久化/重开、未知或停用 Role、重复成员/自交接/重复边/非成员边/环、更新导致交接悬空时报错；任务 `teamId` 持久化与成员校验；server CRUD 与环 400/未知角色 404；MCP 团队工具与 `teamId` 透传。全仓 typecheck 0，50 文件 / 664 tests 绿。
+- [x] 本轮提交：`18d127f feat(storage-core): add team roster store`、`fb0f187 feat(storage-core): assign tasks to teams`、`89d1854 feat(server-core): expose the team API`、`46f26e4 feat(cli): expose team tools over MCP`。
+- [ ] 未做：F8-02 审计导出、F5-06 Coordinator、F5-07 并行团队。（F5-04、F5-05/F7-03 见下方章节。）
+- [ ] Team 目前只是花名册 + 交接图；Pipeline 仍按 task 的 step 显式配置，不会从 Team 自动推导。
+
+## F5-05/F7-03 Studio TeamsView — 已完成（2026-11-20）
+
+- [x] 新增 `TeamsView`：团队列表（花名册人数、交接边数、启用切换、编辑/删除），选中团队后在下方展示花名册、交接边与任务队列。
+- [x] 建/编辑表单：名称、描述、角色花名册多选（角色来自 `/api/roles`）、交接边编辑器（上游/下游/备注，下拉取花名册角色）、启用开关；保存/取消/错误提示沿用 RolesView 的处理方式。
+- [x] 任务队列：按 `task.teamId` 过滤 `/api/tasks`，显示任务状态；`pipeline.status === 'awaiting_approval'` 的任务额外标记“审批卡点”。
+- [x] 接入 Studio 导航（`nav.teams`）与 `View` 联合类型；浏览器侧补 `AgentTeam`/`TeamHandoff` 类型与 `KernelTask.teamId`。
+- [x] 文案全部走 i18n：`en`/`zh` 同步新增 `teams` 与 `nav.teams`；`owned-copy` 扫描通过。
+- [x] 验证：Studio `tsc` 与 `vite build` 通过（1655 modules），Studio 14 文件 / 257 tests 绿；全仓 typecheck 0，50 文件 / 664 tests 绿。
+- [x] 本轮提交：`b216d83 feat(studio): add the teams view`。
+- [ ] 未做：交接边只有文本列表，没有可视化图；花名册不校验角色是否绑定 runtime；TeamsView 未在真实浏览器里逐项点过（仅 tsc/build + 单元测试）。
+
+## F5-04 Handoff — 已完成（2026-11-20）
+
+- [x] migration `0017_run_handoffs` + `run_handoffs` 表：每遍历一条 Pipeline 边就写一条收据，字段包括 task/team、from/to step、from/to run、from/to role、上游已接受的 commit（`fromCommitSha`）与上游 changedFiles（`artifacts`）。
+- [x] `runPipelineSteps` 在创建下游 Run 后立刻落收据：只有上游 step 已 `completed` 且有 commit 才写；重试会为新 Run 再写一条，不覆盖旧记录。
+- [x] `KernelStore.listHandoffs(taskId)`（按创建时间倒序，重开 DB 仍在）与 `getHandoffForRun(runId)`。
+- [x] server：`GET /api/tasks/:id/handoffs`；`GET /api/tasks/:id/runs` 与 `GET /api/runs/:id` 给每个 Run 带上 `handoff`（无则 `null`）。
+- [x] MCP：新增 `agent_ops_list_handoffs`。
+- [x] Studio：Run 证据面板新增交接行（上游 step → 下游 step、上游 commit 前 10 位、随行变更文件数）。
+- [x] 测试：4 步 Pipeline 产生 3 条收据（plan→implement→review→verify），`fromCommitSha` 与对应 step 的 commit 一致、`toRunId` 与下游 Run 一致、`artifacts` 含上游写出的文件、重开 DB 仍是 3 条、首步 Run 无交接；server HTTP 收据与未知任务 404、Run 详情 `handoff`；全仓 typecheck 0，50 文件 / 665 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
+- [x] 本轮提交：`c94e8d6 feat(storage-core): record pipeline handoffs`、`b7a7cf3 feat(server-core): expose handoff receipts`、`0724ba8 feat(cli): add the handoff tool`、`a5906e8 feat(studio): show run handoff receipts`。
+- [ ] 未做：Team 配置的交接边与 Pipeline step 之间没有一致性校验（Pipeline 仍可任意串联 Role）；收据不记录 worktree 路径与审批人；TeamsView 尚未展示团队维度的交接历史。
+
+## F7-05 Run 详情扩展 — 已完成（2026-11-20）
+
+- [x] migration `0015_run_execution_evidence` 给 `runs` 增加 `runtime_version`（默认空字符串）、`command`（默认空字符串）、`input_tokens` / `output_tokens`（INTEGER，可空）、`cost_usd`（REAL，可空）；旧 Run 读取为 `runtimeVersion=null`、`command=''`、usage 为 `null`。
+- [x] `RunRecord` 增加 `runtimeVersion` / `command` / `inputTokens` / `outputTokens` / `costUsd`；`createRun` 初始化空证据；新增 `RunExecutionEvidence` 与 `updateRunExecutionEvidence`。
+- [x] `updateRunExecutionEvidence` 对 command 做 `RUN_COMMAND_LIMIT = 4000` 字符截断（超出时追加 `[truncated: N characters total]`）；token/cost 只接受有限非负数，token 向下取整，非法值落 `null`；空版本落 `null`，不伪造。
+- [x] `executeRun` 在构造执行计划后立即写入实际命令行（`plan.command.join(' ')`），在 runner 返回后、收集 diff 前写入 `runtimeVersion` 与 runner 上报的 `usage`；未上报的 token/cost 保持 `null`，不写 0。
+- [x] `agent-runtime` 新增 `probeAgentVersion(command)`，复用 `detect()` 的探测缓存与 5 秒超时；`runCodexProcessOnPlatform` 改为 async runner，spawn 前探测版本，探测失败不阻塞执行并返回 `runtimeVersion=null`；所有 resolve 分支都带版本证据。
+- [x] server `GET /api/runs/:id` 直接返回新字段；Studio `KernelRun` 增加对应类型，Run 身份行展示 Role / Runtime / Version / Commit / Tokens(in/out) / Cost，证据面板新增 Command 区块；`en.ts` / `zh.ts` 补齐 `version` / `command` / `tokens` / `cost` 文案。
+- [x] 测试：storage 覆盖 runner 上报 version+usage 的落库与重开 DB 持久化、command 截断与非法 usage 归一化、未上报时三个 usage 字段为 null；server 覆盖 Run 详情返回 `runtimeVersion=null`、command 含 `codex exec`、usage 字段为 null；全仓 typecheck 0，49 文件 / 654 tests 绿。
+- [ ] 真实 Codex / Claude CLI 目前不返回 token/cost usage，Studio 显示 `—`；这是“未上报”而非 0。命令行为包含 prompt，`RUN_COMMAND_LIMIT` 只限制长度，不脱敏。
+- [ ] 本轮提交：`9ab2084 feat(agent-runtime): probe runtime versions`、`894bd21 feat(storage-core): record run execution evidence`、`65b5c7b feat(studio): show run execution evidence`、`4fe610d test(storage-core): cover run execution evidence`。
+
+## F7-04 逐文件接受 — 已完成（2026-11-20）
+
+- [x] `commitWorktreeChanges` 增加可选 `files`：部分接受时先 `git reset -q` 清掉 agent 自己 staged 的内容，再 `git add -A -- <files>`，只提交选中路径；拒绝绝对路径、空路径和含 `..` 的路径。
+- [x] `KernelStore.acceptRun(id, files?)`：`files` 省略时保持全量接受；传入时必须非空且是本次 Run `artifacts.changedFiles` 的子集，否则抛错且不触碰 worktree。部分接受提交选中文件后 `resetWorktree` 丢弃未选文件，确保 worktree clean、可 release。
+- [x] server `POST /api/runs/:id/accept` 支持可选 `{ files: string[] }`；无 body 仍为全量接受，非法 JSON / 非法字段返回 400，不再把 malformed body 当成“接受全部”；未知路径映射为 400。
+- [x] Studio Run 证据面板新增逐文件 checkbox（默认全选），接受按钮显示 `接受选中文件 (n/m)`，未选任何文件时禁用；选择在刷新 run 列表时保留，但会过滤掉已不存在的路径。zh/en 文案与样式补齐。
+- [x] 测试：staged 双文件场景只提交 `keep.txt`、`drop.txt` 被删除、worktree clean；未知文件 400 且 Run 保持 review；malformed JSON 400 且不触发接受；全仓 typecheck 0，49 文件 / 656 tests 绿。
+- [x] 本机 UI 实跑：临时 DB + 临时 git 仓库进入 review，展开证据后取消勾选 `drop.txt`，点“接受选中文件 (1/2)”；HEAD 只含 `keep.txt`，`drop.txt` 已删除，`git status --porcelain` 为空，Task 变 done。
+- [ ] 当前是“本次操作里接受选中、其余丢弃”的一次性语义；不支持保留未选文件留待下一轮。Pipeline 自动 accept 与不带 files 的旧调用仍走全量接受。
+- [ ] 本轮提交：`8bf226e feat(storage-core): accept selected run files`、`e1e6fd5 feat(server-core): accept selected run files`、`324cca1 feat(studio): pick files before accepting a run`、`5d24e70 test(storage-core): cover partial run acceptance`。
+
+## F8-02 审计事件 — 已完成（2026-11-20）
+
+- [x] migration `0018_audit_events` + `audit_events` 表：`seq` 全局单调，字段含 `task_id` / `team_id` / `actor` / `type` / `data` / `at`；重启时从 `MAX(seq)` 续号。
+- [x] 事件类型：`role.created/updated/deleted`、`team.created/updated/deleted`、`task.created`、`run.accepted/rejected`、`pipeline.step.approved/rejected`、`pipeline.retried`、`handoff.recorded`。
+- [x] `RoleStore`/`TeamStore` 新增可选 `onChange` 钩子，`KernelStore` 用它把模型改动写进审计；创建/更新/删除在落盘后触发，原有调用方式不变。
+- [x] `task.created` 记录 roleId / teamId / pipelineSteps；`run.accepted` 记录 runId / commitSha / roleId / 选中文件；`handoff.recorded` 记录上下游 step、run、commit 与随行文件数。
+- [x] `KernelStore.listAudit({ taskId, teamId, type, limit })`：按 `seq` 升序返回，`limit` 取最新 N（默认 200，上限 1000）。
+- [x] server：`GET /api/audit?taskId=&teamId=&type=&limit=`。
+- [x] MCP：新增 `agent_ops_list_audit`。
+- [x] 测试：角色/团队/派活的事件顺序与过滤、Pipeline 回放顺序 `task.created → run.accepted → handoff.recorded → run.accepted`、reject 记录、重启后事件仍在且新事件 seq 递增；server 三向过滤与 limit；MCP 返回 `role.created`。全仓 typecheck 0，51 文件 / 669 tests 绿。
+- [x] 本轮提交：`7a7d7af feat(storage-core): record kernel audit events`、`bfb4398 feat(server-core): serve the audit log`、`e746600 feat(cli): add the audit tool`。
+- [ ] 未做：Studio 暂无审计面板；`actor` 只区分 operator/system，没有具体操作人身份（本地单用户内核还没有身份模型）；审计表不自动截断。（F8-03 见下节。）
+
+## F8-03 证据导出 — 已完成（2026-11-20）
+
+- [x] `KernelStore.exportTask(id)` 产出单任务证据包：task + pipeline、每个 Run（diff / output / exitCode / 时长 / changedFiles / commit / role / runtime / usage）、handoff 收据、该任务的审计事件，以及 totals。
+- [x] totals：runs、acceptedCommits（有 commit 的 Run）、changedFiles（去重）、inputTokens/outputTokens/costUsd、reportingRuns、durationMs；**没有任何 Run 上报 usage 时三个 usage 字段为 `null`**，不写 0。
+- [x] server：`GET /api/tasks/:id/export`（`content-disposition: attachment; filename="agent-ops-task-<id>.json"`），未知任务 404。
+- [x] MCP：新增 `agent_ops_export_task`。
+- [x] CLI：`agent-ops export <taskId> [--out <file>]`，默认打到 stdout；连接信息取 `AGENT_OPS_DAEMON_URL` / `AGENT_OPS_DAEMON_TOKEN`（或 `~/.agent-ops/daemon-token`）；`--out` 时打印写入字节数。
+- [x] 测试：两步 Pipeline 的导出含 2 个 Run（第二个带 handoff、diff/output 可读）、审计 4 条、totals `runs=2 / acceptedCommits=2 / changedFiles=2 / reportingRuns=0 / usage=null / durationMs>0`；空任务 totals 归零且 costUsd 为 null；server 附件头与 404；MCP 导出返回 task id 与 totals。全仓 typecheck 0，52 文件 / 673 tests 绿。
+- [x] 本轮提交：`ef4c752 feat(storage-core): export a task's evidence`、`4be9c5b feat(server-core): serve task evidence exports`、`810ff5a feat(cli): add the task export surface`。
+- [ ] 未做：导出只有 JSON，没有打包 zip/tar，也不含 worktree 里的二进制产物；artifacts 沿用采集时的截断版本，导出不再二次限长；F8-04 指标聚合未做。

@@ -50,6 +50,11 @@ describe('KernelStore executeRun', () => {
       const executed = await store.executeRun(run.id, fakeRunner(0));
       expect(executed.status).toBe('review');
       expect(executed.runtimeId).toBe('codex');
+      expect(executed.runtimeVersion).toBeNull();
+      expect(executed.command).toContain('codex exec');
+      expect(executed.inputTokens).toBeNull();
+      expect(executed.outputTokens).toBeNull();
+      expect(executed.costUsd).toBeNull();
       expect(executed.diffStat).toContain('NEW.md');
       expect(executed.artifacts).toMatchObject({ output: 'ok', exitCode: 0, timedOut: false });
       expect(executed.artifacts.diff).toContain('NEW.md');
@@ -63,6 +68,78 @@ describe('KernelStore executeRun', () => {
       expect(reopened.getRun(run.id)?.artifacts.diff).toContain('NEW.md');
       expect(reopened.getRun(run.id)?.artifacts.changedFiles).toContain('NEW.md');
       await reopened.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('records runtime version, command and reported usage evidence', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const run = await store.createRun(task.id, 'codex');
+
+      const evidenceRunner: CodexProcessRunner = async (_command, _arguments, _options) => ({
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        output: 'done',
+        startedAt: new Date(Date.now() - 10).toISOString(),
+        completedAt: new Date().toISOString(),
+        runtimeVersion: 'codex 1.2.3',
+        usage: { inputTokens: 120, outputTokens: 30, costUsd: 0.0042 },
+      });
+
+      const executed = await store.executeRun(run.id, evidenceRunner);
+      expect(executed.status).toBe('review');
+      expect(executed.runtimeVersion).toBe('codex 1.2.3');
+      expect(executed.command).toContain('codex exec');
+      expect(executed.command).toContain('Rename bin');
+      expect(executed.inputTokens).toBe(120);
+      expect(executed.outputTokens).toBe(30);
+      expect(executed.costUsd).toBe(0.0042);
+      await store.close();
+
+      const reopened = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      expect(reopened.getRun(run.id)).toMatchObject({
+        runtimeVersion: 'codex 1.2.3',
+        inputTokens: 120,
+        outputTokens: 30,
+        costUsd: 0.0042,
+      });
+      expect(reopened.getRun(run.id)?.command).toContain('Rename bin');
+      await reopened.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('bounds and normalizes execution evidence', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const run = await store.createRun(task.id, 'codex');
+
+      await store.updateRunExecutionEvidence(run.id, {
+        command: 'x'.repeat(5_000),
+        runtimeVersion: '   ',
+        inputTokens: -1,
+        outputTokens: 1.9,
+        costUsd: -2,
+      });
+
+      const evidence = store.getRun(run.id);
+      expect(evidence?.command.startsWith('x'.repeat(4_000))).toBe(true);
+      expect(evidence?.command).toContain('[truncated: 5000 characters total]');
+      expect(evidence?.runtimeVersion).toBeNull();
+      expect(evidence?.inputTokens).toBeNull();
+      expect(evidence?.outputTokens).toBe(1);
+      expect(evidence?.costUsd).toBeNull();
+      await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
@@ -384,6 +461,37 @@ describe('KernelStore executeRun', () => {
         .toBe('task: accept Rename bin');
       expect((await execFileAsync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: task.worktreePath })).stdout)
         .toContain('NEW.md');
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: task.worktreePath })).stdout.trim()).toBe('');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('accepts only the selected changed files and discards the rest', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const run = await store.createRun(task.id, 'codex');
+      await writeFile(join(task.worktreePath, 'keep.txt'), 'keep\n', 'utf8');
+      await writeFile(join(task.worktreePath, 'drop.txt'), 'drop\n', 'utf8');
+      // Simulate an agent that staged both files itself. A partial accept must reset the index
+      // and commit only the selected path, not everything the agent happened to stage.
+      await execFileAsync('git', ['add', '-A'], { cwd: task.worktreePath });
+      await store.executeRun(run.id, fakeRunner(0));
+      expect(store.getRun(run.id)?.artifacts.changedFiles).toEqual(expect.arrayContaining(['keep.txt', 'drop.txt']));
+
+      await expect(store.acceptRun(run.id, ['missing.txt'])).rejects.toThrow('not part of run');
+      expect(store.getRun(run.id)?.status).toBe('review');
+
+      const accepted = await store.acceptRun(run.id, ['keep.txt']);
+      expect(accepted.status).toBe('done');
+      expect(store.getTask(task.id)?.status).toBe('done');
+      expect((await execFileAsync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: task.worktreePath })).stdout.trim())
+        .toBe('keep.txt');
+      await expect(access(join(task.worktreePath, 'drop.txt'))).rejects.toBeTruthy();
       expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: task.worktreePath })).stdout.trim()).toBe('');
       await store.close();
     } finally {

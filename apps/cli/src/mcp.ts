@@ -404,6 +404,62 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   }, args => callDaemon('DELETE', `/api/roles/${encodeURIComponent(args.roleId)}`).then(toResult));
 
+  const teamIdSchema = {
+    teamId: z.string().min(1).describe('Team id as listed by agent_ops_list_teams.'),
+  };
+  const teamFieldsSchema = {
+    name: z.string().trim().min(1).max(100).optional().describe('Human-readable team name.'),
+    description: z.string().max(500).optional().describe('What this team is for.'),
+    roleIds: z.array(z.string().trim().min(1).max(100)).max(50).optional().describe('Ordered roster of role ids on this team.'),
+    handoffs: z.array(z.object({
+      fromRoleId: z.string().trim().min(1).max(100),
+      toRoleId: z.string().trim().min(1).max(100),
+      note: z.string().trim().max(500).optional().describe('What the downstream role picks up.'),
+    })).max(200).optional().describe('Handoff edges between roster roles; must stay acyclic.'),
+    enabled: z.boolean().optional().describe('Whether the team may own new tasks.'),
+  };
+
+  server.registerTool('agent_ops_list_teams', {
+    title: 'List teams',
+    description: 'List local teams: roster of role ids, handoff edges and enabled state.',
+    annotations: READ_ONLY,
+  }, () => callDaemon('GET', '/api/teams').then(toResult));
+
+  server.registerTool('agent_ops_get_team', {
+    title: 'Get team',
+    description: 'Get one team with its roster and handoff edges.',
+    inputSchema: teamIdSchema,
+    annotations: READ_ONLY,
+  }, args => callDaemon('GET', `/api/teams/${encodeURIComponent(args.teamId)}`).then(toResult));
+
+  server.registerTool('agent_ops_create_team', {
+    title: 'Create team',
+    description: 'Create a team from an existing set of roles and acyclic handoff edges.',
+    inputSchema: {
+      ...teamFieldsSchema,
+      name: z.string().trim().min(1).max(100).describe('Human-readable team name.'),
+      roleIds: z.array(z.string().trim().min(1).max(100)).min(1).max(50).describe('Ordered roster of role ids on this team.'),
+    },
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', '/api/teams', args).then(toResult));
+
+  server.registerTool('agent_ops_update_team', {
+    title: 'Update team',
+    description: 'Update a team roster or handoff edges. At least one field must change.',
+    inputSchema: { ...teamIdSchema, ...teamFieldsSchema },
+    annotations: ADDITIVE,
+  }, args => {
+    const { teamId, ...fields } = args;
+    return callDaemon('PUT', `/api/teams/${encodeURIComponent(teamId)}`, fields).then(toResult);
+  });
+
+  server.registerTool('agent_ops_delete_team', {
+    title: 'Delete team',
+    description: 'Delete a team definition. Existing tasks keep their recorded team id.',
+    inputSchema: teamIdSchema,
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  }, args => callDaemon('DELETE', `/api/teams/${encodeURIComponent(args.teamId)}`).then(toResult));
+
   server.registerTool('agent_ops_list_tasks', {
     title: 'List tasks',
     description: 'List all kernel tasks (repo work items) with their status.',
@@ -417,6 +473,33 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}`).then(toResult));
 
+  server.registerTool('agent_ops_list_handoffs', {
+    title: 'List handoffs',
+    description: 'List a task\'s handoff receipts: which step committed which sha and which downstream run received it.',
+    inputSchema: taskIdSchema,
+    annotations: READ_ONLY,
+  }, args => callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}/handoffs`).then(toResult));
+
+  server.registerTool('agent_ops_list_audit', {
+    title: 'List audit events',
+    description: 'Replay kernel audit events: role and team edits, task assignment, accepted or rejected runs, pipeline gates and handoffs. Newest-last, capped by limit.',
+    inputSchema: {
+      taskId: z.string().min(1).optional().describe('Only events recorded for this task.'),
+      teamId: z.string().min(1).optional().describe('Only events recorded for this team.'),
+      type: z.string().min(1).optional().describe('Only events of this type, e.g. "run.accepted" or "handoff.recorded".'),
+      limit: z.number().int().min(1).max(1000).optional().describe('Keep the newest N events; defaults to 200.'),
+    },
+    annotations: READ_ONLY,
+  }, args => {
+    const query = new URLSearchParams();
+    if (args.taskId) query.set('taskId', args.taskId);
+    if (args.teamId) query.set('teamId', args.teamId);
+    if (args.type) query.set('type', args.type);
+    if (args.limit) query.set('limit', String(args.limit));
+    const suffix = query.size > 0 ? `?${query.toString()}` : '';
+    return callDaemon('GET', `/api/audit${suffix}`).then(toResult);
+  });
+
   server.registerTool('agent_ops_create_task', {
     title: 'Create task',
     description: 'Create a kernel task against a local repo and base ref. Provision it before creating a run.',
@@ -429,6 +512,7 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
       acceptanceCriteria: z.array(z.string().trim().min(1).max(500)).max(20).optional().describe('Verifiable acceptance criteria.'),
       priority: z.enum(['low', 'medium', 'high']).optional().describe('Task priority; defaults to medium.'),
       roleId: z.string().trim().min(1).optional().describe('Optional Role that owns this task; see agent_ops_list_roles.'),
+      teamId: z.string().trim().min(1).optional().describe('Optional Team that owns this task; see agent_ops_list_teams.'),
       pipeline: z.object({
         steps: z.array(z.object({
           id: z.string().trim().min(1).max(100).optional(),
@@ -450,6 +534,7 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     ...(args.acceptanceCriteria ? { acceptanceCriteria: args.acceptanceCriteria } : {}),
     ...(args.priority ? { priority: args.priority } : {}),
     ...(args.roleId ? { roleId: args.roleId } : {}),
+    ...(args.teamId ? { teamId: args.teamId } : {}),
     ...(args.pipeline ? { pipeline: args.pipeline } : {}),
   }).then(toResult));
 
@@ -466,6 +551,13 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     inputSchema: taskIdSchema,
     annotations: ADDITIVE,
   }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/pipeline/execute`).then(toResult));
+
+  server.registerTool('agent_ops_retry_pipeline', {
+    title: 'Retry pipeline',
+    description: 'Retry a failed task pipeline from the failed step. Completed steps keep their commits; failed and later results are cleared. Synchronous and may take minutes.',
+    inputSchema: taskIdSchema,
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/pipeline/retry`).then(toResult));
 
   server.registerTool('agent_ops_release_task', {
     title: 'Release task',
@@ -508,6 +600,13 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     inputSchema: runIdSchema,
     annotations: ADDITIVE,
   }, args => callDaemon('POST', `/api/runs/${encodeURIComponent(args.runId)}/execute`).then(toResult));
+
+  server.registerTool('agent_ops_export_task', {
+    title: 'Export task evidence',
+    description: 'Export one task as a single JSON document: task and pipeline, every run with diff, output and exit code, handoff receipts, the audit trail and usage totals. Usage totals are null when no run reported them.',
+    inputSchema: taskIdSchema,
+    annotations: READ_ONLY,
+  }, args => callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}/export`).then(toResult));
 
   server.registerTool('agent_ops_cancel_run', {
     title: 'Cancel run',

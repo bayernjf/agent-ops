@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { eq, asc } from 'drizzle-orm';
+import { eq, asc, desc } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/sql-js';
 import initSqlJs, { type Database } from 'sql.js';
 import {
@@ -19,10 +19,11 @@ import {
   type CodexProcessRunner,
 } from '@agent-ops/agent-runtime';
 import type { TaskRunState } from '@agent-ops/workflow';
-import { tasks, runs, runEvents } from './schema.js';
+import { tasks, runs, runEvents, runHandoffs, auditEvents } from './schema.js';
 import { kernelMigrations, type Migration } from './migrations.js';
 import { ProfileStore } from './profiles-store.js';
 import { RoleStore } from './roles-store.js';
+import { TeamStore } from './teams-store.js';
 import { addWorktree, pinWorktreeCommit, removeWorktree } from './worktree.js';
 import { assertWorktreeClean, commitWorktreeChanges, resetWorktree } from './commit.js';
 
@@ -30,7 +31,7 @@ const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
 
 function createKernelOrm(database: Database) {
-  return drizzle(database, { schema: { tasks, runs, runEvents } });
+  return drizzle(database, { schema: { tasks, runs, runEvents, runHandoffs, auditEvents } });
 }
 
 export type TaskPriority = 'low' | 'medium' | 'high';
@@ -89,6 +90,7 @@ export type CreateTaskInput = {
   priority?: TaskPriority;
   baseCommit?: string;
   roleId?: string;
+  teamId?: string;
   pipeline?: TaskPipelineInput;
 };
 
@@ -104,15 +106,17 @@ export type TaskRecord = {
   priority: TaskPriority;
   baseCommit: string;
   roleId: string | null;
+  teamId: string | null;
   pipeline: TaskPipeline | null;
   status: TaskRunState;
   createdAt: string;
   updatedAt: string;
 };
 
-type TaskRow = Omit<TaskRecord, 'acceptanceCriteria' | 'roleId' | 'pipeline'> & {
+type TaskRow = Omit<TaskRecord, 'acceptanceCriteria' | 'roleId' | 'teamId' | 'pipeline'> & {
   acceptanceCriteria: string;
   roleId: string;
+  teamId: string;
   pipeline: string;
 };
 
@@ -146,7 +150,59 @@ function toTaskRecord(row: TaskRow): TaskRecord {
   }
   const priority: TaskPriority =
     row.priority === 'low' || row.priority === 'high' ? row.priority : 'medium';
-  return { ...row, acceptanceCriteria, priority, roleId: row.roleId || null, pipeline: parseTaskPipeline(row.pipeline) };
+  return { ...row, acceptanceCriteria, priority, roleId: row.roleId || null, teamId: row.teamId || null, pipeline: parseTaskPipeline(row.pipeline) };
+}
+
+type HandoffRow = Omit<RunHandoff, 'teamId' | 'fromRoleId' | 'toRoleId' | 'artifacts'> & {
+  teamId: string;
+  fromRoleId: string;
+  toRoleId: string;
+  artifacts: string;
+};
+
+function parseStoredStringList(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function toRunHandoff(row: HandoffRow): RunHandoff {
+  return {
+    ...row,
+    teamId: row.teamId || null,
+    fromRoleId: row.fromRoleId || null,
+    toRoleId: row.toRoleId || null,
+    artifacts: parseStoredStringList(row.artifacts),
+  };
+}
+
+type AuditRow = Omit<KernelAuditEvent, 'taskId' | 'teamId' | 'actor' | 'type' | 'data'> & {
+  taskId: string;
+  teamId: string;
+  actor: string;
+  type: string;
+  data: string;
+};
+
+function toAuditEvent(row: AuditRow): KernelAuditEvent {
+  let data: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(row.data) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) data = parsed as Record<string, unknown>;
+  } catch {
+    data = {};
+  }
+  return {
+    ...row,
+    taskId: row.taskId || null,
+    teamId: row.teamId || null,
+    actor: row.actor === 'system' ? 'system' : 'operator',
+    type: row.type as KernelAuditEventType,
+    data,
+  };
 }
 
 export type RunArtifacts = {
@@ -182,6 +238,15 @@ export type RunEvent = {
 export const RUN_OUTPUT_LIMIT = 64_000;
 export const RUN_DIFF_LIMIT = 256_000;
 export const RUN_EVENT_LIMIT = 500;
+export const RUN_COMMAND_LIMIT = 4_000;
+
+function normalizeCount(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
+}
+
+function normalizeCost(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
 
 export function emptyRunArtifacts(): RunArtifacts {
   return {
@@ -212,16 +277,109 @@ export type RunRecord = {
   roleId: string | null;
   /** Adapter actually resolved at execution time; null before execution. */
   runtimeId: string | null;
+  /** Version probed from the executed Runtime command, when available. */
+  runtimeVersion: string | null;
+  /** Bounded command line used for the execution, including the prompt. */
+  command: string;
+  /** Usage reported by the Runtime; null means "not reported", not zero. */
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
   /** Pipeline step or caller instruction appended to the task prompt; empty when none. */
   instruction: string;
   createdAt: string;
   updatedAt: string;
 };
 
-type RunRow = Omit<RunRecord, 'artifacts' | 'roleId' | 'runtimeId'> & {
+export type RunExecutionEvidence = {
+  runtimeVersion?: string | null;
+  command?: string;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  costUsd?: number | null;
+};
+
+/**
+ * What an upstream pipeline step delivered to the downstream one. A Team configures the edges;
+ * this record is the receipt of an actual traversal: the accepted commit and the files it changed.
+ */
+export type RunHandoff = {
+  id: string;
+  taskId: string;
+  teamId: string | null;
+  fromStepId: string;
+  toStepId: string;
+  fromRunId: string;
+  toRunId: string;
+  fromRoleId: string | null;
+  toRoleId: string | null;
+  fromCommitSha: string;
+  artifacts: string[];
+  createdAt: string;
+};
+
+export type KernelAuditEventType =
+  | 'role.created'
+  | 'role.updated'
+  | 'role.deleted'
+  | 'team.created'
+  | 'team.updated'
+  | 'team.deleted'
+  | 'task.created'
+  | 'run.accepted'
+  | 'run.rejected'
+  | 'pipeline.step.approved'
+  | 'pipeline.step.rejected'
+  | 'pipeline.retried'
+  | 'handoff.recorded';
+
+export type KernelAuditActor = 'operator' | 'system';
+
+/** Append-only record of model changes and human gate decisions, replayable by task. */
+export type KernelAuditEvent = {
+  id: string;
+  seq: number;
+  taskId: string | null;
+  teamId: string | null;
+  actor: KernelAuditActor;
+  type: KernelAuditEventType;
+  data: Record<string, unknown>;
+  at: string;
+};
+
+/**
+ * One task's evidence in a single document: the task and its pipeline, every run with its diff,
+ * output and exit code, the handoff receipts, the audit trail and usage totals. Totals stay null
+ * when no run reported usage, so a consumer can tell "not reported" from "zero".
+ */
+export type TaskEvidenceExport = {
+  version: 1;
+  exportedAt: string;
+  task: TaskRecord;
+  pipeline: TaskPipeline | null;
+  runs: Array<RunRecord & { handoff: RunHandoff | null }>;
+  handoffs: RunHandoff[];
+  audit: KernelAuditEvent[];
+  totals: {
+    runs: number;
+    acceptedCommits: number;
+    changedFiles: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    costUsd: number | null;
+    reportingRuns: number;
+    durationMs: number;
+  };
+};
+
+type RunRow = Omit<RunRecord, 'artifacts' | 'roleId' | 'runtimeId' | 'runtimeVersion' | 'inputTokens' | 'outputTokens' | 'costUsd'> & {
   artifacts: string;
   roleId: string;
   runtimeId: string;
+  runtimeVersion: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
 };
 
 function parseRunArtifacts(raw: string): RunArtifacts {
@@ -257,6 +415,10 @@ function toRunRecord(row: RunRow): RunRecord {
     ...row,
     roleId: row.roleId || null,
     runtimeId: row.runtimeId || null,
+    runtimeVersion: row.runtimeVersion || null,
+    inputTokens: typeof row.inputTokens === 'number' ? row.inputTokens : null,
+    outputTokens: typeof row.outputTokens === 'number' ? row.outputTokens : null,
+    costUsd: typeof row.costUsd === 'number' ? row.costUsd : null,
     artifacts: parseRunArtifacts(row.artifacts),
   };
 }
@@ -300,6 +462,7 @@ export class KernelStore {
   private readonly kernelOrm: ReturnType<typeof createKernelOrm>;
   readonly profiles: ProfileStore;
   readonly roles: RoleStore;
+  readonly teams: TeamStore;
   protected readonly sqlite: Database;
   protected readonly databasePath: string;
   protected migrations: readonly Migration[] = kernelMigrations;
@@ -307,6 +470,7 @@ export class KernelStore {
   private readonly activePipelines = new Set<string>();
   private readonly runEventListeners = new Map<string, Set<(event: RunEvent) => void>>();
   private nextRunEventSeq = 1;
+  private nextAuditSeq = 1;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private persistChain: Promise<void> = Promise.resolve();
 
@@ -315,7 +479,31 @@ export class KernelStore {
     this.databasePath = databasePath;
     this.kernelOrm = createKernelOrm(sqlite);
     this.profiles = new ProfileStore(dirname(databasePath));
-    this.roles = new RoleStore(dirname(databasePath));
+    this.roles = new RoleStore(dirname(databasePath), async change => {
+      await this.recordAudit({
+        type: `role.${change.action}`,
+        data: {
+          roleId: change.role.id,
+          name: change.role.name,
+          baseAgentId: change.role.baseAgentId ?? null,
+          profileId: change.role.profileId ?? null,
+          enabled: change.role.enabled,
+        },
+      });
+    });
+    this.teams = new TeamStore(dirname(databasePath), id => this.roles.getRole(id), async change => {
+      await this.recordAudit({
+        type: `team.${change.action}`,
+        teamId: change.team.id,
+        data: {
+          teamId: change.team.id,
+          name: change.team.name,
+          roleIds: change.team.roleIds,
+          handoffs: change.team.handoffs.length,
+          enabled: change.team.enabled,
+        },
+      });
+    });
   }
 
   /** Where the platform keeps its own state and the workspaces it creates. */
@@ -335,6 +523,7 @@ export class KernelStore {
     this.sqlite.run('PRAGMA foreign_keys = ON;');
     this.runMigrations();
     this.nextRunEventSeq = this.maxRunEventSeq() + 1;
+    this.nextAuditSeq = this.maxAuditSeq() + 1;
     await this.persist();
   }
 
@@ -390,6 +579,15 @@ export class KernelStore {
       if (!role) throw new Error(`Role ${linkedRoleId} was not found.`);
       if (!role.enabled) throw new Error(`Role ${linkedRoleId} is disabled.`);
     }
+    const linkedTeamId = input.teamId?.trim() || undefined;
+    if (linkedTeamId) {
+      const team = await this.teams.getTeam(linkedTeamId);
+      if (!team) throw new Error(`Team ${linkedTeamId} was not found.`);
+      if (!team.enabled) throw new Error(`Team ${linkedTeamId} is disabled.`);
+      if (linkedRoleId && !team.roleIds.includes(linkedRoleId)) {
+        throw new Error(`Role ${linkedRoleId} is not on team ${linkedTeamId}.`);
+      }
+    }
     const pipeline = await this.normalizePipeline(input.pipeline);
     const now = new Date().toISOString();
     const record: TaskRecord = {
@@ -404,6 +602,7 @@ export class KernelStore {
       priority: input.priority ?? 'medium',
       baseCommit: input.baseCommit ?? '',
       roleId: linkedRoleId ?? null,
+      teamId: linkedTeamId ?? null,
       pipeline,
       status: 'queued',
       createdAt: now,
@@ -413,9 +612,16 @@ export class KernelStore {
       ...record,
       acceptanceCriteria: JSON.stringify(record.acceptanceCriteria),
       roleId: record.roleId ?? '',
+      teamId: record.teamId ?? '',
       pipeline: record.pipeline ? JSON.stringify(record.pipeline) : '',
     }).run();
     await this.persist();
+    await this.recordAudit({
+      type: 'task.created',
+      taskId: record.id,
+      teamId: record.teamId,
+      data: { roleId: record.roleId, teamId: record.teamId, pipelineSteps: record.pipeline?.steps.length ?? 0 },
+    });
     return record;
   }
 
@@ -509,6 +715,11 @@ export class KernelStore {
       commitSha: '',
       roleId: role?.id ?? null,
       runtimeId: null,
+      runtimeVersion: null,
+      command: '',
+      inputTokens: null,
+      outputTokens: null,
+      costUsd: null,
       instruction: instruction?.trim() ?? '',
       createdAt: now,
       updatedAt: now,
@@ -523,6 +734,11 @@ export class KernelStore {
       commitSha: record.commitSha,
       roleId: record.roleId ?? '',
       runtimeId: '',
+      runtimeVersion: '',
+      command: '',
+      inputTokens: null,
+      outputTokens: null,
+      costUsd: null,
       instruction: record.instruction,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
@@ -539,6 +755,41 @@ export class KernelStore {
   listRuns(taskId: string): RunRecord[] {
     const rows = this.kernelOrm.select().from(runs).where(eq(runs.taskId, taskId)).all() as RunRow[];
     return rows.map(toRunRecord);
+  }
+
+  /** Handoff receipts for a task, newest first. */
+  listHandoffs(taskId: string): RunHandoff[] {
+    const rows = this.kernelOrm
+      .select()
+      .from(runHandoffs)
+      .where(eq(runHandoffs.taskId, taskId))
+      .orderBy(desc(runHandoffs.createdAt), desc(runHandoffs.id))
+      .all() as HandoffRow[];
+    return rows.map(toRunHandoff);
+  }
+
+  /** The handoff that delivered work into this run, if any. */
+  getHandoffForRun(runId: string): RunHandoff | null {
+    const row = this.kernelOrm
+      .select()
+      .from(runHandoffs)
+      .where(eq(runHandoffs.toRunId, runId))
+      .orderBy(desc(runHandoffs.createdAt), desc(runHandoffs.id))
+      .get() as HandoffRow | undefined;
+    return row ? toRunHandoff(row) : null;
+  }
+
+  private async recordHandoff(input: Omit<RunHandoff, 'id' | 'createdAt'>): Promise<RunHandoff> {
+    const record: RunHandoff = { ...input, id: randomUUID(), createdAt: new Date().toISOString() };
+    this.kernelOrm.insert(runHandoffs).values({
+      ...record,
+      teamId: record.teamId ?? '',
+      fromRoleId: record.fromRoleId ?? '',
+      toRoleId: record.toRoleId ?? '',
+      artifacts: JSON.stringify(record.artifacts),
+    }).run();
+    await this.persist();
+    return record;
   }
 
   getRunEvents(id: string): RunEvent[] {
@@ -624,6 +875,33 @@ export class KernelStore {
     return { ...existing, runtimeId: normalized, updatedAt: now };
   }
 
+  async updateRunExecutionEvidence(id: string, evidence: RunExecutionEvidence): Promise<RunRecord> {
+    const existing = this.getRun(id);
+    if (!existing) throw new Error(`Run ${id} was not found.`);
+    const now = new Date().toISOString();
+    const updates: Partial<typeof runs.$inferInsert> = { updatedAt: now };
+    if (evidence.runtimeVersion !== undefined) {
+      updates.runtimeVersion = evidence.runtimeVersion?.trim() ?? '';
+    }
+    if (evidence.command !== undefined) {
+      updates.command = boundedText(evidence.command.trim(), RUN_COMMAND_LIMIT).text;
+    }
+    if (evidence.inputTokens !== undefined) {
+      updates.inputTokens = normalizeCount(evidence.inputTokens);
+    }
+    if (evidence.outputTokens !== undefined) {
+      updates.outputTokens = normalizeCount(evidence.outputTokens);
+    }
+    if (evidence.costUsd !== undefined) {
+      updates.costUsd = normalizeCost(evidence.costUsd);
+    }
+    this.kernelOrm.update(runs).set(updates).where(eq(runs.id, id)).run();
+    await this.persist();
+    const updated = this.getRun(id);
+    if (!updated) throw new Error(`Run ${id} was not found after updating its execution evidence.`);
+    return updated;
+  }
+
   async executeRun(id: string, runner?: CodexProcessRunner): Promise<RunRecord> {
     const run = this.getRun(id);
     if (!run) throw new Error(`Run ${id} was not found.`);
@@ -657,6 +935,8 @@ export class KernelStore {
       instruction: run.instruction || undefined,
     });
 
+    await this.updateRunExecutionEvidence(id, { command: plan.command.join(' ') });
+
     const controller = new AbortController();
     this.activeRuns.set(id, controller);
     // A rejected run can be executed again under the same run id; stale terminal events
@@ -687,6 +967,12 @@ export class KernelStore {
     }
 
     const cancelled = result.cancelled === true || controller.signal.aborted;
+    await this.updateRunExecutionEvidence(id, {
+      runtimeVersion: result.runtimeVersion ?? null,
+      inputTokens: result.usage?.inputTokens ?? null,
+      outputTokens: result.usage?.outputTokens ?? null,
+      costUsd: result.usage?.costUsd ?? null,
+    });
     const evidence = await this.collectEvidence(task, result, cancelled);
     if (cancelled) {
       await this.updateTaskStatus(task.id, 'cancelled');
@@ -750,6 +1036,106 @@ export class KernelStore {
     }
   }
 
+  private pipelineStepBaseCommit(task: TaskRecord, pipeline: TaskPipeline, index: number): string {
+    for (let cursor = index - 1; cursor >= 0; cursor--) {
+      const step = pipeline.steps[cursor];
+      const result = pipeline.results.find(candidate => candidate.stepId === step.id);
+      if (result?.status !== 'completed' || !result.commitSha) {
+        throw new Error(`Pipeline step ${pipeline.steps[index]?.id} cannot start until step ${step.id} is completed and committed.`);
+      }
+      return result.commitSha;
+    }
+    return task.baseCommit;
+  }
+
+  async retryTaskPipeline(id: string, runner?: CodexProcessRunner): Promise<TaskPipeline> {
+    if (this.activePipelines.has(id)) throw new Error(`Task ${id} already has a running pipeline.`);
+    this.activePipelines.add(id);
+    try {
+      const task = this.getTask(id);
+      if (!task) throw new Error(`Task ${id} was not found.`);
+      const pipeline = task.pipeline;
+      if (!pipeline || pipeline.steps.length === 0) throw new Error(`Task ${id} has no pipeline configured.`);
+      if (!task.worktreePath) throw new Error(`Task ${id} has no worktree. Provision it before retrying its pipeline.`);
+      if (pipeline.status !== 'failed') {
+        throw new Error(`Task ${id} pipeline is ${pipeline.status} and cannot be retried; only a failed pipeline can be retried.`);
+      }
+      const index = pipeline.steps.findIndex(step => (
+        pipeline.results.find(result => result.stepId === step.id)?.status === 'failed'
+      ));
+      if (index < 0) throw new Error(`Task ${id} pipeline cannot be retried because it has no failed step.`);
+      const baseCommit = this.pipelineStepBaseCommit(task, pipeline, index);
+      await resetWorktree(task.worktreePath, baseCommit || undefined);
+
+      const completed: TaskPipelineStepResult[] = [];
+      for (const step of pipeline.steps.slice(0, index)) {
+        const result = pipeline.results.find(candidate => candidate.stepId === step.id);
+        if (result?.status !== 'completed' || !result.commitSha) {
+          throw new Error(`Pipeline step ${step.id} has no committed result to preserve before retry.`);
+        }
+        completed.push(result);
+      }
+      const retried: TaskPipeline = {
+        ...pipeline,
+        results: completed,
+        status: 'running',
+        completedAt: undefined,
+      };
+      await this.saveTaskPipeline(id, retried);
+      await this.updateTaskStatus(id, 'running');
+      await this.recordAudit({
+        type: 'pipeline.retried',
+        taskId: id,
+        teamId: task.teamId,
+        data: { stepId: pipeline.steps[index]?.id ?? null },
+      });
+      return await this.runPipelineSteps(id, retried, index, runner);
+    } finally {
+      this.activePipelines.delete(id);
+    }
+  }
+
+  /**
+   * Record the receipt for the edge that just delivered into `toRunId`. Only a completed,
+   * committed upstream step has something to hand over; a retried step gets its own receipt.
+   */
+  private async recordStepHandoff(taskId: string, pipeline: TaskPipeline, index: number, toRunId: string): Promise<void> {
+    if (index === 0) return;
+    const task = this.getTask(taskId);
+    if (!task) return;
+    const fromStep = pipeline.steps[index - 1];
+    const toStep = pipeline.steps[index];
+    const fromResult = pipeline.results.find(result => result.stepId === fromStep.id);
+    if (!toStep || fromResult?.status !== 'completed' || !fromResult.runId || !fromResult.commitSha) return;
+    const fromRun = this.getRun(fromResult.runId);
+    const artifacts = (fromRun?.artifacts.changedFiles ?? []).slice(0, 200);
+    await this.recordHandoff({
+      taskId,
+      teamId: task.teamId,
+      fromStepId: fromStep.id,
+      toStepId: toStep.id,
+      fromRunId: fromResult.runId,
+      toRunId,
+      fromRoleId: fromRun?.roleId ?? fromStep.roleId ?? null,
+      toRoleId: toStep.roleId ?? null,
+      fromCommitSha: fromResult.commitSha,
+      artifacts,
+    });
+    await this.recordAudit({
+      type: 'handoff.recorded',
+      taskId,
+      teamId: task.teamId,
+      data: {
+        fromStepId: fromStep.id,
+        toStepId: toStep.id,
+        fromRunId: fromResult.runId,
+        toRunId,
+        fromCommitSha: fromResult.commitSha,
+        artifacts: artifacts.length,
+      },
+    });
+  }
+
   private async runPipelineSteps(id: string, initial: TaskPipeline, startIndex: number, runner?: CodexProcessRunner): Promise<TaskPipeline> {
     let pipeline = initial;
     for (let index = startIndex; index < pipeline.steps.length; index++) {
@@ -772,6 +1158,7 @@ export class KernelStore {
         runId = run.id;
         updateResult({ stepId: step.id, status: 'running', runId, startedAt });
         await this.saveTaskPipeline(id, pipeline);
+        await this.recordStepHandoff(id, pipeline, index, run.id);
 
         const executed = await this.executeRun(run.id, runner);
         if (executed.status !== 'review') {
@@ -833,7 +1220,7 @@ export class KernelStore {
     return pipeline;
   }
 
-  private async awaitingPipelineStep(id: string): Promise<{ pipeline: TaskPipeline; index: number; runId: string; stepId: string }> {
+  private async awaitingPipelineStep(id: string): Promise<{ task: TaskRecord; pipeline: TaskPipeline; index: number; runId: string; stepId: string }> {
     const task = this.getTask(id);
     if (!task) throw new Error(`Task ${id} was not found.`);
     const pipeline = task.pipeline;
@@ -845,15 +1232,21 @@ export class KernelStore {
     if (!awaiting?.runId) throw new Error(`Task ${id} has no step awaiting approval.`);
     const index = pipeline.steps.findIndex(step => step.id === awaiting.stepId);
     if (index < 0) throw new Error(`Pipeline step ${awaiting.stepId} was not found.`);
-    return { pipeline, index, runId: awaiting.runId, stepId: awaiting.stepId };
+    return { task, pipeline, index, runId: awaiting.runId, stepId: awaiting.stepId };
   }
 
   async approvePipelineStep(id: string, runner?: CodexProcessRunner): Promise<TaskPipeline> {
     if (this.activePipelines.has(id)) throw new Error(`Task ${id} already has a running pipeline.`);
     this.activePipelines.add(id);
     try {
-      const { pipeline, index, runId, stepId } = await this.awaitingPipelineStep(id);
+      const { task, pipeline, index, runId, stepId } = await this.awaitingPipelineStep(id);
       const accepted = await this.acceptRun(runId);
+      await this.recordAudit({
+        type: 'pipeline.step.approved',
+        taskId: id,
+        teamId: task.teamId,
+        data: { stepId, runId, commitSha: accepted.commitSha },
+      });
       const resumed: TaskPipeline = {
         ...pipeline,
         results: pipeline.results.map(result => (
@@ -872,8 +1265,15 @@ export class KernelStore {
     if (this.activePipelines.has(id)) throw new Error(`Task ${id} already has a running pipeline.`);
     this.activePipelines.add(id);
     try {
-      const { pipeline, runId, stepId } = await this.awaitingPipelineStep(id);
-      await this.rejectRun(runId);
+      const { task, pipeline, index, runId, stepId } = await this.awaitingPipelineStep(id);
+      const baseCommit = this.pipelineStepBaseCommit(task, pipeline, index);
+      await this.rejectRun(runId, baseCommit);
+      await this.recordAudit({
+        type: 'pipeline.step.rejected',
+        taskId: id,
+        teamId: task.teamId,
+        data: { stepId, runId },
+      });
       await this.updateTaskStatus(id, 'failed');
       const failed: TaskPipeline = {
         ...pipeline,
@@ -892,7 +1292,7 @@ export class KernelStore {
     }
   }
 
-  async acceptRun(id: string): Promise<RunRecord> {
+  async acceptRun(id: string, files?: readonly string[]): Promise<RunRecord> {
     const run = this.getRun(id);
     if (!run) throw new Error(`Run ${id} was not found.`);
     if (run.status !== 'review') throw new Error(`Run ${id} cannot be accepted from status ${run.status}.`);
@@ -900,23 +1300,51 @@ export class KernelStore {
     if (!task) throw new Error(`Task ${run.taskId} was not found.`);
     if (!task.worktreePath) throw new Error(`Task ${run.taskId} has no worktree.`);
 
-    const commit = await commitWorktreeChanges(task.worktreePath, `task: accept ${task.title}`);
+    let selected: string[] | undefined;
+    if (files !== undefined) {
+      const changed = new Set(run.artifacts.changedFiles);
+      selected = [...new Set(files.map(file => file.trim()).filter(Boolean))];
+      if (selected.length === 0) throw new Error('Select at least one changed file to accept.');
+      const unknown = selected.filter(file => !changed.has(file));
+      if (unknown.length > 0) {
+        throw new Error(`These files are not part of run ${id}: ${unknown.join(', ')}`);
+      }
+    }
+
+    const commit = await commitWorktreeChanges(task.worktreePath, `task: accept ${task.title}`, selected);
     await pinWorktreeCommit(task.repo, task.id, commit.sha);
+    // A partial accept commits the selected paths and discards the rest, so an accepted run
+    // always leaves the worktree clean for release. Full accept keeps the existing behavior.
+    if (selected) await resetWorktree(task.worktreePath);
     await this.updateTaskStatus(run.taskId, 'done');
-    return this.updateRunStatus(id, 'done', run.diffStat, run.artifacts, commit.sha);
+    const accepted = await this.updateRunStatus(id, 'done', run.diffStat, run.artifacts, commit.sha);
+    await this.recordAudit({
+      type: 'run.accepted',
+      taskId: run.taskId,
+      teamId: task.teamId,
+      data: { runId: id, commitSha: commit.sha, roleId: run.roleId, files: selected ?? null },
+    });
+    return accepted;
   }
 
-  async rejectRun(id: string): Promise<RunRecord> {
+  async rejectRun(id: string, resetTo?: string): Promise<RunRecord> {
     const run = this.getRun(id);
     if (!run) throw new Error(`Run ${id} was not found.`);
     if (run.status !== 'review') throw new Error(`Run ${id} cannot be rejected from status ${run.status}.`);
     const task = this.getTask(run.taskId);
     if (!task) throw new Error(`Task ${run.taskId} was not found.`);
     if (task.worktreePath) {
-      await resetWorktree(task.worktreePath, task.baseCommit || undefined);
+      await resetWorktree(task.worktreePath, resetTo || task.baseCommit || undefined);
     }
     await this.updateTaskStatus(run.taskId, 'queued');
-    return this.updateRunStatus(id, 'queued');
+    const rejected = await this.updateRunStatus(id, 'queued');
+    await this.recordAudit({
+      type: 'run.rejected',
+      taskId: run.taskId,
+      teamId: task.teamId,
+      data: { runId: id, roleId: run.roleId, resetTo: resetTo ?? null },
+    });
+    return rejected;
   }
 
   private emitRunEvent(runId: string, type: RunEventType, data?: string): void {
@@ -957,6 +1385,107 @@ export class KernelStore {
     const result = this.sqlite.exec('SELECT COALESCE(MAX(seq), 0) FROM run_events;');
     const value = result[0]?.values[0]?.[0];
     return Number(value ?? 0);
+  }
+
+  private maxAuditSeq(): number {
+    const result = this.sqlite.exec('SELECT COALESCE(MAX(seq), 0) FROM audit_events;');
+    const value = result[0]?.values[0]?.[0];
+    return Number(value ?? 0);
+  }
+
+  /** Append an audit event. Callers describe the change; the store owns ordering and persistence. */
+  private async recordAudit(input: {
+    type: KernelAuditEventType;
+    taskId?: string | null;
+    teamId?: string | null;
+    actor?: KernelAuditActor;
+    data?: Record<string, unknown>;
+  }): Promise<KernelAuditEvent> {
+    const event: KernelAuditEvent = {
+      id: randomUUID(),
+      seq: this.nextAuditSeq++,
+      taskId: input.taskId ?? null,
+      teamId: input.teamId ?? null,
+      actor: input.actor ?? 'operator',
+      type: input.type,
+      data: input.data ?? {},
+      at: new Date().toISOString(),
+    };
+    this.kernelOrm.insert(auditEvents).values({
+      ...event,
+      taskId: event.taskId ?? '',
+      teamId: event.teamId ?? '',
+      data: JSON.stringify(event.data),
+    }).run();
+    await this.persist();
+    return event;
+  }
+
+  /** Audit events in store order. Filters are additive; `limit` keeps the newest N. */
+  listAudit(filter: { taskId?: string; teamId?: string; type?: KernelAuditEventType; limit?: number } = {}): KernelAuditEvent[] {
+    const rows = this.kernelOrm
+      .select()
+      .from(auditEvents)
+      .orderBy(asc(auditEvents.seq))
+      .all() as AuditRow[];
+    // The audit log is a single-user kernel table, so filtering in memory keeps the query simple
+    // and avoids composing a dynamic WHERE for four optional fields.
+    const events = rows.map(toAuditEvent).filter(event => (
+      (!filter.taskId || event.taskId === filter.taskId)
+      && (!filter.teamId || event.teamId === filter.teamId)
+      && (!filter.type || event.type === filter.type)
+    ));
+    const limit = Math.min(Math.max(filter.limit ?? 200, 1), 1000);
+    return events.length > limit ? events.slice(events.length - limit) : events;
+  }
+
+  /** Bundle one task's evidence for export. Returns null when the task does not exist. */
+  exportTask(id: string): TaskEvidenceExport | null {
+    const task = this.getTask(id);
+    if (!task) return null;
+    const runs = this.listRuns(id).map(run => ({ ...run, handoff: this.getHandoffForRun(run.id) }));
+    const handoffs = this.listHandoffs(id);
+    const audit = this.listAudit({ taskId: id, limit: 1000 });
+
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let costUsd = 0;
+    let reportingRuns = 0;
+    let durationMs = 0;
+    let acceptedCommits = 0;
+    const changedFiles = new Set<string>();
+    for (const run of runs) {
+      durationMs += run.artifacts.durationMs;
+      for (const file of run.artifacts.changedFiles) changedFiles.add(file);
+      if (run.commitSha) acceptedCommits++;
+      if (run.inputTokens !== null || run.outputTokens !== null || run.costUsd !== null) {
+        reportingRuns++;
+        inputTokens += run.inputTokens ?? 0;
+        outputTokens += run.outputTokens ?? 0;
+        costUsd += run.costUsd ?? 0;
+      }
+    }
+
+    return {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      task,
+      pipeline: task.pipeline,
+      runs,
+      handoffs,
+      audit,
+      totals: {
+        runs: runs.length,
+        acceptedCommits,
+        changedFiles: changedFiles.size,
+        // Null, not zero: a Runtime that reported nothing must not look like a free run.
+        inputTokens: reportingRuns > 0 ? inputTokens : null,
+        outputTokens: reportingRuns > 0 ? outputTokens : null,
+        costUsd: reportingRuns > 0 ? costUsd : null,
+        reportingRuns,
+        durationMs,
+      },
+    };
   }
 
   private async collectEvidence(
@@ -1103,8 +1632,9 @@ export class KernelStore {
   }
 }
 
-export { ProfileStore, RoleStore, addWorktree, removeWorktree, kernelMigrations, type Migration };
+export { ProfileStore, RoleStore, TeamStore, addWorktree, removeWorktree, kernelMigrations, type Migration };
 export type { CreateRoleInput, UpdateRoleInput } from './roles-store.js';
+export type { CreateTeamInput, UpdateTeamInput, TeamRoleLookup } from './teams-store.js';
 export { assertWorktreeClean, commitWorktreeChanges, resetWorktree, UnsafeCommitError } from './commit.js';
 export type { CommitWorktreeResult } from './commit.js';
 export type { CreateProfileInput, UpdateProfileInput, ProfileValidationResult } from './profiles-store.js';
