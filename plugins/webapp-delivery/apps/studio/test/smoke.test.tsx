@@ -4,6 +4,7 @@ import { I18nProvider } from '../src/i18n/i18n';
 import { ThemeProvider } from '../src/theme/theme';
 import { CredentialBackendStatus } from '../src/components/CredentialBackendStatus';
 import { App } from '../src/App';
+import { RolesView } from '../src/views/RolesView';
 import type { CredentialBackendInfo } from '../src/types';
 
 // The server-side renderer runs without a DOM, but Studio reads user-level preferences and the
@@ -59,6 +60,18 @@ describe('Studio smoke render', () => {
     const html = await renderStudioApp();
     // The primary action to start a delivery is present in the initial shell.
     expect(html).toContain('New Blueprint');
+  });
+
+  it('renders the kernel roles view shell', async () => {
+    const html = await renderAsync(
+      <I18nProvider>
+        <RolesView />
+      </I18nProvider>,
+    );
+    // The section heading and its table columns are part of the initial mount, before any fetch.
+    expect(html).toContain('Roles');
+    expect(html).toContain('Binding');
+    expect(html).toContain('Loading roles');
   });
 });
 
