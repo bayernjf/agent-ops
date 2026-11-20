@@ -292,4 +292,16 @@
 - [x] Studio：新建角色表单顶部展示模板卡片，点击即填充名称/描述/系统提示/验收标准/工具策略/审批模式；中英文文案同步。
 - [x] 测试：模板 id 唯一且通过 `agentRoleCreateSchema`、只读模板 blockedTools 覆盖 Write/Edit/Bash；server 列表 5 个、按模板创建出 strict 角色、未知模板 404、candidate 覆盖 400；MCP 列表与按模板创建。全仓 typecheck 0，53 文件 / 678 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
 - [x] 本轮提交：`d004042 feat(agent-runtime): add built-in role templates`、`463c596 feat(server-core): serve role templates`、`d3b4597 feat(cli): add role template tools`、`ae87a4e feat(studio): start roles from a template`。
-- [ ] 未做：模板只能在代码里内置，UI 不能编辑或新增模板；模板不预校验 baseAgent 是否仍可用（创建时由 binding 兜底）；F1-07 Role 测试运行未做。
+- [ ] 未做：模板只能在代码里内置，UI 不能编辑或新增模板；模板不预校验 baseAgent 是否仍可用（创建时由 binding 兜底）。（F1-07 见下节。）
+
+## F1-07 Role 测试运行 — 已完成（2026-11-20）
+
+- [x] `KernelStore.testRolePlan(roleId, { objective? })`：解析 Role → Runtime/Profile，构造 dry-run 执行计划（不建 Task、不起进程），返回 executable、baseAgentId、adapterStatus、profileId、reason、command、toolPolicy 与 warnings。
+- [x] 计划使用固定工作区占位 `<role-test-workspace>`，避免预览命令被误当成可直接执行的真实路径。
+- [x] warnings 覆盖：Role 停用、Role 不可执行（附 reason）、计划构建失败；candidate runtime 仍生成命令预览，但不标为可执行。
+- [x] server：`POST /api/roles/:roleId/test`（可选 `objective`），未知 Role 404。
+- [x] MCP：新增 `agent_ops_test_role`。
+- [x] Studio：Roles 表格每行新增试跑按钮，结果面板展示可执行判定、Runtime/Profile、命令预览与警告。
+- [x] 测试：codex 角色计划 `executable=true`、命令首项 `codex`、含 Role prompt 与只读策略；自定义 objective 进命令；missing role 返回 null；candidate 角色 `executable=false` 且 warning 含 “not executable” 但仍给命令；停用角色有 warning；server 200/404；MCP 返回 plan。全仓 typecheck 0，54 文件 / 682 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
+- [x] 本轮提交：`9f89b91 feat(storage-core): build role test plans`、`d5234fd feat(server-core): serve role test plans`、`ad20b98 feat(cli): add the role test tool`、`ee2c1dd feat(studio): preview a role test plan`。
+- [ ] 未做：dry-run 不会真的起模型进程验证输出质量（真实小任务验证仍受 CLI 登录阻塞）；试跑不写审计事件；Studio 试跑面板未在真实浏览器逐项点击。
