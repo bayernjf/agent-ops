@@ -38,8 +38,10 @@ function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   const seconds = ms / 1000;
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${(seconds % 60).toFixed(1)}s`;
+  // Round before splitting, or 359.96s prints as "5m 60.0s" instead of "6m 0.0s".
+  const rounded = Math.round(seconds * 10) / 10;
+  const minutes = Math.floor(rounded / 60);
+  return `${minutes}m ${(rounded - minutes * 60).toFixed(1)}s`;
 }
 
 function formatSummary(doc: {
