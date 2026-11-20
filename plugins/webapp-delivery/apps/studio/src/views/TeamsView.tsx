@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, Pencil, Plus, RefreshCw, Trash2, Users, X } from 'lucide-react';
 import { useI18n, type KeyPath } from '../i18n/i18n';
 import { apiFetch } from '../lib/api';
-import type { AgentRole, AgentTeam, KernelTask, TeamHandoff } from '../types';
+import type { AgentRole, AgentTeam, KernelTask, TeamHandoff, TeamPipelinePlan } from '../types';
 
 type HandoffDraft = {
   fromRoleId: string;
@@ -52,6 +52,9 @@ export function TeamsView() {
   const [form, setForm] = useState<TeamForm>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [busyTeamId, setBusyTeamId] = useState<string | null>(null);
+  const [planResult, setPlanResult] = useState<TeamPipelinePlan | null>(null);
+  const [planningTaskId, setPlanningTaskId] = useState<string | null>(null);
+  const [applyingPlan, setApplyingPlan] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -196,6 +199,38 @@ export function TeamsView() {
   };
 
   const teamTasks = selected ? tasks.filter(task => task.teamId === selected.id) : [];
+
+  const planTask = async (task: KernelTask) => {
+    setPlanningTaskId(task.id);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/coordinator/plan`, { method: 'POST' });
+      const body = (await response.json().catch(() => null)) as { plan?: TeamPipelinePlan; error?: string } | null;
+      if (!response.ok) throw new Error(body?.error ?? t('teams.planFailed'));
+      setPlanResult(body?.plan ?? null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('teams.planFailed'));
+    } finally {
+      setPlanningTaskId(null);
+    }
+  };
+
+  const applyPlan = async () => {
+    if (!planResult) return;
+    setApplyingPlan(true);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(planResult.taskId)}/coordinator/apply`, { method: 'POST' });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(body?.error ?? t('teams.applyFailed'));
+      setPlanResult(null);
+      await loadData();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('teams.applyFailed'));
+    } finally {
+      setApplyingPlan(false);
+    }
+  };
   const canAddHandoff = form.roleIds.length >= 2;
 
   return (
@@ -367,12 +402,43 @@ export function TeamsView() {
                           {task.pipeline?.status === 'awaiting_approval' && (
                             <span className="state awaiting_approval">{t('teams.gate')}</span>
                           )}
+                          {task.status === 'queued' && (
+                            <button className="quiet-button" type="button" onClick={() => void planTask(task)} disabled={planningTaskId === task.id}>
+                              {t('teams.plan')}
+                            </button>
+                          )}
                         </li>
                       ))}
                     </ul>
                   )}
                 </div>
               </div>
+
+              {planResult && (
+                <div className="team-panel team-plan">
+                  <h3>{t('teams.planTitle')}</h3>
+                  <p>{t('teams.planHint')}</p>
+                  <ol className="team-role-list">
+                    {planResult.steps.map(step => (
+                      <li key={step.id}>
+                        <span>{step.name}</span>
+                        {step.roleId && <small>{step.roleId}</small>}
+                      </li>
+                    ))}
+                  </ol>
+                  {planResult.warnings.length > 0 && (
+                    <ul className="team-plan-warnings">
+                      {planResult.warnings.map(warning => <li key={warning}>{warning}</li>)}
+                    </ul>
+                  )}
+                  <div className="team-form-actions">
+                    <button className="secondary-button" type="button" onClick={() => setPlanResult(null)} disabled={applyingPlan}>{t('common.cancel')}</button>
+                    <button className="primary-button" type="button" onClick={() => void applyPlan()} disabled={applyingPlan}>
+                      {applyingPlan ? t('common.saving') : t('teams.applyPlan')}
+                    </button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>

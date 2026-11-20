@@ -529,6 +529,15 @@ export type RoleTestPlan = {
   warnings: string[];
 };
 
+/** Mirrors `TeamPipelinePlan` in `@agent-ops/storage-core` for the browser. */
+export type TeamPipelinePlan = {
+  taskId: string;
+  teamId: string;
+  order: string[];
+  steps: Array<{ id: string; name: string; roleId?: string; prompt?: string }>;
+  warnings: string[];
+};
+
 /** Mirrors `TeamHandoff` in `@agent-ops/agent-runtime/teams` for the browser. */
 export type TeamHandoff = {
   fromRoleId: string;

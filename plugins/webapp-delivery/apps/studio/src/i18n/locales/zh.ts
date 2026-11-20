@@ -929,6 +929,12 @@ export const zh = {
     taskQueue: '任务队列',
     noTasks: '该团队还没有任务。',
     gate: '审批卡点',
+    plan: '生成计划',
+    planTitle: '建议的 Pipeline',
+    planHint: '按花名册与交接边推导；应用后写入该任务的 Pipeline。',
+    applyPlan: '应用计划',
+    planFailed: '无法生成计划。',
+    applyFailed: '无法应用计划。',
   },
   metrics: {
     eyebrow: '内核指标',

@@ -947,6 +947,12 @@ export const en = {
     taskQueue: 'Task queue',
     noTasks: 'No tasks assigned to this team.',
     gate: 'Approval gate',
+    plan: 'Plan from team',
+    planTitle: 'Proposed pipeline',
+    planHint: 'Derived from the roster and handoff edges; applying it writes the pipeline onto the task.',
+    applyPlan: 'Apply plan',
+    planFailed: 'Unable to plan the pipeline.',
+    applyFailed: 'Unable to apply the plan.',
   },
   metrics: {
     eyebrow: 'Kernel metrics',

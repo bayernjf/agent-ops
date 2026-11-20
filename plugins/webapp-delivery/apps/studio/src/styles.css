@@ -2338,6 +2338,17 @@ select option {
   font-size: 13px;
 }
 
+.team-plan { margin-top: 16px; }
+
+.team-plan p { margin: 0 0 10px; color: var(--text-3); font-size: 12px; }
+
+.team-plan-warnings {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
 /* Kernel metrics: KPI cards plus per-runtime and per-role tables. */
 .metrics-view .error { margin: 16px 0 0; }
 
