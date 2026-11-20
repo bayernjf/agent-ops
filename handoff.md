@@ -210,8 +210,19 @@
 - [x] MCP 新增 `agent_ops_list_teams/get_team/create_team/update_team/delete_team`，`agent_ops_create_task` 接受 `teamId`。
 - [x] 测试：TeamStore 唯一 id/持久化/重开、未知或停用 Role、重复成员/自交接/重复边/非成员边/环、更新导致交接悬空时报错；任务 `teamId` 持久化与成员校验；server CRUD 与环 400/未知角色 404；MCP 团队工具与 `teamId` 透传。全仓 typecheck 0，50 文件 / 664 tests 绿。
 - [x] 本轮提交：`18d127f feat(storage-core): add team roster store`、`fb0f187 feat(storage-core): assign tasks to teams`、`89d1854 feat(server-core): expose the team API`、`46f26e4 feat(cli): expose team tools over MCP`。
-- [ ] 未做：F5-04 Handoff（上游 commit/artifact 真正交给下游并落记录）、F5-05/F7-03 TeamsView、F8-02 审计导出、F5-06 Coordinator、F5-07 并行团队。
+- [ ] 未做：F5-04 Handoff（上游 commit/artifact 真正交给下游并落记录）、F8-02 审计导出、F5-06 Coordinator、F5-07 并行团队；F5-05/F7-03 见下节。
 - [ ] Team 目前只是花名册 + 交接图；Pipeline 仍按 task 的 step 显式配置，不会从 Team 自动推导。
+
+## F5-05/F7-03 Studio TeamsView — 已完成（2026-11-20）
+
+- [x] 新增 `TeamsView`：团队列表（花名册人数、交接边数、启用切换、编辑/删除），选中团队后在下方展示花名册、交接边与任务队列。
+- [x] 建/编辑表单：名称、描述、角色花名册多选（角色来自 `/api/roles`）、交接边编辑器（上游/下游/备注，下拉取花名册角色）、启用开关；保存/取消/错误提示沿用 RolesView 的处理方式。
+- [x] 任务队列：按 `task.teamId` 过滤 `/api/tasks`，显示任务状态；`pipeline.status === 'awaiting_approval'` 的任务额外标记“审批卡点”。
+- [x] 接入 Studio 导航（`nav.teams`）与 `View` 联合类型；浏览器侧补 `AgentTeam`/`TeamHandoff` 类型与 `KernelTask.teamId`。
+- [x] 文案全部走 i18n：`en`/`zh` 同步新增 `teams` 与 `nav.teams`；`owned-copy` 扫描通过。
+- [x] 验证：Studio `tsc` 与 `vite build` 通过（1655 modules），Studio 14 文件 / 257 tests 绿；全仓 typecheck 0，50 文件 / 664 tests 绿。
+- [x] 本轮提交：`b216d83 feat(studio): add the teams view`。
+- [ ] 未做：交接边只有文本列表，没有可视化图；花名册不校验角色是否绑定 runtime；TeamsView 未在真实浏览器里逐项点过（仅 tsc/build + 单元测试）。
 
 ## F7-05 Run 详情扩展 — 已完成（2026-11-20）
 
