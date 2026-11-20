@@ -794,6 +794,25 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('serves a task budget status', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const role = await store.roles.createRole({ name: 'Budgeted', baseAgentId: 'codex', budget: { maxCostUsd: 5 } });
+      const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Budgeted', roleId: role.id });
+
+      const response = await app.request(`/api/tasks/${task.id}/budget?roleId=${role.id}`);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { role: { configured: boolean; exceeded: boolean; limits: { maxCostUsd: number }; spend: { totalRuns: number } } };
+      expect(body.role).toMatchObject({ configured: true, exceeded: false, limits: { maxCostUsd: 5 }, spend: { totalRuns: 0 } });
+
+      expect((await app.request('/api/tasks/missing/budget')).status).toBe(404);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a role whose runtime is not verified or whose profile is missing', async () => {
     const { store, directory } = await openStore();
     try {

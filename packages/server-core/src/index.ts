@@ -487,6 +487,13 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     return summary ? c.json({ summary }) : c.json({ error: `Task ${taskId} was not found.` }, 404);
   });
 
+  app.get('/api/tasks/:id/budget', async (c) => {
+    const taskId = c.req.param('id');
+    const roleId = c.req.query('roleId')?.trim() || undefined;
+    const status = await store.budgetStatus(taskId, roleId);
+    return status ? c.json(status) : c.json({ error: `Task ${taskId} was not found.` }, 404);
+  });
+
   app.post('/api/tasks/:id/parallel/execute', async (c) => {
     const parsed = executeParallelSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: 'Invalid parallel input.', details: parsed.error.flatten() }, 400);
