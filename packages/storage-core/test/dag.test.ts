@@ -84,7 +84,9 @@ describe('KernelStore DAG pipeline', () => {
       // The join branched from the last dependency (right), so only its file is present.
       expect(observed.join).toEqual({ right: true, left: false });
       expect(result.warnings.join(' ')).toContain('commits from left are not merged');
-      expect(result.conflicts).toEqual([{ file: 'SHARED.md', stepIds: ['left', 'right'] }]);
+      // Concurrent lanes finish in any order, so compare the owners as a set.
+      expect(result.conflicts.map(conflict => ({ file: conflict.file, stepIds: [...conflict.stepIds].sort() })))
+        .toEqual([{ file: 'SHARED.md', stepIds: ['left', 'right'] }]);
       expect(result.taskStatus).toBe('review');
       expect(store.getTask(task.id)?.pipeline?.results.map(entry => entry.status)).toEqual(['completed', 'completed', 'completed']);
       expect(store.listAudit({ taskId: task.id }).map(event => event.type)).toContain('pipeline.dag.executed');

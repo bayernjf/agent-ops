@@ -73,9 +73,9 @@ describe('KernelStore parallel lanes', () => {
 
       expect(result.lanes[0]?.changedFiles.sort()).toEqual(['SHARED.md', `${architect.id}.md`].sort());
       expect(result.lanes[2]?.changedFiles).toEqual([`${reviewer.id}.md`]);
-      expect(result.conflicts).toEqual([
-        { file: 'SHARED.md', roleIds: [architect.id, implementer.id] },
-      ]);
+      // Concurrent lanes finish in any order, so compare the owners as a set.
+      expect(result.conflicts.map(conflict => ({ file: conflict.file, roleIds: [...conflict.roleIds].sort() })))
+        .toEqual([{ file: 'SHARED.md', roleIds: [architect.id, implementer.id].sort() }]);
       expect(result.taskStatus).toBe('review');
       expect(store.getTask(task.id)?.status).toBe('review');
       expect(store.listAudit({ taskId: task.id }).map(event => event.type)).toEqual(['task.created', 'parallel.executed']);

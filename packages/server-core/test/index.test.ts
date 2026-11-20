@@ -746,7 +746,8 @@ describe('createKernelApp', () => {
       expect(body).toMatchObject({ taskStatus: 'review', maxConcurrency: 2 });
       expect(body.lanes.map(lane => lane.roleId)).toEqual([left.id, right.id]);
       expect(body.lanes.every(lane => lane.status === 'review')).toBe(true);
-      expect(body.conflicts).toEqual([{ file: 'lane.md', roleIds: [left.id, right.id] }]);
+      expect(body.conflicts.map(conflict => ({ file: conflict.file, roleIds: [...conflict.roleIds].sort() })))
+        .toEqual([{ file: 'lane.md', roleIds: [left.id, right.id].sort() }]);
 
       const invalid = await app.request(`/api/tasks/${task.id}/parallel/execute`, {
         method: 'POST',
