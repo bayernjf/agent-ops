@@ -80,6 +80,10 @@ const roleTestSchema = z.object({
   objective: z.string().trim().max(2_000).optional(),
 });
 
+const executeParallelSchema = z.object({
+  maxConcurrency: z.number().int().min(1).max(8).optional(),
+});
+
 const customAgentSchema = z.object({
   name: z.string().trim().min(1),
   launchCommand: z.string().trim().min(1),
@@ -111,7 +115,7 @@ function errorResponse(context: Context, error: unknown) {
   if (message.includes('is not assigned to a Team') || message.includes('produced an empty plan')) {
     return context.json({ error: message }, 400);
   }
-  if (message.includes('cannot be') || message.includes('no worktree') || message.includes('nothing is awaiting approval') || message.includes('can only be applied')) {
+  if (message.includes('cannot be') || message.includes('no worktree') || message.includes('nothing is awaiting approval') || message.includes('can only be applied') || message.includes('parallel execution starts from')) {
     return context.json({ error: message }, 409);
   }
   return context.json({ error: message }, 500);
@@ -461,6 +465,19 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     const taskId = c.req.param('id');
     const summary = store.coordinatorSummary(taskId);
     return summary ? c.json({ summary }) : c.json({ error: `Task ${taskId} was not found.` }, 404);
+  });
+
+  app.post('/api/tasks/:id/parallel/execute', async (c) => {
+    const parsed = executeParallelSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: 'Invalid parallel input.', details: parsed.error.flatten() }, 400);
+    try {
+      return c.json(await store.executeParallelTeam(c.req.param('id'), {
+        runner: options.runner,
+        maxConcurrency: parsed.data.maxConcurrency,
+      }));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
   });
 
   app.get('/api/tasks/:id/export', (c) => {

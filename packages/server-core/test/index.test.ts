@@ -706,6 +706,57 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('executes parallel lanes over the API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        await writeFile(join(options.cwd, 'lane.md'), 'lane\n', 'utf8');
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'ok',
+          startedAt: new Date(Date.now() - 5).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+      const app = createKernelApp(store, { runner });
+      const left = await store.roles.createRole({ name: 'Left', baseAgentId: 'codex' });
+      const right = await store.roles.createRole({ name: 'Right', baseAgentId: 'codex' });
+      const team = await store.teams.createTeam({ name: 'Parallel', roleIds: [left.id, right.id] });
+      const task = await store.createTask({ repo, baseRef: 'main', title: 'Parallel', teamId: team.id });
+      await store.provisionTask(task.id);
+
+      const response = await app.request(`/api/tasks/${task.id}/parallel/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ maxConcurrency: 2 }),
+      });
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        lanes: Array<{ roleId: string; status: string }>;
+        conflicts: Array<{ file: string; roleIds: string[] }>;
+        taskStatus: string;
+        maxConcurrency: number;
+      };
+      expect(body).toMatchObject({ taskStatus: 'review', maxConcurrency: 2 });
+      expect(body.lanes.map(lane => lane.roleId)).toEqual([left.id, right.id]);
+      expect(body.lanes.every(lane => lane.status === 'review')).toBe(true);
+      expect(body.conflicts).toEqual([{ file: 'lane.md', roleIds: [left.id, right.id] }]);
+
+      const invalid = await app.request(`/api/tasks/${task.id}/parallel/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ maxConcurrency: 0 }),
+      });
+      expect(invalid.status).toBe(400);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a role whose runtime is not verified or whose profile is missing', async () => {
     const { store, directory } = await openStore();
     try {
