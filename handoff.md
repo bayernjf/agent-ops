@@ -490,7 +490,8 @@
 - 结果：5 步全部 `completed`（agent commit `d6148fb` → `f0f8565` → `92187be` → `2130471` → `e38c83b`）、4 条 handoff、总耗时 430 s；`coordinatorSummary.owner = { stepId: 'cb-summarizer', status: 'completed' }`。
 - 落盘：owner 真的写出 `05-final.md`（5.5 KB，按 reviewer 修订后的 README-ready「报告指标」小节）并附 `05-summary.md`；6 个文件共 440 行，应用为 `4065cca`。
 - 对比 Dogfood 4（未配 owner、只产笔记）：本轮满足 M2 退出标准「5 角色团队完成一个真实仓库任务（架构→实现→审查→测试→汇总）」——交付物是真实仓库文档而非代码；owner 也自己列出贴入 README 前仍需处理的缺口（`--summary` 未进 README 命令节、Team 预算证据映射缺一项、SSE 仅源码引用无运行时验证）。
-- [ ] 未做：交付物是文档，五角色跑真实代码改动仍未尝试（worktree 无 node_modules）；`05-final.md` 尚未正式贴入 README。
+- [x] `05-final.md` 已贴入 README「报告指标」小节（运行证据 / 工具审计 / 成本预算三张表），并按 owner 列出的缺口做了三处修正：命令节补 `--summary`；预算来源指向 `roles.ts` / `teams.ts`；SSE 措辞改为 stdout/stderr 以事件落库（每 Run 最近 500 条）可回放，并在 README「已知限制」补上未做压测的说明。
+- [ ] 未做：交付物是文档，五角色跑真实代码改动仍未尝试（worktree 无 node_modules）。
 
 ## Coordinator 落盘 owner — 已完成（2026-11-21）
 
