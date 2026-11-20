@@ -371,6 +371,19 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/roles/${encodeURIComponent(args.roleId)}`).then(toResult));
 
+  server.registerTool('agent_ops_test_role', {
+    title: 'Test role',
+    description: 'Build a role\'s dry-run execution plan without creating a task: resolved runtime, executable verdict, command preview and tool policy. Nothing is spawned.',
+    inputSchema: {
+      ...roleIdSchema,
+      objective: z.string().trim().max(2_000).optional().describe('Objective to preview; defaults to a harmless probe.'),
+    },
+    annotations: READ_ONLY,
+  }, args => {
+    const { roleId, objective } = args;
+    return callDaemon('POST', `/api/roles/${encodeURIComponent(roleId)}/test`, objective ? { objective } : {}).then(toResult);
+  });
+
   server.registerTool('agent_ops_create_role', {
     title: 'Create role',
     description: 'Create a role bound to a verified base agent or an existing Agent Profile.',

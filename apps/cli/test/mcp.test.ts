@@ -167,6 +167,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_retry_pipeline',
       'agent_ops_revise_blueprint',
       'agent_ops_submit_acceptance',
+      'agent_ops_test_role',
       'agent_ops_update_role',
       'agent_ops_update_team',
     ]);
@@ -275,6 +276,19 @@ describe('agent-ops MCP bridge', () => {
     const deleted = await client.callTool({ name: 'agent_ops_delete_team', arguments: { teamId: team.id } });
     expect(deleted.isError).toBeFalsy();
     expect(JSON.parse(textOf(deleted))).toMatchObject({ deleted: true });
+  });
+
+  it('builds a role test plan through the daemon', async () => {
+    const client = await startBridge();
+    const created = await client.callTool({ name: 'agent_ops_create_role', arguments: { name: 'Plan probe', baseAgentId: 'codex' } });
+    expect(created.isError).toBeFalsy();
+    const { role } = JSON.parse(textOf(created)) as { role: { id: string } };
+
+    const tested = await client.callTool({ name: 'agent_ops_test_role', arguments: { roleId: role.id } });
+    expect(tested.isError).toBeFalsy();
+    const { plan } = JSON.parse(textOf(tested)) as { plan: { executable: boolean; command: string[] } };
+    expect(plan.executable).toBe(true);
+    expect(plan.command[0]).toBe('codex');
   });
 
   it('replays audit events through the daemon', async () => {
