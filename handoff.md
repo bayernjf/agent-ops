@@ -8,7 +8,7 @@
 > 产品规划（非活跃待办，不计入上方待办）：多 Agent 角色与团队 v0.2/v0.3，PRD 见 `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md`，实施拆解见 `docs/prd/Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md`；PD-1～PD-9 已于 2026-11-19 拍板；后续方向备忘（Tier 0 能力包 / 现有 Harness / Personal Agent）见 PRD §12.1–12.2。
 
 - [x] **真实模型 UI E2E** — 已完成（2026-11-20）。UI 里新建 CodeBuddy 角色与一步 Pipeline 任务，点 `Run pipeline` 由真实 CodeBuddy 2.185.0 执行，任务 done、Run 可见（commit `ea4553f7d2`）。Claude Code / Codex 仍受 CC Switch `base_url` 阻塞，但不影响 CodeBuddy 路径；真实模型 API 路径与 UI 路径均已有证据。
-- [x] **3–5 个本仓 dogfood** — 已完成 3 条真实任务 + 1 次五角色团队运行（2026-11-21）：单任务接受率 3/3、检查通过率 3/3、返工 1 次人工小修；五角色串行 5 步全部完成并落 5 个 commit（发现“落盘 owner 未指派”的产品缺口）。详见下方 “F10-01/F10-02 Dogfood” 章节。
+- [x] **3–5 个本仓 dogfood** — 已完成 3 条真实任务 + 2 次团队运行（2026-11-21）：单任务接受率 3/3、检查通过率 3/3、返工 1 次人工小修；五角色串行 5 步全部完成（发现“落盘 owner 未指派”缺口）；owner 机制随后补齐并用 2 步团队实测落盘。详见下方 “F10-01/F10-02 Dogfood” 章节。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -451,7 +451,7 @@
 - [x] UI 验收过程中发现并修复两个真实缺陷：① 新建任务表单不 provision worktree，`Run pipeline` 直接 409 “no worktree”；② 执行后不刷新已展开任务的 Run 列表（显示 “No runs yet”）。提交 `902d864 fix(studio): provision and refresh pipeline runs`。
 - [ ] 剩余：Claude Code / Codex 仍受 CC Switch `base_url` 阻塞；CodeBuddy 不上报 usage 与工具调用（记录为 null / unknown）；M1 的“4 步串行完整组合”此前由确定性 runner 验收。
 
-## F10-01/F10-02 Dogfood（3 个真实任务 + 1 次五角色团队运行）— 已完成（2026-11-21）
+## F10-01/F10-02 Dogfood（3 个真实任务 + 2 次团队运行）— 已完成（2026-11-21）
 
 > 方法：在本仓为每个任务建一条一步 Pipeline（角色 `ui-codebuddy` → CodeBuddy 2.185.0）；执行后审阅 agent 的 commit，把 diff 应用到 `dev`，再用本仓自己的检查验收。Pipeline 步骤由系统自动 accept，人对最终 diff 负责。
 
@@ -477,6 +477,13 @@
 - 结论：5 角色串行在真实模型下跑通（本轮交付物为 docs 目录）；但“团队任务需要一个落盘 / 最终集成 step 的 owner”此前是缺口，已由下方「Coordinator 落盘 owner」补齐。
 - [ ] 未做：没有让这 5 个角色产出真实代码改动（worktree 无 node_modules，跑测试不可行）；这一轮已完成的历史运行没有 owner，需要人工/重跑才能产出可验收的落盘。
 
+### Dogfood 5：owner 落盘验证（2026-11-21）
+
+- 团队 `CB Owner Team`（planner → writer，`ownerRoleId = writer`）；Coordinator 计划把 writer 置于最后并标记 `ownsDeliverable: true`。
+- 结果：2 步全部 `completed`（agent commit `05c0c74`、`2d1ec25`），总耗时 50 s；`coordinatorSummary` 返回 `owner: { stepId: 'cb-writer', status: 'completed' }`。
+- 产出：writer 写出的 `02-final.md` 内容精确为 `owner wrote this.`，并按指令向 `01-plan.md` 追加写入说明；整体应用为 `9ff5aa5`。这是 owner 机制“真的会写”的实测证据，而不只是计划标记。
+- 运维提示：daemon 是长驻进程，**改完内核代码必须重启 daemon**；本轮第一次 apply 跑在旧代码上，旧 schema 静默丢弃了 `ownerRoleId`，重启并 PUT owner 后才正确标记。写进这里避免复现。
+
 ## Coordinator 落盘 owner — 已完成（2026-11-21）
 
 - [x] Team 增加 `ownerRoleId`：必须是花名册成员，且不得再交接给其它角色（否则 owner 不可能是最后一步）；create/update schema 与 JSON store 同步。
@@ -485,4 +492,4 @@
 - [x] server team schema 自动接受 owner（越界 400）；MCP 团队工具新增 `ownerRoleId`；Studio 团队表单新增「落盘角色」选择（角色离开花名册会自动清空），详情面板展示 owner。
 - [x] 测试：owner 越界 / owner 仍有 outgoing handoff 被拒；合法 owner 持久化；plan owner 置末 + `ownsDeliverable` + prompt 后缀；无 owner 时 warning；summary owner 状态；server 往返 + 400 + plan 暴露。全仓 typecheck 0，62 文件 / 732 tests 绿；Studio 257 tests 与 `vite build` 通过。
 - [x] 本轮提交：`f3aea53 feat(teams): name a team owner role`、`e0b115b feat(storage-core): mark the owner step in a team plan`、`c1b0f93 test(server-core): cover team owners over HTTP`、`6038f0d feat(cli): accept a team owner field`、`640faa1 feat(studio): set a team owner`。
-- [ ] 未做：owner 是“计划期约束”，不会事后检查 owner step 是否真的写了文件；历史那次五角色运行没有 owner，要重跑才能产出可验收的落盘；Studio 新表单字段未在真实浏览器点击。
+- [ ] 未做：owner 是“计划期约束”，不会事后检查 owner step 是否真的写了文件（Dogfood 5 已人工验证写过）；历史那次五角色运行没有 owner，要重跑才能产出可验收的落盘；Studio 新表单字段未在真实浏览器点击。

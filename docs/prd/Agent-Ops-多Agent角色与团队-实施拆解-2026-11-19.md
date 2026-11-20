@@ -611,3 +611,4 @@ npm --workspace @agent-ops/studio run build
 | 2026-11-20 | 真实模型 Run（UI 路径）完成：Studio 建角色 + 一步 Pipeline 后点 Run pipeline，CodeBuddy 落 commit `ea4553f7d2`；同时修复 UI 不 provision / 不刷新 Run 列表两个缺陷 |
 | 2026-11-21 | 真实 dogfood 3 条完成（Studio 重跑策略 / Studio 预算面板 / CLI export --summary）：接受率 3/3、检查通过 3/3、返工 1 次小修；5 角色团队真实任务待跑 |
 | 2026-11-21 | 五角色团队串行真实跑通：5 步全 completed、5 个 agent commit、4 条 handoff、420 s；产物为 docs 笔记，暴露“落盘 owner 未指派”缺口 |
+| 2026-11-21 | Team owner 机制完成：ownerRoleId 校验、计划置末并标记 ownsDeliverable、summary 暴露 owner；Dogfood 5 以 2 步团队实测落盘 |
