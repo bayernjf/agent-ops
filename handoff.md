@@ -415,4 +415,5 @@
 - [x] `handoff.md` 顶部状态从“运行证据链补强完成”改为当前阶段；待办登记保持不变：真实模型 E2E blocked、dogfood open、adapter 扩张 blocked。
 - [x] 一致性核对（对源码复核）：`packages/*` 5 个、`apps/` 2 个、`plugins/webapp-delivery` 7 包 + studio；CLI 命令 `doctor / start / mcp / export`；daemon 环境变量 `AGENT_OPS_ENABLE_WEBAPP`；npm workspaces 四个 glob；root scripts 只有 `typecheck` / `test`。
 - [x] 本轮提交：文档同步提交（README、AGENTS、本 handoff 段落）。
-- [ ] 未做：README 的能力表按模块描述，不逐条列出 API 路由；`docs/prd/...实施拆解` 的完成记录未在本轮补齐（按 F10-03 验收口径只需 README/AGENTS/handoff 一致）。
+- [x] 后续补齐：`docs/prd/...实施拆解` 已加入“角色与团队功能面完成记录（2026-11-20）”、M2 状态行与 §11 变更记录行（725 tests 基线）。
+- [ ] 未做：README 的能力表按模块描述，不逐条列出 API 路由。
