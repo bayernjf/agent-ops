@@ -190,3 +190,14 @@
 - [x] 测试：三步 Pipeline 首步保留、第二步失败后重试成功、失败文件被清掉、首步 runner 不重复执行、首步 commit 不变、最终 4 个 commit 且 worktree clean；驳回第二步时保留第一步 commit 与文件；server HTTP 重试与 completed 再重试 409；全仓 typecheck 0，49 文件 / 652 tests 绿。
 - [x] 本轮提交：`20d707a feat(storage-core): retry failed pipelines`、`4ec87aa feat(server-core): expose pipeline retry`、`53687f3 feat(studio): retry failed pipeline steps`、`28e4e5a test(storage-core): cover pipeline retry`。
 - [ ] F6-05 只支持 failed pipeline 的重试；completed pipeline 仍不支持 reset 后重跑，step 间 output 模板替换也未做。F6-06 并行 DAG、F7-05 Run 详情扩展仍未做。
+## F7-05 Run 详情扩展 — 已完成（2026-11-20）
+
+- [x] migration `0015_run_execution_evidence` 给 `runs` 增加 `runtime_version`（默认空字符串）、`command`（默认空字符串）、`input_tokens` / `output_tokens`（INTEGER，可空）、`cost_usd`（REAL，可空）；旧 Run 读取为 `runtimeVersion=null`、`command=''`、usage 为 `null`。
+- [x] `RunRecord` 增加 `runtimeVersion` / `command` / `inputTokens` / `outputTokens` / `costUsd`；`createRun` 初始化空证据；新增 `RunExecutionEvidence` 与 `updateRunExecutionEvidence`。
+- [x] `updateRunExecutionEvidence` 对 command 做 `RUN_COMMAND_LIMIT = 4000` 字符截断（超出时追加 `[truncated: N characters total]`）；token/cost 只接受有限非负数，token 向下取整，非法值落 `null`；空版本落 `null`，不伪造。
+- [x] `executeRun` 在构造执行计划后立即写入实际命令行（`plan.command.join(' ')`），在 runner 返回后、收集 diff 前写入 `runtimeVersion` 与 runner 上报的 `usage`；未上报的 token/cost 保持 `null`，不写 0。
+- [x] `agent-runtime` 新增 `probeAgentVersion(command)`，复用 `detect()` 的探测缓存与 5 秒超时；`runCodexProcessOnPlatform` 改为 async runner，spawn 前探测版本，探测失败不阻塞执行并返回 `runtimeVersion=null`；所有 resolve 分支都带版本证据。
+- [x] server `GET /api/runs/:id` 直接返回新字段；Studio `KernelRun` 增加对应类型，Run 身份行展示 Role / Runtime / Version / Commit / Tokens(in/out) / Cost，证据面板新增 Command 区块；`en.ts` / `zh.ts` 补齐 `version` / `command` / `tokens` / `cost` 文案。
+- [x] 测试：storage 覆盖 runner 上报 version+usage 的落库与重开 DB 持久化、command 截断与非法 usage 归一化、未上报时三个 usage 字段为 null；server 覆盖 Run 详情返回 `runtimeVersion=null`、command 含 `codex exec`、usage 字段为 null；全仓 typecheck 0，49 文件 / 654 tests 绿。
+- [ ] 真实 Codex / Claude CLI 目前不返回 token/cost usage，Studio 显示 `—`；这是“未上报”而非 0。命令行为包含 prompt，`RUN_COMMAND_LIMIT` 只限制长度，不脱敏。
+- [ ] 本轮提交：`9ab2084 feat(agent-runtime): probe runtime versions`、`894bd21 feat(storage-core): record run execution evidence`、`65b5c7b feat(studio): show run execution evidence`、`4fe610d test(storage-core): cover run execution evidence`。
