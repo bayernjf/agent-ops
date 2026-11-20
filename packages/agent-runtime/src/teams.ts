@@ -19,6 +19,11 @@ export type AgentTeam = {
   description?: string;
   roleIds: string[];
   handoffs: TeamHandoff[];
+  /**
+   * The role that owns the final deliverable: it runs last and is told to perform the write the
+   * upstream steps only described. Optional, but a coordinator plan warns when it is missing.
+   */
+  ownerRoleId?: string;
   /** Optional per-task spending ceiling for the whole team. */
   budget?: CostBudget;
   enabled: boolean;
@@ -122,11 +127,35 @@ export function validateTeamGraph(roleIds: string[], handoffs: TeamHandoff[]): T
   return issues;
 }
 
+/**
+ * The owner role must be on the roster and must not hand off to anyone, otherwise the plan puts
+ * it before another role and nobody is left responsible for the final write.
+ */
+export function validateTeamOwner(roleIds: string[], handoffs: TeamHandoff[], ownerRoleId?: string): TeamGraphIssue[] {
+  if (!ownerRoleId) return [];
+  const issues: TeamGraphIssue[] = [];
+  if (!roleIds.includes(ownerRoleId)) {
+    issues.push({ path: ['ownerRoleId'], message: `Owner role ${ownerRoleId} is not on this Team.` });
+    return issues;
+  }
+  const outgoing = handoffs.find(handoff => handoff.fromRoleId === ownerRoleId);
+  if (outgoing) {
+    issues.push({
+      path: ['ownerRoleId'],
+      message: `Owner role ${ownerRoleId} hands off to ${outgoing.toRoleId}; the owner must be the last role.`,
+    });
+  }
+  return issues;
+}
+
 function addTeamIssues(
-  team: { roleIds: string[]; handoffs: TeamHandoff[] },
+  team: { roleIds: string[]; handoffs: TeamHandoff[]; ownerRoleId?: string },
   context: z.RefinementCtx,
 ): void {
   for (const issue of validateTeamGraph(team.roleIds, team.handoffs)) {
+    context.addIssue({ code: 'custom', path: issue.path, message: issue.message });
+  }
+  for (const issue of validateTeamOwner(team.roleIds, team.handoffs, team.ownerRoleId)) {
     context.addIssue({ code: 'custom', path: issue.path, message: issue.message });
   }
 }
@@ -136,6 +165,7 @@ const teamBaseShape = {
   description: z.string().max(500).optional(),
   roleIds: z.array(roleIdSchema).max(50),
   handoffs: z.array(teamHandoffSchema).max(200).default([]),
+  ownerRoleId: roleIdSchema.optional(),
   budget: costBudgetSchema.optional(),
   enabled: z.boolean().default(true),
 };
@@ -157,6 +187,7 @@ export const agentTeamUpdateSchema = z
     description: z.string().max(500).optional(),
     roleIds: z.array(roleIdSchema).max(50).optional(),
     handoffs: z.array(teamHandoffSchema).max(200).optional(),
+    ownerRoleId: roleIdSchema.optional(),
     budget: costBudgetSchema.optional(),
     enabled: z.boolean().optional(),
   })
