@@ -201,3 +201,14 @@
 - [x] 测试：storage 覆盖 runner 上报 version+usage 的落库与重开 DB 持久化、command 截断与非法 usage 归一化、未上报时三个 usage 字段为 null；server 覆盖 Run 详情返回 `runtimeVersion=null`、command 含 `codex exec`、usage 字段为 null；全仓 typecheck 0，49 文件 / 654 tests 绿。
 - [ ] 真实 Codex / Claude CLI 目前不返回 token/cost usage，Studio 显示 `—`；这是“未上报”而非 0。命令行为包含 prompt，`RUN_COMMAND_LIMIT` 只限制长度，不脱敏。
 - [ ] 本轮提交：`9ab2084 feat(agent-runtime): probe runtime versions`、`894bd21 feat(storage-core): record run execution evidence`、`65b5c7b feat(studio): show run execution evidence`、`4fe610d test(storage-core): cover run execution evidence`。
+
+## F7-04 逐文件接受 — 已完成（2026-11-20）
+
+- [x] `commitWorktreeChanges` 增加可选 `files`：部分接受时先 `git reset -q` 清掉 agent 自己 staged 的内容，再 `git add -A -- <files>`，只提交选中路径；拒绝绝对路径、空路径和含 `..` 的路径。
+- [x] `KernelStore.acceptRun(id, files?)`：`files` 省略时保持全量接受；传入时必须非空且是本次 Run `artifacts.changedFiles` 的子集，否则抛错且不触碰 worktree。部分接受提交选中文件后 `resetWorktree` 丢弃未选文件，确保 worktree clean、可 release。
+- [x] server `POST /api/runs/:id/accept` 支持可选 `{ files: string[] }`；无 body 仍为全量接受，非法 JSON / 非法字段返回 400，不再把 malformed body 当成“接受全部”；未知路径映射为 400。
+- [x] Studio Run 证据面板新增逐文件 checkbox（默认全选），接受按钮显示 `接受选中文件 (n/m)`，未选任何文件时禁用；选择在刷新 run 列表时保留，但会过滤掉已不存在的路径。zh/en 文案与样式补齐。
+- [x] 测试：staged 双文件场景只提交 `keep.txt`、`drop.txt` 被删除、worktree clean；未知文件 400 且 Run 保持 review；malformed JSON 400 且不触发接受；全仓 typecheck 0，49 文件 / 656 tests 绿。
+- [x] 本机 UI 实跑：临时 DB + 临时 git 仓库进入 review，展开证据后取消勾选 `drop.txt`，点“接受选中文件 (1/2)”；HEAD 只含 `keep.txt`，`drop.txt` 已删除，`git status --porcelain` 为空，Task 变 done。
+- [ ] 当前是“本次操作里接受选中、其余丢弃”的一次性语义；不支持保留未选文件留待下一轮。Pipeline 自动 accept 与不带 files 的旧调用仍走全量接受。
+- [ ] 本轮提交：`8bf226e feat(storage-core): accept selected run files`、`e1e6fd5 feat(server-core): accept selected run files`、`324cca1 feat(studio): pick files before accepting a run`、`5d24e70 test(storage-core): cover partial run acceptance`。

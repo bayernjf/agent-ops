@@ -285,6 +285,9 @@ E0 基础闭环修复
 
 **F4-04/F7-05 完成记录（2026-11-20）**：migration `0015_run_execution_evidence` 给 `runs` 增加 `runtime_version` / `command` / `input_tokens` / `output_tokens` / `cost_usd`；`RunRecord` 与 server Run 详情直接暴露这些字段。`executeRun` 在构造计划后写入实际命令行（4000 字符截断），runner 返回后写入版本与 usage；`agent-runtime` 新增 `probeAgentVersion`，spawn 前探测版本，失败返回 null 且不阻塞执行。未上报的 token/cost 保持 null，不写 0。Studio Run 身份行展示 role/runtime/version/commit/tokens/cost，证据面板展示 command。测试 49 文件 / 654 tests 绿。真实 CLI 尚未提供 usage，UI 显示 `—`；命令含 prompt，仅限长不脱敏。
 
+**F7-04 完成记录（2026-11-20）**：`commitWorktreeChanges` 支持只 stage 选中路径；`acceptRun(id, files?)` 校验 files 必须非空且属于本次 `changedFiles`，提交选中文件后 reset/clean worktree 丢弃未选文件。server accept 路由支持可选 `{ files }`，malformed/未知路径返回 400，无 body 保持全量接受。Studio 在 review 证据面板提供逐文件 checkbox 和“接受选中文件 (n/m)”。测试 49 文件 / 656 tests 绿；本机 UI 实跑取消 `drop.txt` 后只提交 `keep.txt`，worktree clean。当前语义为一次性“接受选中、其余丢弃”，不支持保留未选文件留待后续。
+
+
 
 ### M2 团队与狗粮（2026-12-11 → 2026-12-24）
 
