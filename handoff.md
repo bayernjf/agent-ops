@@ -12,7 +12,7 @@
 - [ ] **3–5 个本仓 dogfood** — 状态：open；下一步：收集 diff / 测试 / 失败率，验证是否能替代手工。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
-> 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环），当前处于**运行证据链补强完成**阶段。
+> 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；**M1 退出标准中的“真实模型 UI E2E”仍 blocked**，M2 的 3–5 个 dogfood 因此尚未开始。
 > 迁移方案与执行记录见 `bayjf/docs/tier0/Tier0-agent-dev并入AgentOps-迁移方案-2026-11-18.md`。
 
 ## 迁移（move 阶段）— 已完成
@@ -407,3 +407,12 @@
 - [x] 测试：失败 Run 重跑默认看不到 `LEFTOVER.md`；`keep` 能看到 `KEEP.md`；`fresh` 看不到 `FRESH.md` 且 HEAD 回到 `baseCommit`；审计含 `run.rerun`；server 400 / 409。全仓 typecheck 0，61 文件 / 725 tests 绿。
 - [x] 本轮提交：`16ef3a8 feat(storage-core): reset failed worktrees on rerun`、`27a2f3a feat(server-core): accept a rerun worktree policy`、`9450273 feat(cli): expose the rerun worktree policy`。
 - [ ] 未做：Studio 的 Retry 按钮仍用默认 `auto`，没有让用户选 `keep` / `fresh`；`fresh` 依赖 Run 已记录 lane 路径（首次执行后的重跑才可用）；真实 CLI 上未验证。
+
+## F10-03 文档同步 — 已完成（2026-11-20）
+
+- [x] `README.md` 重写：当前状态（内核 5 包 / 双模 daemon / 测试基线 61 文件 725 tests / 真实模型 E2E blocked）、内核能力表（Task-Run、Roles、Teams+Handoff、Pipeline、Coordinator、并行 lanes、证据与审计、预算、重跑 hygiene）、目录、命令（workspace 与 CLI export）、文档索引与已知限制。
+- [x] `AGENTS.md` 更新：5 个内核包清单、daemon 双模（默认 kernel，`AGENT_OPS_ENABLE_WEBAPP=1` 才加载插件）、agent-runtime → policy 的依赖方向、Studio 验证命令、文档同步要求，以及“拿不到证据要写 blocked”的验收口径。
+- [x] `handoff.md` 顶部状态从“运行证据链补强完成”改为当前阶段；待办登记保持不变：真实模型 E2E blocked、dogfood open、adapter 扩张 blocked。
+- [x] 一致性核对（对源码复核）：`packages/*` 5 个、`apps/` 2 个、`plugins/webapp-delivery` 7 包 + studio；CLI 命令 `doctor / start / mcp / export`；daemon 环境变量 `AGENT_OPS_ENABLE_WEBAPP`；npm workspaces 四个 glob；root scripts 只有 `typecheck` / `test`。
+- [x] 本轮提交：文档同步提交（README、AGENTS、本 handoff 段落）。
+- [ ] 未做：README 的能力表按模块描述，不逐条列出 API 路由；`docs/prd/...实施拆解` 的完成记录未在本轮补齐（按 F10-03 验收口径只需 README/AGENTS/handoff 一致）。
