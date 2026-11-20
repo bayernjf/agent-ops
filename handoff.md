@@ -7,9 +7,8 @@
 >
 > 产品规划（非活跃待办，不计入上方待办）：多 Agent 角色与团队 v0.2/v0.3，PRD 见 `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md`，实施拆解见 `docs/prd/Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md`；PD-1～PD-9 已于 2026-11-19 拍板；后续方向备忘（Tier 0 能力包 / 现有 Harness / Personal Agent）见 PRD §12.1–12.2。
 
-- [ ] **真实模型 UI E2E** — 状态：blocked；阻塞：Claude Code / Codex 未登录，OpenCode `serve --service` 启动超过 80 秒无产出；下一步：owner 登录后跑真实写任务。
-- [ ] **登录后真实写任务验收** — 状态：blocked；当前 UI 完成路径使用确定性 E2E runner，不代表真实模型任务已验收。
-- [ ] **3–5 个本仓 dogfood** — 状态：open；下一步：收集 diff / 测试 / 失败率，验证是否能替代手工。
+- [ ] **真实模型 UI E2E** — 状态：部分完成（2026-11-20）。真实模型 Run 已通过内核 API 跑通：CodeBuddy 2.185.0 创建 `REAL_MODEL.md`、exit 0、15.1s、accept 成 commit `2020338`、任务 `done`；证据导出确认 `runs=1 / acceptedCommits=1 / changedFiles=1`，usage 与工具审计按未上报记 `null` / `unknown`。剩余：在 Studio UI 里点击验收同一路径；Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
+- [ ] **3–5 个本仓 dogfood** — 状态：open；下一步：收集 diff / 测试 / 失败率，验证是否能替代手工（真实模型入口已可用 CodeBuddy，无需等 Claude/Codex 登录）。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；**M1 退出标准中的“真实模型 UI E2E”仍 blocked**，M2 的 3–5 个 dogfood 因此尚未开始。
@@ -437,3 +436,13 @@
 - [x] 测试：两个根并发（实测 maxActive=2）、join 从 right 检出（可见 RIGHT.md、不可见 LEFT.md）、冲突报告 `SHARED.md`、warning 说明 left 未合并；失败根导致 child skipped 而 other 完成；环 / 未知依赖在 createTask 被拒；requiresApproval 在 DAG 被拒；server 200/400。全仓 typecheck 0，62 文件 / 729 tests 绿。
 - [x] 本轮提交：`30f09ff feat(storage-core): run pipelines as a DAG`、`8f4688a feat(server-core): expose DAG pipeline runs`、`3b307cd feat(cli): add the DAG run tool`。
 - [ ] 未做：没有 DAG 级别的自动合并/合成，多依赖只从最后一个依赖检出；Studio 没有 DAG 编辑器或运行入口；DAG 不支持审批门；真实模型下未验证。
+
+## 真实模型 Run（CodeBuddy）— 已完成（API 路径，2026-11-20）
+
+- [x] 阻塞复盘：Claude Code / Codex 仍被 CC Switch 的 `base_url` 缺失挡住，但本机已安装并登录的 **CodeBuddy v2.185.0** 在 registry 中是 `verified` adapter，可直接使用。
+- [x] 真实执行路径：内核 daemon（`npx tsx apps/cli/src/index.ts start`，端口 3737，DB 落仓库 `.agent-ops/`）→ 建任务 “Real model acceptance” → provision → `agentId: codebuddy` 建 Run → `POST /api/runs/:id/execute`。
+  - 结果：`status=review`、`exitCode=0`、`durationMs=15064`、`runtimeId=codebuddy`、`runtimeVersion=2.185.0`、`changedFiles=['REAL_MODEL.md']`，diff 恰为 `hello from codebuddy` 一行。
+- [x] 内容与提交验收：worktree 中 `REAL_MODEL.md` 精确为 `hello from codebuddy`；`accept` 后 commit `202033823e4ad7f7f12dcbc47717718016688c8a`，worktree clean，任务 `done`。
+- [x] 证据导出：`GET /api/tasks/<id>/export` 确认 `runs=1 / acceptedCommits=1 / changedFiles=1 / durationMs=15064`；usage 三字段为 `null`、tool audit 为 `unknown`（CodeBuddy 不上报），按“不伪造”口径记录。
+- [x] `.agent-ops/` 加入 `.gitignore`（daemon 从仓库根启动时 DB 与任务 worktree 都落在这里）。
+- [ ] 剩余：M1 退出标准写的是“从 UI 跑通”；本轮走的是内核 HTTP API（Studio 使用的同一套端点），Studio 里点击验收同一路径未做。真实 CLI 仍未上报 token/cost 与工具调用。

@@ -8,7 +8,7 @@
 - `daemon` **双模**：默认只挂载内核 Task/Run 控制面（`server-core`）；`AGENT_OPS_ENABLE_WEBAPP=1` 时懒加载 webapp-delivery 云链路（Project / Blueprint / Apply / Release）。
 - webapp-delivery 的 7 个 package 与 1 个 app（`studio`）隔离在 `plugins/webapp-delivery/`，内核不反向依赖插件。
 - 全仓 `npm run typecheck` 通过，`npm test` 62 文件 / 730 tests 全绿。
-- **真实模型的 UI E2E 仍 blocked**：本机 CLI 未登录（Claude Code / Codex），当前验收使用确定性 runner，不代表真实模型任务已验收。
+- **真实模型 Run 已跑通（2026-11-20）**：本机已登录的 **CodeBuddy v2.185.0**（registry 中的 `verified` adapter）通过内核 API 完成 1 条真实写任务并 accept（commit `2020338`）。Studio UI 点击验收仍待做；Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
 
 ## 内核能力
 
@@ -76,7 +76,7 @@ npx tsx apps/cli/src/index.ts export <taskId> [--out file]   # 导出单任务�
 
 ## 已知限制
 
-- 真实模型验收仍受本机 CLI 登录阻塞；工具审计与 usage 只有在 Runtime 上报时才有效。
+- 真实模型的执行入口已可用（CodeBuddy）；token/cost 与工具审计仍取决于 Runtime 是否上报，CodeBuddy 当前不报。
 - 并行团队不自动合并，也没有“选哪条 lane 作为最终交付”的一等操作。
 - 预算为任务内口径，不跨任务累计；只在启动前阻断。
 - Studio 部分新面板（Teams 计划、Metrics、试跑、工具审计）尚未在真实浏览器逐项点击验证。

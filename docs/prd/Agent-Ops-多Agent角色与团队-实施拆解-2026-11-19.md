@@ -289,7 +289,7 @@ E0 基础闭环修复
 
 
 
-**角色与团队功能面完成记录（2026-11-20）**：F5-01 Team schema（`agent-teams.json`，花名册 + 无环交接边）、F5-02 `/api/teams` CRUD 与 MCP 5 个团队工具、F5-03 Task `team_id` 派活；F5-04 交接收据 `run_handoffs`（上游 commit + changedFiles，可按任务/Run 查询并进导出）；F5-05/F7-03 Studio TeamsView（花名册 / 交接边 / 队列 / 团队计划 / 卡点 / 用量）；F5-06 串行 Coordinator（按花名册与交接边确定性推导 Pipeline，人工点“应用”才落库，并有不调模型的分步汇总）；F5-07 并行 lanes（每角色独立 worktree、`maxConcurrency` 有界、文件冲突只报告不自动合并；接受按 lane 独立提交并 pin，任务需全部 lane 决定后才 done）；F7-06 指标支持 `teamId` 过滤；F8-02 `audit_events` 回放、F8-03 单任务证据导出、F8-04 `getMetrics`；F1-06 5 个角色模板、F1-07 角色 dry-run 试跑；F3-04 工具调用审计（拿不到标 unknown）、F3-05 `@agent-ops/policy` 统一策略层；F4-05 重跑 hygiene（auto/keep/fresh）、F4-06 Role/Team 成本预算；F10-03 README/AGENTS/handoff 同步。全仓 typecheck 0、61 文件 / 725 tests 绿；Studio 14 文件 / 257 tests 与 `vite build` 通过。M1 退出标准中的真实模型 UI E2E 仍 blocked（CLI 未登录），F10-01 dogfood 尚未开始；F6-06 并行 DAG（v1：多依赖只从最后一个依赖检出、无自动合并）已实现，F5-06 的“自动拆子任务”仍需模型。
+**角色与团队功能面完成记录（2026-11-20）**：F5-01 Team schema（`agent-teams.json`，花名册 + 无环交接边）、F5-02 `/api/teams` CRUD 与 MCP 5 个团队工具、F5-03 Task `team_id` 派活；F5-04 交接收据 `run_handoffs`（上游 commit + changedFiles，可按任务/Run 查询并进导出）；F5-05/F7-03 Studio TeamsView（花名册 / 交接边 / 队列 / 团队计划 / 卡点 / 用量）；F5-06 串行 Coordinator（按花名册与交接边确定性推导 Pipeline，人工点“应用”才落库，并有不调模型的分步汇总）；F5-07 并行 lanes（每角色独立 worktree、`maxConcurrency` 有界、文件冲突只报告不自动合并；接受按 lane 独立提交并 pin，任务需全部 lane 决定后才 done）；F7-06 指标支持 `teamId` 过滤；F8-02 `audit_events` 回放、F8-03 单任务证据导出、F8-04 `getMetrics`；F1-06 5 个角色模板、F1-07 角色 dry-run 试跑；F3-04 工具调用审计（拿不到标 unknown）、F3-05 `@agent-ops/policy` 统一策略层；F4-05 重跑 hygiene（auto/keep/fresh）、F4-06 Role/Team 成本预算；F10-03 README/AGENTS/handoff 同步。全仓 typecheck 0、61 文件 / 725 tests 绿；Studio 14 文件 / 257 tests 与 `vite build` 通过。M1 退出标准中的真实模型 Run 已用 CodeBuddy v2.185.0 通过内核 API 跑通（创建文件 → accept 成 commit；Studio UI 点击验收待做，Claude Code / Codex 仍受 CC Switch 阻塞），F10-01 dogfood 尚未开始；F6-06 并行 DAG（v1：多依赖只从最后一个依赖检出、无自动合并）已实现，F5-06 的“自动拆子任务”仍需模型。
 
 ### M2 团队与狗粮（2026-12-11 → 2026-12-24）
 
@@ -607,3 +607,4 @@ npm --workspace @agent-ops/studio run build
 | 2026-11-19 | 同步 PD-1～PD-9：自有 Harness 不投入；Pi/DSH 保留实验；Q8 关闭 |
 | 2026-11-20 | M0 完成：accept commit/SHA、release guard、reject reset、Task criteria/priority；614 tests 绿 |
 | 2026-11-20 | M2 功能面完成：Team/Handoff/TeamsView、串行 Coordinator、并行 lanes（有界并发、冲突报告、按 lane 接受）、审计/导出/指标、角色模板/试跑、工具审计、统一策略层、重跑 hygiene、成本预算、文档同步；725 tests 绿；真实模型验收与 dogfood 仍 blocked |
+| 2026-11-20 | 真实模型 Run（API 路径）完成：CodeBuddy v2.185.0 创建文件并 accept 成 commit；M1 的 UI 点击验收与 dogfood 待做 |
