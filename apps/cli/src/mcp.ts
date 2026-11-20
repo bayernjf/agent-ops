@@ -155,6 +155,22 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: READ_ONLY,
   }, () => callDaemon('GET', '/api/projects').then(toResult));
 
+  server.registerTool('agent_ops_get_metrics', {
+    title: 'Get metrics',
+    description: 'Aggregate task/run success, rework, usage and timing, optionally windowed by ISO timestamps. Rates are null when nothing executed in the window.',
+    inputSchema: {
+      since: z.string().optional().describe('Only count items created at or after this ISO timestamp.'),
+      until: z.string().optional().describe('Only count items created at or before this ISO timestamp.'),
+    },
+    annotations: READ_ONLY,
+  }, args => {
+    const query = new URLSearchParams();
+    if (args.since) query.set('since', args.since);
+    if (args.until) query.set('until', args.until);
+    const suffix = query.size > 0 ? `?${query.toString()}` : '';
+    return callDaemon('GET', `/api/metrics${suffix}`).then(toResult);
+  });
+
   server.registerTool('agent_ops_get_project', {
     title: 'Get project',
     description: 'Get one project: delivery state and current Blueprint.',
@@ -371,6 +387,19 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/roles/${encodeURIComponent(args.roleId)}`).then(toResult));
 
+  server.registerTool('agent_ops_test_role', {
+    title: 'Test role',
+    description: 'Build a role\'s dry-run execution plan without creating a task: resolved runtime, executable verdict, command preview and tool policy. Nothing is spawned.',
+    inputSchema: {
+      ...roleIdSchema,
+      objective: z.string().trim().max(2_000).optional().describe('Objective to preview; defaults to a harmless probe.'),
+    },
+    annotations: READ_ONLY,
+  }, args => {
+    const { roleId, objective } = args;
+    return callDaemon('POST', `/api/roles/${encodeURIComponent(roleId)}/test`, objective ? { objective } : {}).then(toResult);
+  });
+
   server.registerTool('agent_ops_create_role', {
     title: 'Create role',
     description: 'Create a role bound to a verified base agent or an existing Agent Profile.',
@@ -502,6 +531,27 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}/handoffs`).then(toResult));
 
+  server.registerTool('agent_ops_plan_team_pipeline', {
+    title: 'Plan a team pipeline',
+    description: 'Derive a serial pipeline from the task\'s Team roster and handoff edges. It returns the proposed steps and writes nothing until agent_ops_apply_team_plan is called.',
+    inputSchema: taskIdSchema,
+    annotations: READ_ONLY,
+  }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/coordinator/plan`).then(toResult));
+
+  server.registerTool('agent_ops_apply_team_plan', {
+    title: 'Apply a team plan',
+    description: 'Write the team-derived pipeline onto a queued task. This call is the human approval gate; the task still runs step by step afterwards.',
+    inputSchema: taskIdSchema,
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/coordinator/apply`).then(toResult));
+
+  server.registerTool('agent_ops_coordinator_summary', {
+    title: 'Coordinator summary',
+    description: 'Summarize a task\'s pipeline without a model: per-step status, commit and changed-file count, plus the blocking steps.',
+    inputSchema: taskIdSchema,
+    annotations: READ_ONLY,
+  }, args => callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}/coordinator`).then(toResult));
+
   server.registerTool('agent_ops_list_audit', {
     title: 'List audit events',
     description: 'Replay kernel audit events: role and team edits, task assignment, accepted or rejected runs, pipeline gates and handoffs. Newest-last, capped by limit.',
@@ -566,6 +616,19 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     inputSchema: taskIdSchema,
     annotations: ADDITIVE,
   }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/provision`).then(toResult));
+
+  server.registerTool('agent_ops_execute_parallel', {
+    title: 'Execute parallel lanes',
+    description: 'Run one lane per team role, each in its own worktree, bounded by maxConcurrency. Lanes end in review; file conflicts are reported and never auto-merged. Synchronous and may take minutes.',
+    inputSchema: {
+      ...taskIdSchema,
+      maxConcurrency: z.number().int().min(1).max(8).optional().describe('How many lanes may run at once; defaults to 2.'),
+    },
+    annotations: ADDITIVE,
+  }, args => {
+    const { taskId, maxConcurrency } = args;
+    return callDaemon('POST', `/api/tasks/${encodeURIComponent(taskId)}/parallel/execute`, maxConcurrency ? { maxConcurrency } : {}).then(toResult);
+  });
 
   server.registerTool('agent_ops_execute_pipeline', {
     title: 'Execute pipeline',

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { eq, asc, desc } from 'drizzle-orm';
@@ -11,12 +12,16 @@ import {
   buildAgentExecutionPlan,
   describeRuntimeExecutorRejection,
   executeCodexPlan,
+  orderTeamRoles,
+  resolveRoleRuntime,
   resolveRuntimeExecutor,
   runtimeProviderAgentId,
+  type AgentAdapterStatus,
   type AgentRole,
   type ApprovedTask,
   type CodexExecutionResult,
   type CodexProcessRunner,
+  type ResolvedToolPolicy,
 } from '@agent-ops/agent-runtime';
 import type { TaskRunState } from '@agent-ops/workflow';
 import { tasks, runs, runEvents, runHandoffs, auditEvents } from './schema.js';
@@ -318,6 +323,26 @@ export type RunHandoff = {
   createdAt: string;
 };
 
+/**
+ * The execution plan a Role would use, built without a Task and without spawning a process.
+ * It answers "would this Role run, on what runtime, with which prompt and tool policy" so a
+ * misconfiguration surfaces before a real task is created.
+ */
+export type RoleTestPlan = {
+  roleId: string;
+  name: string;
+  enabled: boolean;
+  executable: boolean;
+  baseAgentId: string | null;
+  adapterStatus: AgentAdapterStatus;
+  profileId: string | null;
+  reason: string | null;
+  objective: string;
+  command: string[] | null;
+  toolPolicy: ResolvedToolPolicy | null;
+  warnings: string[];
+};
+
 export type KernelAuditEventType =
   | 'role.created'
   | 'role.updated'
@@ -331,9 +356,116 @@ export type KernelAuditEventType =
   | 'pipeline.step.approved'
   | 'pipeline.step.rejected'
   | 'pipeline.retried'
+  | 'pipeline.planned'
+  | 'parallel.executed'
   | 'handoff.recorded';
 
 export type KernelAuditActor = 'operator' | 'system';
+
+/** A coordinator plan derived from a Team's roster and handoff edges. Nothing runs until applied. */
+export type TeamPipelinePlan = {
+  taskId: string;
+  teamId: string;
+  order: string[];
+  steps: TaskPipelineStep[];
+  warnings: string[];
+};
+
+export type CoordinatorStepSummary = {
+  stepId: string;
+  name: string;
+  roleId: string | null;
+  status: string;
+  commitSha: string | null;
+  changedFiles: number;
+};
+
+/** The deterministic half of a coordinator report: what happened per step and what blocks it. */
+export type CoordinatorSummary = {
+  taskId: string;
+  teamId: string | null;
+  pipelineStatus: string;
+  steps: CoordinatorStepSummary[];
+  completed: number;
+  failed: number;
+  awaiting: number;
+  handoffs: number;
+  blockers: Array<{ stepId: string; status: string }>;
+};
+
+/** One role's lane in a parallel run: its own worktree, run and changed files. */
+export type ParallelLaneResult = {
+  roleId: string;
+  roleName: string;
+  runId: string | null;
+  worktreePath: string | null;
+  status: string;
+  changedFiles: string[];
+  error: string | null;
+};
+
+export type ParallelConflict = { file: string; roleIds: string[] };
+
+/** What a bounded parallel run produced. Lanes are independent; nothing is merged automatically. */
+export type ParallelTeamResult = {
+  taskId: string;
+  teamId: string;
+  maxConcurrency: number;
+  lanes: ParallelLaneResult[];
+  conflicts: ParallelConflict[];
+  taskStatus: TaskRunState;
+};
+
+/** Aggregated success, rework, usage and timing over the kernel's tasks and runs. */
+export type KernelMetrics = {
+  generatedAt: string;
+  window: { since: string | null; until: string | null };
+  tasks: { total: number; done: number; failed: number; cancelled: number; open: number };
+  runs: {
+    total: number;
+    executed: number;
+    succeeded: number;
+    failed: number;
+    cancelled: number;
+    inFlight: number;
+    /** succeeded / executed; null when nothing executed in the window. */
+    successRate: number | null;
+  };
+  rework: {
+    retries: number;
+    rejections: number;
+    /** (retries + rejections) / executed; a heuristic, not a per-task measure. */
+    reworkRate: number | null;
+  };
+  usage: {
+    reportingRuns: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    costUsd: number | null;
+  };
+  timing: {
+    totalDurationMs: number;
+    /** Mean per executed run; null when nothing executed. */
+    averageDurationMs: number | null;
+  };
+  byRuntime: Array<{
+    runtimeId: string;
+    runs: number;
+    succeeded: number;
+    failed: number;
+    cancelled: number;
+    durationMs: number;
+    costUsd: number | null;
+  }>;
+  byRole: Array<{
+    roleId: string;
+    runs: number;
+    succeeded: number;
+    failed: number;
+    cancelled: number;
+    durationMs: number;
+  }>;
+};
 
 /** Append-only record of model changes and human gate decisions, replayable by task. */
 export type KernelAuditEvent = {
@@ -902,12 +1034,18 @@ export class KernelStore {
     return updated;
   }
 
-  async executeRun(id: string, runner?: CodexProcessRunner): Promise<RunRecord> {
+  async executeRun(
+    id: string,
+    runner?: CodexProcessRunner,
+    options: { worktreePath?: string; taskStatus?: 'auto' | 'none' } = {},
+  ): Promise<RunRecord> {
     const run = this.getRun(id);
     if (!run) throw new Error(`Run ${id} was not found.`);
     const task = this.getTask(run.taskId);
     if (!task) throw new Error(`Task ${run.taskId} was not found.`);
-    if (!task.worktreePath) throw new Error(`Task ${run.taskId} has no worktree. Provision it before executing a run.`);
+    const worktreePath = options.worktreePath ?? task.worktreePath;
+    if (!worktreePath) throw new Error(`Task ${run.taskId} has no worktree. Provision it before executing a run.`);
+    const trackTask = options.taskStatus !== 'none';
     if (run.status !== 'queued' && run.status !== 'failed') {
       throw new Error(`Run ${id} cannot be executed from status ${run.status}.`);
     }
@@ -926,7 +1064,7 @@ export class KernelStore {
       acceptanceCriteria: task.acceptanceCriteria,
       priority: task.priority,
     };
-    const plan = buildAgentExecutionPlan(approvedTask, task.worktreePath, resolved.agentId, {
+    const plan = buildAgentExecutionPlan(approvedTask, worktreePath, resolved.agentId, {
       execute: true,
       profile: resolved.profile,
       role: role ?? undefined,
@@ -942,7 +1080,7 @@ export class KernelStore {
     // A rejected run can be executed again under the same run id; stale terminal events
     // would make a new SSE subscriber close on the previous attempt.
     await this.clearRunEvents(id);
-    await this.updateTaskStatus(task.id, 'running');
+    if (trackTask) await this.updateTaskStatus(task.id, 'running');
     await this.updateRunStatus(id, 'running');
     this.emitRunEvent(id, 'started');
 
@@ -973,20 +1111,20 @@ export class KernelStore {
       outputTokens: result.usage?.outputTokens ?? null,
       costUsd: result.usage?.costUsd ?? null,
     });
-    const evidence = await this.collectEvidence(task, result, cancelled);
+    const evidence = await this.collectEvidence(task, result, cancelled, worktreePath);
     if (cancelled) {
-      await this.updateTaskStatus(task.id, 'cancelled');
+      if (trackTask) await this.updateTaskStatus(task.id, 'cancelled');
       const record = await this.updateRunStatus(id, 'cancelled', evidence.diffStat, evidence.artifacts);
       this.emitRunEvent(id, 'cancelled');
       return record;
     }
     if (result.exitCode === 0 && !result.timedOut) {
-      await this.updateTaskStatus(task.id, 'review');
+      if (trackTask) await this.updateTaskStatus(task.id, 'review');
       const record = await this.updateRunStatus(id, 'review', evidence.diffStat, evidence.artifacts);
       this.emitRunEvent(id, 'completed');
       return record;
     }
-    await this.updateTaskStatus(task.id, 'failed');
+    if (trackTask) await this.updateTaskStatus(task.id, 'failed');
     const record = await this.updateRunStatus(id, 'failed', evidence.diffStat, evidence.artifacts);
     this.emitRunEvent(id, 'failed');
     return record;
@@ -1439,9 +1577,431 @@ export class KernelStore {
     return events.length > limit ? events.slice(events.length - limit) : events;
   }
 
+  /** Aggregate success, rework, usage and timing over tasks and runs, optionally windowed. */
+  getMetrics(filter: { since?: string; until?: string } = {}): KernelMetrics {
+    const since = filter.since ? Date.parse(filter.since) : null;
+    const until = filter.until ? Date.parse(filter.until) : null;
+    const inWindow = (iso: string) => {
+      const at = Date.parse(iso);
+      if (Number.isNaN(at)) return false;
+      if (since !== null && !Number.isNaN(since) && at < since) return false;
+      if (until !== null && !Number.isNaN(until) && at > until) return false;
+      return true;
+    };
+
+    const taskTotals = { total: 0, done: 0, failed: 0, cancelled: 0, open: 0 };
+    for (const task of this.listTasks()) {
+      if (!inWindow(task.createdAt)) continue;
+      taskTotals.total++;
+      if (task.status === 'done') taskTotals.done++;
+      else if (task.status === 'failed') taskTotals.failed++;
+      else if (task.status === 'cancelled') taskTotals.cancelled++;
+      else taskTotals.open++;
+    }
+
+    type RuntimeBucket = { runs: number; succeeded: number; failed: number; cancelled: number; durationMs: number; costUsd: number; reporting: number };
+    type RoleBucket = { runs: number; succeeded: number; failed: number; cancelled: number; durationMs: number };
+    const runtimeBuckets = new Map<string, RuntimeBucket>();
+    const roleBuckets = new Map<string, RoleBucket>();
+    const bucketFor = <T>(map: Map<string, T>, key: string, init: () => T): T => {
+      const existing = map.get(key);
+      if (existing) return existing;
+      const created = init();
+      map.set(key, created);
+      return created;
+    };
+
+    const runsTotals = { total: 0, executed: 0, succeeded: 0, failed: 0, cancelled: 0, inFlight: 0 };
+    let durationMs = 0;
+    let reportingRuns = 0;
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let costUsd = 0;
+
+    for (const task of this.listTasks()) {
+      for (const run of this.listRuns(task.id)) {
+        if (!inWindow(run.createdAt)) continue;
+        runsTotals.total++;
+        durationMs += run.artifacts.durationMs;
+        const reported = run.inputTokens !== null || run.outputTokens !== null || run.costUsd !== null;
+        if (reported) {
+          reportingRuns++;
+          inputTokens += run.inputTokens ?? 0;
+          outputTokens += run.outputTokens ?? 0;
+          costUsd += run.costUsd ?? 0;
+        }
+
+        const runtime = bucketFor(runtimeBuckets, run.runtimeId ?? 'unresolved', () => ({ runs: 0, succeeded: 0, failed: 0, cancelled: 0, durationMs: 0, costUsd: 0, reporting: 0 }));
+        runtime.runs++;
+        runtime.durationMs += run.artifacts.durationMs;
+        if (reported) {
+          runtime.reporting++;
+          runtime.costUsd += run.costUsd ?? 0;
+        }
+
+        const role = bucketFor(roleBuckets, run.roleId ?? 'unassigned', () => ({ runs: 0, succeeded: 0, failed: 0, cancelled: 0, durationMs: 0 }));
+        role.runs++;
+        role.durationMs += run.artifacts.durationMs;
+
+        if (run.status === 'review' || run.status === 'done') {
+          runsTotals.succeeded++;
+          runsTotals.executed++;
+          runtime.succeeded++;
+          role.succeeded++;
+        } else if (run.status === 'failed') {
+          runsTotals.failed++;
+          runsTotals.executed++;
+          runtime.failed++;
+          role.failed++;
+        } else if (run.status === 'cancelled') {
+          runsTotals.cancelled++;
+          runsTotals.executed++;
+          runtime.cancelled++;
+          role.cancelled++;
+        } else {
+          runsTotals.inFlight++;
+        }
+      }
+    }
+
+    const audit = this.listAudit({ limit: 1000 });
+    const retries = audit.filter(event => event.type === 'pipeline.retried' && inWindow(event.at)).length;
+    const rejections = audit.filter(event => event.type === 'run.rejected' && inWindow(event.at)).length;
+
+    const byRuntime = [...runtimeBuckets.entries()]
+      .map(([runtimeId, bucket]) => ({
+        runtimeId,
+        runs: bucket.runs,
+        succeeded: bucket.succeeded,
+        failed: bucket.failed,
+        cancelled: bucket.cancelled,
+        durationMs: bucket.durationMs,
+        costUsd: bucket.reporting > 0 ? bucket.costUsd : null,
+      }))
+      .sort((a, b) => b.runs - a.runs);
+
+    const byRole = [...roleBuckets.entries()]
+      .map(([roleId, bucket]) => ({
+        roleId,
+        runs: bucket.runs,
+        succeeded: bucket.succeeded,
+        failed: bucket.failed,
+        cancelled: bucket.cancelled,
+        durationMs: bucket.durationMs,
+      }))
+      .sort((a, b) => b.runs - a.runs);
+
+    return {
+      generatedAt: new Date().toISOString(),
+      window: { since: filter.since ?? null, until: filter.until ?? null },
+      tasks: taskTotals,
+      runs: { ...runsTotals, successRate: runsTotals.executed > 0 ? runsTotals.succeeded / runsTotals.executed : null },
+      rework: { retries, rejections, reworkRate: runsTotals.executed > 0 ? (retries + rejections) / runsTotals.executed : null },
+      usage: {
+        // Null, not zero: nothing reported usage in this window.
+        reportingRuns,
+        inputTokens: reportingRuns > 0 ? inputTokens : null,
+        outputTokens: reportingRuns > 0 ? outputTokens : null,
+        costUsd: reportingRuns > 0 ? costUsd : null,
+      },
+      timing: {
+        totalDurationMs: durationMs,
+        averageDurationMs: runsTotals.executed > 0 ? Math.round(durationMs / runsTotals.executed) : null,
+      },
+      byRuntime,
+      byRole,
+    };
+  }
+
+  /** Derive a serial pipeline from the task's Team: roster order, topological over handoffs. */
+  async planTeamPipeline(taskId: string): Promise<TeamPipelinePlan | null> {
+    const task = this.getTask(taskId);
+    if (!task) return null;
+    if (!task.teamId) throw new Error(`Task ${taskId} is not assigned to a Team.`);
+    const team = await this.teams.getTeam(task.teamId);
+    if (!team) throw new Error(`Team ${task.teamId} was not found.`);
+    if (!team.enabled) throw new Error(`Team ${team.id} is disabled.`);
+
+    const warnings: string[] = [];
+    const steps: TaskPipelineStep[] = [];
+    for (const roleId of orderTeamRoles(team.roleIds, team.handoffs)) {
+      const role = await this.roles.getRole(roleId);
+      if (!role) {
+        warnings.push(`Role ${roleId} was not found and was left out of the plan.`);
+        continue;
+      }
+      if (!role.enabled) warnings.push(`Role ${roleId} is disabled.`);
+      steps.push({
+        id: roleId,
+        name: role.name,
+        roleId,
+        ...(role.description ? { prompt: role.description } : {}),
+      });
+    }
+    if (steps.length === 0) throw new Error(`Team ${team.id} produced an empty plan.`);
+    return { taskId, teamId: team.id, order: steps.map(step => step.id), steps, warnings };
+  }
+
+  /** Write a team plan onto the task as its serial pipeline. Applying it is the human gate. */
+  async applyTeamPipeline(taskId: string): Promise<TaskPipeline | null> {
+    const task = this.getTask(taskId);
+    if (!task) return null;
+    if (task.status !== 'queued') throw new Error(`Task ${taskId} is ${task.status}; a team plan can only be applied to a queued task.`);
+    if (task.pipeline && task.pipeline.status !== 'idle') throw new Error(`Task ${taskId} pipeline is ${task.pipeline.status}; a team plan cannot replace it.`);
+    const plan = await this.planTeamPipeline(taskId);
+    if (!plan) return null;
+    const normalized = await this.normalizePipeline({
+      steps: plan.steps.map(step => ({
+        id: step.id,
+        name: step.name,
+        roleId: step.roleId,
+        ...(step.prompt ? { prompt: step.prompt } : {}),
+      })),
+    });
+    if (!normalized) throw new Error('The team plan produced no steps.');
+    await this.saveTaskPipeline(taskId, normalized);
+    await this.recordAudit({
+      type: 'pipeline.planned',
+      taskId,
+      teamId: plan.teamId,
+      data: { teamId: plan.teamId, steps: normalized.steps.length, order: plan.order, warnings: plan.warnings.length },
+    });
+    return this.getTask(taskId)?.pipeline ?? normalized;
+  }
+
+  /** Summarize what the pipeline actually did, without a model: per-step outcome and blockers. */
+  coordinatorSummary(taskId: string): CoordinatorSummary | null {
+    const task = this.getTask(taskId);
+    if (!task) return null;
+    const pipeline = task.pipeline;
+    const runs = this.listRuns(taskId);
+    const handoffs = this.listHandoffs(taskId);
+    const steps: CoordinatorStepSummary[] = (pipeline?.steps ?? []).map(step => {
+      const result = pipeline?.results.find(candidate => candidate.stepId === step.id);
+      const run = result?.runId ? runs.find(candidate => candidate.id === result.runId) : undefined;
+      return {
+        stepId: step.id,
+        name: step.name,
+        roleId: step.roleId ?? null,
+        status: result?.status ?? 'pending',
+        commitSha: result?.commitSha ?? null,
+        changedFiles: run?.artifacts.changedFiles.length ?? 0,
+      };
+    });
+    const blockers = steps
+      .filter(step => step.status === 'failed' || step.status === 'awaiting_approval')
+      .map(step => ({ stepId: step.stepId, status: step.status }));
+    return {
+      taskId,
+      teamId: task.teamId,
+      pipelineStatus: pipeline?.status ?? 'none',
+      steps,
+      completed: steps.filter(step => step.status === 'completed').length,
+      failed: steps.filter(step => step.status === 'failed').length,
+      awaiting: steps.filter(step => step.status === 'awaiting_approval').length,
+      handoffs: handoffs.length,
+      blockers,
+    };
+  }
+
+  /**
+   * Run every role of the task's Team as an independent lane: one detached worktree per role,
+   * bounded concurrency, no automatic merge. Lanes end in `review`; the caller accepts what it
+   * wants, and file-level overlaps are reported rather than resolved.
+   */
+  async executeParallelTeam(
+    taskId: string,
+    options: { runner?: CodexProcessRunner; maxConcurrency?: number } = {},
+  ): Promise<ParallelTeamResult> {
+    const task = this.getTask(taskId);
+    if (!task) throw new Error(`Task ${taskId} was not found.`);
+    if (!task.teamId) throw new Error(`Task ${taskId} is not assigned to a Team.`);
+    const team = await this.teams.getTeam(task.teamId);
+    if (!team) throw new Error(`Team ${task.teamId} was not found.`);
+    if (!team.enabled) throw new Error(`Team ${team.id} is disabled.`);
+    if (!task.worktreePath) throw new Error(`Task ${taskId} has no worktree. Provision it before parallel execution.`);
+    if (task.status !== 'queued' && task.status !== 'review') {
+      throw new Error(`Task ${taskId} is ${task.status}; parallel execution starts from queued or review only.`);
+    }
+
+    const maxConcurrency = Math.min(Math.max(options.maxConcurrency ?? 2, 1), 8);
+    await this.updateTaskStatus(taskId, 'running');
+
+    type LaneState = ParallelLaneResult & { lanePath: string | null };
+    const lanes: LaneState[] = [];
+    const pending: LaneState[] = [];
+    const base = task.baseCommit || task.baseRef;
+
+    for (const roleId of team.roleIds) {
+      const role = await this.roles.getRole(roleId);
+      if (!role || !role.enabled) {
+        lanes.push({
+          roleId,
+          roleName: role?.name ?? roleId,
+          runId: null,
+          worktreePath: null,
+          lanePath: null,
+          status: 'failed',
+          changedFiles: [],
+          error: role ? `Role ${roleId} is disabled.` : `Role ${roleId} was not found.`,
+        });
+        continue;
+      }
+      const agentId = role.profileId ?? role.baseAgentId;
+      if (!agentId) {
+        lanes.push({
+          roleId,
+          roleName: role.name,
+          runId: null,
+          worktreePath: null,
+          lanePath: null,
+          status: 'failed',
+          changedFiles: [],
+          error: `Role ${roleId} has no resolvable agent.`,
+        });
+        continue;
+      }
+      const lanePath = join(this.dataDirectory, 'tasks', taskId, 'lanes', role.id);
+      try {
+        if (existsSync(lanePath)) await removeWorktree(task.repo, lanePath).catch(() => undefined);
+        await addWorktree(task.repo, base, lanePath);
+        const run = await this.createRun(taskId, agentId, role.id, `Parallel lane: ${role.name}`);
+        const lane: LaneState = {
+          roleId,
+          roleName: role.name,
+          runId: run.id,
+          worktreePath: lanePath,
+          lanePath,
+          status: 'queued',
+          changedFiles: [],
+          error: null,
+        };
+        lanes.push(lane);
+        pending.push(lane);
+      } catch (error) {
+        lanes.push({
+          roleId,
+          roleName: role.name,
+          runId: null,
+          worktreePath: null,
+          lanePath: null,
+          status: 'failed',
+          changedFiles: [],
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Bounded waves: each wave runs at most `maxConcurrency` lanes at the same time.
+    for (let index = 0; index < pending.length; index += maxConcurrency) {
+      await Promise.all(pending.slice(index, index + maxConcurrency).map(async lane => {
+        try {
+          const executed = await this.executeRun(lane.runId as string, options.runner, {
+            worktreePath: lane.lanePath as string,
+            taskStatus: 'none',
+          });
+          lane.status = executed.status;
+          lane.changedFiles = executed.artifacts.changedFiles;
+        } catch (error) {
+          lane.status = 'failed';
+          lane.error = error instanceof Error ? error.message : String(error);
+        }
+      }));
+    }
+
+    const fileOwners = new Map<string, Set<string>>();
+    for (const lane of lanes) {
+      for (const file of lane.changedFiles) {
+        const owners = fileOwners.get(file) ?? new Set<string>();
+        owners.add(lane.roleId);
+        fileOwners.set(file, owners);
+      }
+    }
+    const conflicts: ParallelConflict[] = [...fileOwners.entries()]
+      .filter(([, owners]) => owners.size > 1)
+      .map(([file, owners]) => ({ file, roleIds: [...owners] }));
+
+    const succeeded = lanes.some(lane => lane.status === 'review' || lane.status === 'done');
+    const taskStatus: TaskRunState = succeeded ? 'review' : 'failed';
+    await this.updateTaskStatus(taskId, taskStatus);
+    await this.recordAudit({
+      type: 'parallel.executed',
+      taskId,
+      teamId: team.id,
+      data: {
+        teamId: team.id,
+        maxConcurrency,
+        lanes: lanes.length,
+        succeeded: lanes.filter(lane => lane.status === 'review' || lane.status === 'done').length,
+        failed: lanes.filter(lane => lane.status === 'failed').length,
+        conflicts: conflicts.length,
+      },
+    });
+
+    return {
+      taskId,
+      teamId: team.id,
+      maxConcurrency,
+      lanes: lanes.map(lane => ({
+        roleId: lane.roleId,
+        roleName: lane.roleName,
+        runId: lane.runId,
+        worktreePath: lane.worktreePath,
+        status: lane.status,
+        changedFiles: lane.changedFiles,
+        error: lane.error,
+      })),
+      conflicts,
+      taskStatus,
+    };
+  }
+
+  /** Build the Role's dry-run execution plan. Returns null when the Role does not exist. */
+  async testRolePlan(roleId: string, input: { objective?: string } = {}): Promise<RoleTestPlan | null> {
+    const role = await this.roles.getRole(roleId);
+    if (!role) return null;
+    const resolution = await resolveRoleRuntime(role, { getProfile: id => this.profiles.getProfile(id) });
+    const warnings: string[] = [];
+    if (!role.enabled) warnings.push('The Role is disabled, so no task can use it.');
+    if (!resolution.executable) warnings.push(`The Role is not executable: ${resolution.reason ?? 'unknown reason'}.`);
+    const objective = input.objective?.trim() || `Test the role ${role.name} without changing anything.`;
+    let command: string[] | null = null;
+    let toolPolicy: ResolvedToolPolicy | null = null;
+    try {
+      const plan = buildAgentExecutionPlan(
+        {
+          id: `role-test:${role.id}`,
+          title: `Role test: ${role.name}`,
+          objective,
+          acceptanceCriteria: role.acceptanceCriteria.length > 0 ? role.acceptanceCriteria : ['Report what you would do.'],
+        },
+        '<role-test-workspace>',
+        resolution.baseAgentId ?? role.baseAgentId ?? '',
+        { execute: false, profile: resolution.profile, role, roleId: role.id },
+      );
+      command = plan.command;
+      toolPolicy = plan.toolPolicy ?? null;
+    } catch (error) {
+      warnings.push(`The plan could not be built: ${error instanceof Error ? error.message : String(error)}.`);
+    }
+    return {
+      roleId: role.id,
+      name: role.name,
+      enabled: role.enabled,
+      executable: resolution.executable,
+      baseAgentId: resolution.baseAgentId ?? null,
+      adapterStatus: resolution.adapterStatus,
+      profileId: resolution.profile?.id ?? null,
+      reason: resolution.reason ?? null,
+      objective,
+      command,
+      toolPolicy,
+      warnings,
+    };
+  }
+
   /** Bundle one task's evidence for export. Returns null when the task does not exist. */
-  exportTask(id: string): TaskEvidenceExport | null {
-    const task = this.getTask(id);
+  exportTask(id: string): TaskEvidenceExport | null {    const task = this.getTask(id);
     if (!task) return null;
     const runs = this.listRuns(id).map(run => ({ ...run, handoff: this.getHandoffForRun(run.id) }));
     const handoffs = this.listHandoffs(id);
@@ -1492,8 +2052,9 @@ export class KernelStore {
     task: TaskRecord,
     result: CodexExecutionResult,
     cancelled: boolean,
+    worktreePath: string = task.worktreePath,
   ): Promise<{ diffStat: string; artifacts: RunArtifacts }> {
-    const cwd = task.worktreePath;
+    const cwd = worktreePath;
     const trackedStat = await this.gitOutput(cwd, ['diff', '--stat', task.baseRef]);
     const trackedNames = await this.gitOutput(cwd, ['diff', '--name-only', task.baseRef]);
     // `git diff` ignores files the agent created but never staged, which is the common

@@ -76,6 +76,14 @@ const roleTemplateInstantiateSchema = z.object({
   profileId: z.string().trim().min(1).max(100).regex(/^[a-z0-9][a-z0-9-]*$/).optional(),
 });
 
+const roleTestSchema = z.object({
+  objective: z.string().trim().max(2_000).optional(),
+});
+
+const executeParallelSchema = z.object({
+  maxConcurrency: z.number().int().min(1).max(8).optional(),
+});
+
 const customAgentSchema = z.object({
   name: z.string().trim().min(1),
   launchCommand: z.string().trim().min(1),
@@ -104,7 +112,10 @@ function errorResponse(context: Context, error: unknown) {
     return context.json({ error: message }, 400);
   }
   if (message.includes('is disabled')) return context.json({ error: message }, 400);
-  if (message.includes('cannot be') || message.includes('no worktree') || message.includes('nothing is awaiting approval')) {
+  if (message.includes('is not assigned to a Team') || message.includes('produced an empty plan')) {
+    return context.json({ error: message }, 400);
+  }
+  if (message.includes('cannot be') || message.includes('no worktree') || message.includes('nothing is awaiting approval') || message.includes('can only be applied') || message.includes('parallel execution starts from')) {
     return context.json({ error: message }, 409);
   }
   return context.json({ error: message }, 500);
@@ -246,6 +257,13 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
   app.get('/api/roles/:roleId', async (c) => {
     const role = await store.roles.getRole(c.req.param('roleId'));
     return role ? c.json({ role }) : c.json({ error: 'Role not found.' }, 404);
+  });
+
+  app.post('/api/roles/:roleId/test', async (c) => {
+    const parsed = roleTestSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: 'Invalid role test input.', details: parsed.error.flatten() }, 400);
+    const plan = await store.testRolePlan(c.req.param('roleId'), parsed.data);
+    return plan ? c.json({ plan }) : c.json({ error: 'Role not found.' }, 404);
   });
 
   app.post('/api/roles', async (c) => {
@@ -402,6 +420,14 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     }
   });
 
+  app.get('/api/metrics', (c) => {
+    const since = c.req.query('since')?.trim() || undefined;
+    const until = c.req.query('until')?.trim() || undefined;
+    if (since && Number.isNaN(Date.parse(since))) return c.json({ error: 'The since timestamp is not a valid date.' }, 400);
+    if (until && Number.isNaN(Date.parse(until))) return c.json({ error: 'The until timestamp is not a valid date.' }, 400);
+    return c.json(store.getMetrics({ since, until }));
+  });
+
   app.get('/api/tasks/:id/pipeline', (c) => {
     const task = store.getTask(c.req.param('id'));
     if (!task) return c.json({ error: `Task ${c.req.param('id')} was not found.` }, 404);
@@ -413,6 +439,45 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     const task = store.getTask(taskId);
     if (!task) return c.json({ error: `Task ${taskId} was not found.` }, 404);
     return c.json({ handoffs: store.listHandoffs(taskId) });
+  });
+
+  app.post('/api/tasks/:id/coordinator/plan', async (c) => {
+    const taskId = c.req.param('id');
+    try {
+      const plan = await store.planTeamPipeline(taskId);
+      return plan ? c.json({ plan }) : c.json({ error: `Task ${taskId} was not found.` }, 404);
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  app.post('/api/tasks/:id/coordinator/apply', async (c) => {
+    const taskId = c.req.param('id');
+    try {
+      const pipeline = await store.applyTeamPipeline(taskId);
+      return pipeline ? c.json({ pipeline }) : c.json({ error: `Task ${taskId} was not found.` }, 404);
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  app.get('/api/tasks/:id/coordinator', (c) => {
+    const taskId = c.req.param('id');
+    const summary = store.coordinatorSummary(taskId);
+    return summary ? c.json({ summary }) : c.json({ error: `Task ${taskId} was not found.` }, 404);
+  });
+
+  app.post('/api/tasks/:id/parallel/execute', async (c) => {
+    const parsed = executeParallelSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: 'Invalid parallel input.', details: parsed.error.flatten() }, 400);
+    try {
+      return c.json(await store.executeParallelTeam(c.req.param('id'), {
+        runner: options.runner,
+        maxConcurrency: parsed.data.maxConcurrency,
+      }));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
   });
 
   app.get('/api/tasks/:id/export', (c) => {

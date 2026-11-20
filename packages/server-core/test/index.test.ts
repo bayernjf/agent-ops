@@ -621,6 +621,142 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('serves a role test plan over the API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const role = await store.roles.createRole({ name: 'Probe', baseAgentId: 'codex' });
+
+      const response = await app.request(`/api/roles/${role.id}/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ objective: 'Check the plan.' }),
+      });
+      expect(response.status).toBe(200);
+      const { plan } = (await response.json()) as { plan: { roleId: string; executable: boolean; objective: string; command: string[] } };
+      expect(plan).toMatchObject({ roleId: role.id, executable: true, objective: 'Check the plan.' });
+      expect(plan.command[0]).toBe('codex');
+
+      expect((await app.request('/api/roles/missing/test', { method: 'POST', body: '{}' })).status).toBe(404);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('serves kernel metrics with an optional window', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const response = await app.request('/api/metrics');
+      expect(response.status).toBe(200);
+      const metrics = (await response.json()) as {
+        runs: { successRate: number | null };
+        usage: { costUsd: number | null };
+        byRuntime: unknown[];
+      };
+      expect(metrics.runs.successRate).toBeNull();
+      expect(metrics.usage.costUsd).toBeNull();
+      expect(metrics.byRuntime).toEqual([]);
+
+      const windowed = await app.request('/api/metrics?since=2026-01-01T00:00:00.000Z&until=2026-01-02T00:00:00.000Z');
+      expect(windowed.status).toBe(200);
+      expect(((await windowed.json()) as { window: { since: string } }).window.since).toBe('2026-01-01T00:00:00.000Z');
+
+      expect((await app.request('/api/metrics?since=not-a-date')).status).toBe(400);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('plans, applies and summarizes a team pipeline over the API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const architect = await store.roles.createRole({ name: 'Architect', baseAgentId: 'codex' });
+      const implementer = await store.roles.createRole({ name: 'Implementer', baseAgentId: 'codex' });
+      const team = await store.teams.createTeam({
+        name: 'Delivery',
+        roleIds: [implementer.id, architect.id],
+        handoffs: [{ fromRoleId: architect.id, toRoleId: implementer.id }],
+      });
+      const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Coordinated', teamId: team.id });
+
+      const planned = await app.request(`/api/tasks/${task.id}/coordinator/plan`, { method: 'POST' });
+      expect(planned.status).toBe(200);
+      const { plan } = (await planned.json()) as { plan: { order: string[]; steps: unknown[] } };
+      expect(plan.order).toEqual([architect.id, implementer.id]);
+      expect(plan.steps).toHaveLength(2);
+
+      const applied = await app.request(`/api/tasks/${task.id}/coordinator/apply`, { method: 'POST' });
+      expect(applied.status).toBe(200);
+      expect(((await applied.json()) as { pipeline: { status: string; steps: unknown[] } }).pipeline).toMatchObject({ status: 'idle' });
+
+      const summary = await app.request(`/api/tasks/${task.id}/coordinator`);
+      expect(summary.status).toBe(200);
+      expect(((await summary.json()) as { summary: object }).summary).toMatchObject({ pipelineStatus: 'idle', completed: 0 });
+
+      const teamless = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Teamless' });
+      expect((await app.request(`/api/tasks/${teamless.id}/coordinator/plan`, { method: 'POST' })).status).toBe(400);
+      expect((await app.request('/api/tasks/missing/coordinator')).status).toBe(404);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('executes parallel lanes over the API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        await writeFile(join(options.cwd, 'lane.md'), 'lane\n', 'utf8');
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'ok',
+          startedAt: new Date(Date.now() - 5).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+      const app = createKernelApp(store, { runner });
+      const left = await store.roles.createRole({ name: 'Left', baseAgentId: 'codex' });
+      const right = await store.roles.createRole({ name: 'Right', baseAgentId: 'codex' });
+      const team = await store.teams.createTeam({ name: 'Parallel', roleIds: [left.id, right.id] });
+      const task = await store.createTask({ repo, baseRef: 'main', title: 'Parallel', teamId: team.id });
+      await store.provisionTask(task.id);
+
+      const response = await app.request(`/api/tasks/${task.id}/parallel/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ maxConcurrency: 2 }),
+      });
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        lanes: Array<{ roleId: string; status: string }>;
+        conflicts: Array<{ file: string; roleIds: string[] }>;
+        taskStatus: string;
+        maxConcurrency: number;
+      };
+      expect(body).toMatchObject({ taskStatus: 'review', maxConcurrency: 2 });
+      expect(body.lanes.map(lane => lane.roleId)).toEqual([left.id, right.id]);
+      expect(body.lanes.every(lane => lane.status === 'review')).toBe(true);
+      expect(body.conflicts).toEqual([{ file: 'lane.md', roleIds: [left.id, right.id] }]);
+
+      const invalid = await app.request(`/api/tasks/${task.id}/parallel/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ maxConcurrency: 0 }),
+      });
+      expect(invalid.status).toBe(400);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a role whose runtime is not verified or whose profile is missing', async () => {
     const { store, directory } = await openStore();
     try {

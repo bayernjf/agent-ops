@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, X } from 'lucide-react';
+import { Check, FlaskConical, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, X } from 'lucide-react';
 import { useI18n, type KeyPath } from '../i18n/i18n';
 import { apiFetch } from '../lib/api';
-import type { AgentRole, RoleApprovalMode, RoleTemplate } from '../types';
+import type { AgentRole, RoleApprovalMode, RoleTemplate, RoleTestPlan } from '../types';
 
 type RoleForm = {
   name: string;
@@ -62,6 +62,8 @@ export function RolesView() {
   const [form, setForm] = useState<RoleForm>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [busyRoleId, setBusyRoleId] = useState<string | null>(null);
+  const [testPlan, setTestPlan] = useState<RoleTestPlan | null>(null);
+  const [testingRoleId, setTestingRoleId] = useState<string | null>(null);
 
   const loadRoles = useCallback(async () => {
     setLoading(true);
@@ -161,6 +163,25 @@ export function RolesView() {
   };
 
   const update = <K extends keyof RoleForm>(key: K, value: RoleForm[K]) => setForm(prev => ({ ...prev, [key]: value }));
+
+  const testRole = async (role: AgentRole) => {
+    setTestingRoleId(role.id);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/roles/${encodeURIComponent(role.id)}/test`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const body = (await response.json().catch(() => null)) as { plan?: RoleTestPlan; error?: string } | null;
+      if (!response.ok) throw new Error(body?.error ?? t('roles.testFailed'));
+      setTestPlan(body?.plan ?? null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('roles.testFailed'));
+    } finally {
+      setTestingRoleId(null);
+    }
+  };
 
   const applyTemplate = (template: RoleTemplate) => {
     setForm({
@@ -266,6 +287,7 @@ export function RolesView() {
                   {role.enabled ? t('roles.on') : t('roles.off')}
                 </button>
                 <span className="role-actions">
+                  <button className="icon-button" type="button" onClick={() => void testRole(role)} disabled={testingRoleId === role.id} aria-label={t('roles.test')} title={t('roles.test')}><FlaskConical size={15} /></button>
                   <button className="icon-button" type="button" onClick={() => startEdit(role)} aria-label={t('common.edit')} title={t('common.edit')}><Pencil size={15} /></button>
                   <button className="icon-button" type="button" onClick={() => void remove(role)} disabled={busyRoleId === role.id} aria-label={t('common.delete')} title={t('common.delete')}><Trash2 size={15} /></button>
                 </span>
@@ -273,6 +295,40 @@ export function RolesView() {
             ))
           )}
         </div>
+
+        {testPlan && (
+          <div className="role-test">
+            <div className="section-heading">
+              <div>
+                <h3>{t('roles.testTitle')}: {testPlan.name}</h3>
+                <p>{testPlan.objective}</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setTestPlan(null)} aria-label={t('common.close')} title={t('common.close')}><X size={16} /></button>
+            </div>
+            <div className="role-test-meta">
+              <span className={testPlan.executable ? 'role-test-ok' : 'role-test-bad'}>
+                {testPlan.executable ? t('roles.testExecutable') : t('roles.testNotExecutable')}
+              </span>
+              <span>{t('roles.baseAgent')}: {testPlan.baseAgentId ?? '—'} ({testPlan.adapterStatus})</span>
+              {testPlan.profileId && <span>{t('roles.profile')}: {testPlan.profileId}</span>}
+              {testPlan.reason && <span>{testPlan.reason}</span>}
+            </div>
+            {testPlan.command && (
+              <div className="role-test-command">
+                <span>{t('roles.testCommand')}</span>
+                <code>{testPlan.command.join(' ')}</code>
+              </div>
+            )}
+            {testPlan.warnings.length > 0 && (
+              <div className="role-test-warnings">
+                <span>{t('roles.testWarnings')}</span>
+                <ul>
+                  {testPlan.warnings.map(warning => <li key={warning}>{warning}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </section>
   );

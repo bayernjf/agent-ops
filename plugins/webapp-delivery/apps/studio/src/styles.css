@@ -2091,6 +2091,60 @@ select option {
 .role-template strong { font-size: 13px; }
 .role-template small { color: var(--text-3); font-size: 11px; line-height: 1.35; }
 
+.role-test {
+  margin-top: 18px;
+  padding: 16px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.role-test .section-heading { margin-bottom: 10px; }
+.role-test h3 { margin: 0; color: var(--text-1); font-size: 14px; }
+
+.role-test-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.role-test-ok { color: var(--status-ok); font-weight: 700; }
+.role-test-bad { color: var(--accent-3); font-weight: 700; }
+
+.role-test-command { margin-top: 12px; }
+
+.role-test-command span,
+.role-test-warnings span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.role-test-command code {
+  display: block;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.role-test-warnings { margin-top: 12px; }
+
+.role-test-warnings ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
 /* Kernel team registry: roster, handoff edges and the team's task queue. */
 .teams-view .error { margin: 16px 0 0; }
 
@@ -2283,6 +2337,84 @@ select option {
   gap: 8px;
   font-size: 13px;
 }
+
+.team-plan { margin-top: 16px; }
+
+.team-plan p { margin: 0 0 10px; color: var(--text-3); font-size: 12px; }
+
+.team-plan-warnings {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+/* Kernel metrics: KPI cards plus per-runtime and per-role tables. */
+.metrics-view .error { margin: 16px 0 0; }
+
+.metrics-actions { display: flex; gap: 8px; align-items: center; }
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.metric-card {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.metric-card span {
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.metric-card strong { color: var(--text-1); font-size: 22px; line-height: 1.1; }
+.metric-card small { color: var(--text-3); font-size: 12px; }
+
+.metric-tables { display: grid; gap: 24px; margin-top: 26px; }
+
+.metric-table-block h3 { margin: 0 0 10px; color: var(--text-1); font-size: 14px; }
+
+.metric-table { border-top: 1px solid var(--line); }
+
+.metric-head,
+.metric-row {
+  display: grid;
+  grid-template-columns: 1.4fr 0.7fr 0.8fr 0.8fr 0.8fr 0.8fr;
+  gap: 12px;
+  align-items: center;
+}
+
+.metric-head-role,
+.metric-row-role { grid-template-columns: 1.4fr 0.7fr 0.8fr 0.8fr 0.8fr; }
+
+.metric-head {
+  padding: 10px 12px;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--line);
+}
+
+.metric-row {
+  padding: 11px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  color: var(--text-1);
+  font-size: 13px;
+}
+
+.metric-row:hover { background: var(--surface-muted); }
 
 /* Kernel task create form: the human entry point into the task control plane. */
 .tasks-actions { display: flex; gap: 8px; align-items: center; }

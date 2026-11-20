@@ -292,4 +292,52 @@
 - [x] Studio：新建角色表单顶部展示模板卡片，点击即填充名称/描述/系统提示/验收标准/工具策略/审批模式；中英文文案同步。
 - [x] 测试：模板 id 唯一且通过 `agentRoleCreateSchema`、只读模板 blockedTools 覆盖 Write/Edit/Bash；server 列表 5 个、按模板创建出 strict 角色、未知模板 404、candidate 覆盖 400；MCP 列表与按模板创建。全仓 typecheck 0，53 文件 / 678 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
 - [x] 本轮提交：`d004042 feat(agent-runtime): add built-in role templates`、`463c596 feat(server-core): serve role templates`、`d3b4597 feat(cli): add role template tools`、`ae87a4e feat(studio): start roles from a template`。
-- [ ] 未做：模板只能在代码里内置，UI 不能编辑或新增模板；模板不预校验 baseAgent 是否仍可用（创建时由 binding 兜底）；F1-07 Role 测试运行未做。
+- [ ] 未做：模板只能在代码里内置，UI 不能编辑或新增模板；模板不预校验 baseAgent 是否仍可用（创建时由 binding 兜底）。（F1-07 见下节。）
+
+## F1-07 Role 测试运行 — 已完成（2026-11-20）
+
+- [x] `KernelStore.testRolePlan(roleId, { objective? })`：解析 Role → Runtime/Profile，构造 dry-run 执行计划（不建 Task、不起进程），返回 executable、baseAgentId、adapterStatus、profileId、reason、command、toolPolicy 与 warnings。
+- [x] 计划使用固定工作区占位 `<role-test-workspace>`，避免预览命令被误当成可直接执行的真实路径。
+- [x] warnings 覆盖：Role 停用、Role 不可执行（附 reason）、计划构建失败；candidate runtime 仍生成命令预览，但不标为可执行。
+- [x] server：`POST /api/roles/:roleId/test`（可选 `objective`），未知 Role 404。
+- [x] MCP：新增 `agent_ops_test_role`。
+- [x] Studio：Roles 表格每行新增试跑按钮，结果面板展示可执行判定、Runtime/Profile、命令预览与警告。
+- [x] 测试：codex 角色计划 `executable=true`、命令首项 `codex`、含 Role prompt 与只读策略；自定义 objective 进命令；missing role 返回 null；candidate 角色 `executable=false` 且 warning 含 “not executable” 但仍给命令；停用角色有 warning；server 200/404；MCP 返回 plan。全仓 typecheck 0，54 文件 / 682 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
+- [x] 本轮提交：`9f89b91 feat(storage-core): build role test plans`、`d5234fd feat(server-core): serve role test plans`、`ad20b98 feat(cli): add the role test tool`、`ee2c1dd feat(studio): preview a role test plan`。
+- [ ] 未做：dry-run 不会真的起模型进程验证输出质量（真实小任务验证仍受 CLI 登录阻塞）；试跑不写审计事件；Studio 试跑面板未在真实浏览器逐项点击。
+
+## F8-04 指标聚合 — 已完成（2026-11-20）
+
+- [x] `KernelStore.getMetrics({ since?, until? })`：任务与运行的成功/失败/取消/在途、成功率、返工（`pipeline.retried` + `run.rejected` 除以已执行运行）、用量合计、耗时（总/平均），以及按 runtime 与按 role 的分解。
+- [x] 口径：`executed = review/done/failed/cancelled`；成功率为 `succeeded/executed`，返工率为 `(retries + rejections)/executed`，窗口内无已执行运行时两者为 `null`；用量在无人上报时保持 `null`。
+- [x] server：`GET /api/metrics?since=&until=`，非法时间戳返回 400。
+- [x] MCP：新增 `agent_ops_get_metrics`。
+- [x] Studio：新增 Metrics 页面（KPI 卡片 + 按运行时/按角色表格），侧边栏入口 `nav.metrics`，中英文文案齐。
+- [x] 测试：空库全零且比率为 null；两步 Pipeline + 失败 Run + 驳回 Run 得到 tasks 3/1/1/1、runs 4/3/2/1/1、成功率 2/3、返工率 1/3、usage null、平均耗时 > 0、codex 桶 4 条、role 桶 builder/unassigned；未来窗口归零；server 200/400；MCP 空库比率为 null。全仓 typecheck 0，55 文件 / 687 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
+- [x] 本轮提交：`169b837 feat(storage-core): aggregate kernel metrics`、`7362bbc feat(server-core): serve kernel metrics`、`5481167 feat(cli): add the metrics tool`、`37f7611 feat(studio): add the metrics view`。
+- [ ] 未做：指标按创建时间窗口过滤，不按完成时间；返工率是全局启发式，不是逐任务口径；不接外部 observability（Prometheus/OTel）；Studio 指标页未在真实浏览器点击。
+
+## F5-06 Coordinator — 已完成（串行版，2026-11-20）
+
+- [x] `orderTeamRoles(roleIds, handoffs)`：按交接边做确定性拓扑排序，同层以花名册顺序兜底；环由 Team schema 拦截，残留节点按花名册顺序追加。
+- [x] `KernelStore.planTeamPipeline(taskId)`：用任务的 Team 推导串行 pipeline（每步 = 一个 Role，prompt 取角色 description），返回 order / steps / warnings；任务没有 Team 时报错。
+- [x] `KernelStore.applyTeamPipeline(taskId)`：只在 `queued` 且 pipeline 为 `idle` 时写入，写入这个动作就是人工审批门；写后记 `pipeline.planned` 审计事件。
+- [x] `KernelStore.coordinatorSummary(taskId)`：确定性汇总每步状态、commit、变更文件数，以及完成/失败/等待数、交接数和卡点（不调用模型）。
+- [x] server：`POST /api/tasks/:id/coordinator/plan`、`POST /api/tasks/:id/coordinator/apply`、`GET /api/tasks/:id/coordinator`；无 Team 400、非 queued 409、未知任务 404。
+- [x] MCP：`agent_ops_plan_team_pipeline`、`agent_ops_apply_team_plan`、`agent_ops_coordinator_summary`。
+- [x] Studio：TeamsView 任务队列里 `queued` 任务显示“生成计划”，预览步骤后点“应用计划”才落库。
+- [x] 测试：拓扑排序（链/并列/菱形/越界边）；协调器 plan→apply→execute→summary（3 步全部 completed、2 条交接、卡点为空、重复 apply 被拒）；无 Team 报错；server 200/400/404；MCP 端到端 plan/apply。全仓 typecheck 0，57 文件 / 695 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
+- [x] 本轮提交：`4190eb9 feat(agent-runtime): order team roles by handoff`、`cdfe346 feat(storage-core): add a team coordinator`、`dea6f98 feat(server-core): serve coordinator plans`、`c0b5e8e feat(cli): add coordinator tools`、`b124e4a feat(studio): plan a pipeline from a team`。
+- [ ] 未做：这是**串行**协调器；并行版见下节（F5-07）。“拆任务”只按花名册拆到角色，不按内容再拆子任务；汇总不调模型、不做语义总结；Studio 未在真实浏览器点击。
+
+## F5-07 并行团队 — 已完成（内核版，2026-11-20）
+
+- [x] `KernelStore.executeParallelTeam(taskId, { runner?, maxConcurrency? })`：为团队每个角色创建独立 lane，worktree 从任务 base commit 拉开（`tasks/<taskId>/lanes/<roleId>`），按 `maxConcurrency`（默认 2，范围 1–8）分波执行。
+- [x] `executeRun` 增加可选 `worktreePath` 与 `taskStatus: 'none'`：lane 在各自 worktree 里执行、证据从该 worktree 采集，且不会让每个 lane 改写任务状态；任务状态在全部 lane 结束后统一落一次（有任一成功 → `review`，全部失败 → `failed`）。
+- [x] 冲突可见而非自动合并：按各 lane 的 `changedFiles` 求交集，返回 `{ file, roleIds }` 列表；不 merge、不解决。
+- [x] 单个 lane 失败不阻塞其它 lane；角色停用/缺失/无可解析 agent 时该 lane 直接记失败原因。
+- [x] 审计：新增 `parallel.executed` 事件（并发上限、lane 数、成功/失败、冲突数）。
+- [x] server：`POST /api/tasks/:id/parallel/execute`（`maxConcurrency` 1–8，越界 400）；MCP：新增 `agent_ops_execute_parallel`。
+- [x] 测试：3 角色团队按并发 2 跑 3 条 lane，实测最大并发 = 2、三个独立 worktree、每 lane 自有文件 + 两条 lane 共享的 `SHARED.md` 被列为冲突、任务落 `review`、审计含 `parallel.executed`；一个 lane 失败时另一个仍成功且任务仍 `review`；未 provision 的任务报 `no worktree`；server 200/400。全仓 typecheck 0，58 文件 / 698 tests 绿。
+- [x] 本轮提交：`2411c85 feat(storage-core): add parallel team lanes`、`a63ef21 feat(server-core): expose parallel lanes`、`64033fb feat(cli): add the parallel lane tool`。
+- [ ] 未做：**没有自动合并或合成**——lane 产出的 commit 需要人工逐个接受或放弃；现有 `acceptRun` 会把任务直接置 `done`，并行任务的接受语义尚未定义；`releaseTask` 不会清理 lane worktree；Studio 没有并行入口；真实模型的并行执行未跑（CLI 登录仍阻塞）。

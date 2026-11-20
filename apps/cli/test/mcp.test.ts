@@ -121,7 +121,9 @@ describe('agent-ops MCP bridge', () => {
     const names = tools.map(tool => tool.name).sort();
     expect(names).toEqual([
       'agent_ops_accept_run',
+      'agent_ops_apply_team_plan',
       'agent_ops_cancel_run',
+      'agent_ops_coordinator_summary',
       'agent_ops_create_feature_task',
       'agent_ops_create_project',
       'agent_ops_create_role',
@@ -133,6 +135,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_delete_team',
       'agent_ops_doctor',
       'agent_ops_dry_run',
+      'agent_ops_execute_parallel',
       'agent_ops_execute_pipeline',
       'agent_ops_execute_run',
       'agent_ops_export_task',
@@ -143,6 +146,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_get_credentials_meta',
       'agent_ops_get_delivery_report',
       'agent_ops_get_feature_task',
+      'agent_ops_get_metrics',
       'agent_ops_get_project',
       'agent_ops_get_quality_gate',
       'agent_ops_get_release',
@@ -160,6 +164,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_list_runs',
       'agent_ops_list_tasks',
       'agent_ops_list_teams',
+      'agent_ops_plan_team_pipeline',
       'agent_ops_provision_task',
       'agent_ops_reject_run',
       'agent_ops_release_task',
@@ -167,6 +172,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_retry_pipeline',
       'agent_ops_revise_blueprint',
       'agent_ops_submit_acceptance',
+      'agent_ops_test_role',
       'agent_ops_update_role',
       'agent_ops_update_team',
     ]);
@@ -275,6 +281,67 @@ describe('agent-ops MCP bridge', () => {
     const deleted = await client.callTool({ name: 'agent_ops_delete_team', arguments: { teamId: team.id } });
     expect(deleted.isError).toBeFalsy();
     expect(JSON.parse(textOf(deleted))).toMatchObject({ deleted: true });
+  });
+
+  it('plans and applies a team pipeline through the daemon', async () => {
+    const client = await startBridge();
+    const createRole = async (name: string) => {
+      const res = await client.callTool({ name: 'agent_ops_create_role', arguments: { name, baseAgentId: 'codex' } });
+      expect(res.isError).toBeFalsy();
+      return (JSON.parse(textOf(res)) as { role: { id: string } }).role;
+    };
+    const architect = await createRole('Coordinator architect');
+    const implementer = await createRole('Coordinator implementer');
+
+    const teamRes = await client.callTool({
+      name: 'agent_ops_create_team',
+      arguments: {
+        name: 'MCP coordinator',
+        roleIds: [implementer.id, architect.id],
+        handoffs: [{ fromRoleId: architect.id, toRoleId: implementer.id }],
+      },
+    });
+    expect(teamRes.isError).toBeFalsy();
+    const { team } = JSON.parse(textOf(teamRes)) as { team: { id: string } };
+
+    const taskRes = await client.callTool({
+      name: 'agent_ops_create_task',
+      arguments: { repo: '/r', baseRef: 'main', title: 'Coordinated', teamId: team.id },
+    });
+    expect(taskRes.isError).toBeFalsy();
+    const { id } = JSON.parse(textOf(taskRes)) as { id: string };
+
+    const planRes = await client.callTool({ name: 'agent_ops_plan_team_pipeline', arguments: { taskId: id } });
+    expect(planRes.isError).toBeFalsy();
+    const { plan } = JSON.parse(textOf(planRes)) as { plan: { order: string[] } };
+    expect(plan.order).toEqual([architect.id, implementer.id]);
+
+    const applyRes = await client.callTool({ name: 'agent_ops_apply_team_plan', arguments: { taskId: id } });
+    expect(applyRes.isError).toBeFalsy();
+    const { pipeline } = JSON.parse(textOf(applyRes)) as { pipeline: { steps: unknown[] } };
+    expect(pipeline.steps).toHaveLength(2);
+  });
+
+  it('reads kernel metrics through the daemon', async () => {
+    const client = await startBridge();
+    const metrics = await client.callTool({ name: 'agent_ops_get_metrics', arguments: {} });
+    expect(metrics.isError).toBeFalsy();
+    const body = JSON.parse(textOf(metrics)) as { runs: { successRate: number | null }; usage: { costUsd: number | null } };
+    expect(body.runs.successRate).toBeNull();
+    expect(body.usage.costUsd).toBeNull();
+  });
+
+  it('builds a role test plan through the daemon', async () => {
+    const client = await startBridge();
+    const created = await client.callTool({ name: 'agent_ops_create_role', arguments: { name: 'Plan probe', baseAgentId: 'codex' } });
+    expect(created.isError).toBeFalsy();
+    const { role } = JSON.parse(textOf(created)) as { role: { id: string } };
+
+    const tested = await client.callTool({ name: 'agent_ops_test_role', arguments: { roleId: role.id } });
+    expect(tested.isError).toBeFalsy();
+    const { plan } = JSON.parse(textOf(tested)) as { plan: { executable: boolean; command: string[] } };
+    expect(plan.executable).toBe(true);
+    expect(plan.command[0]).toBe('codex');
   });
 
   it('replays audit events through the daemon', async () => {

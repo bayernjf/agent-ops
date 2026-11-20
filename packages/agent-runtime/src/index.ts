@@ -47,6 +47,7 @@ export {
   agentTeamCreateSchema,
   agentTeamUpdateSchema,
   validateTeamGraph,
+  orderTeamRoles,
   slugifyTeamName,
   ensureUniqueTeamId,
 } from './teams.js';

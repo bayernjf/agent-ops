@@ -165,3 +165,40 @@ export function slugifyTeamName(name: string): string {
 export function ensureUniqueTeamId(baseId: string, existingIds: string[]): string {
   return ensureUniqueRoleId(baseId, existingIds);
 }
+
+/**
+ * Execution order for a team's roster: topological over the handoff edges, with roster order as
+ * the tie-break so the same team always produces the same plan. Roles left over (a cycle, which the
+ * schema forbids, or a graph the caller built by hand) are appended in roster order.
+ */
+export function orderTeamRoles(roleIds: string[], handoffs: TeamHandoff[]): string[] {
+  const rosterIndex = new Map(roleIds.map((id, index) => [id, index]));
+  const incoming = new Map<string, number>(roleIds.map(id => [id, 0]));
+  const outgoing = new Map<string, string[]>();
+
+  for (const handoff of handoffs) {
+    if (!rosterIndex.has(handoff.fromRoleId) || !rosterIndex.has(handoff.toRoleId)) continue;
+    const targets = outgoing.get(handoff.fromRoleId) ?? [];
+    if (!targets.includes(handoff.toRoleId)) targets.push(handoff.toRoleId);
+    outgoing.set(handoff.fromRoleId, targets);
+    incoming.set(handoff.toRoleId, (incoming.get(handoff.toRoleId) ?? 0) + 1);
+  }
+
+  const ready = roleIds.filter(id => (incoming.get(id) ?? 0) === 0);
+  const order: string[] = [];
+  while (ready.length > 0) {
+    ready.sort((a, b) => (rosterIndex.get(a) ?? 0) - (rosterIndex.get(b) ?? 0));
+    const next = ready.shift() as string;
+    order.push(next);
+    for (const target of outgoing.get(next) ?? []) {
+      const remaining = (incoming.get(target) ?? 1) - 1;
+      incoming.set(target, remaining);
+      if (remaining === 0) ready.push(target);
+    }
+  }
+
+  for (const id of roleIds) {
+    if (!order.includes(id)) order.push(id);
+  }
+  return order;
+}
