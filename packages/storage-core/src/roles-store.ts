@@ -17,6 +17,7 @@ export type CreateRoleInput = {
   systemPrompt?: string;
   acceptanceCriteria?: string[];
   runtimePolicy?: AgentRole['runtimePolicy'];
+  budget?: AgentRole['budget'];
   enabled?: boolean;
 };
 
@@ -28,6 +29,7 @@ export type UpdateRoleInput = {
   systemPrompt?: string;
   acceptanceCriteria?: string[];
   runtimePolicy?: AgentRole['runtimePolicy'];
+  budget?: AgentRole['budget'];
   enabled?: boolean;
 };
 
@@ -84,6 +86,7 @@ export class RoleStore {
       systemPrompt: parsed.systemPrompt,
       acceptanceCriteria: parsed.acceptanceCriteria,
       runtimePolicy: parsed.runtimePolicy,
+      budget: parsed.budget,
       enabled: parsed.enabled,
       createdAt: now,
       updatedAt: now,

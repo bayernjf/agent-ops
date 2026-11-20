@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ensureUniqueRoleId, slugifyRoleName } from './roles.js';
+import { costBudgetSchema, ensureUniqueRoleId, slugifyRoleName, type CostBudget } from './roles.js';
 
 /**
  * A Team is nothing but a roster plus the handoff edges between its Roles. It deliberately carries
@@ -19,6 +19,8 @@ export type AgentTeam = {
   description?: string;
   roleIds: string[];
   handoffs: TeamHandoff[];
+  /** Optional per-task spending ceiling for the whole team. */
+  budget?: CostBudget;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
@@ -134,6 +136,7 @@ const teamBaseShape = {
   description: z.string().max(500).optional(),
   roleIds: z.array(roleIdSchema).max(50),
   handoffs: z.array(teamHandoffSchema).max(200).default([]),
+  budget: costBudgetSchema.optional(),
   enabled: z.boolean().default(true),
 };
 
@@ -154,6 +157,7 @@ export const agentTeamUpdateSchema = z
     description: z.string().max(500).optional(),
     roleIds: z.array(roleIdSchema).max(50).optional(),
     handoffs: z.array(teamHandoffSchema).max(200).optional(),
+    budget: costBudgetSchema.optional(),
     enabled: z.boolean().optional(),
   })
   .refine(value => Object.keys(value).length > 0, 'At least one field must change.');
