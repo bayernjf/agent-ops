@@ -9,6 +9,7 @@
 - webapp-delivery 的 7 个 package 与 1 个 app（`studio`）隔离在 `plugins/webapp-delivery/`，内核不反向依赖插件。
 - 全仓 `npm run typecheck` 通过，`npm test` 62 文件 / 730 tests 全绿。
 - **真实模型验收已完成（2026-11-20）**：CodeBuddy v2.185.0（registry 中的 `verified` adapter）通过内核 API 完成 1 条真实任务，随后在 Studio UI 里用“角色 + 一步 Pipeline + Run pipeline”跑通第二条（commit `ea4553f7d2`）。Claude Code / Codex 仍受 CC Switch `base_url` 阻塞，不影响 CodeBuddy 路径。
+- **真实 dogfood 已完成 3 条（2026-11-21）**：Studio 重跑策略、Studio 预算面板、CLI `export --summary`；接受率 3/3、检查通过 3/3、返工 1 次小修，详见 `handoff.md`。
 
 ## 内核能力
 

@@ -312,7 +312,7 @@ E0 基础闭环修复
 - 3–5 个 dogfood 完成，记录接受率/测试通过率/返工率。
 - 无 P0 数据丢失/权限违规。
 
-**状态（2026-11-20）**：上表第 1–4、6 项已完成并有测试；第 5 项（3–5 个 dogfood）仍 blocked 于真实模型登录，退出标准里的“5 角色团队完成真实仓库任务”因此尚未验收。
+**状态（2026-11-21）**：上表第 1–4、6 项已完成并有测试；第 5 项已用 CodeBuddy 完成 3 条真实 dogfood（接受率 3/3、检查通过 3/3、返工 1 次人工小修）；退出标准里的“5 角色团队完成真实仓库任务”仍未用真实模型验收。
 
 ### M3 并行与扩展（2026-12-25 → 2027-01-14）
 
@@ -609,3 +609,4 @@ npm --workspace @agent-ops/studio run build
 | 2026-11-20 | M2 功能面完成：Team/Handoff/TeamsView、串行 Coordinator、并行 lanes（有界并发、冲突报告、按 lane 接受）、审计/导出/指标、角色模板/试跑、工具审计、统一策略层、重跑 hygiene、成本预算、文档同步；725 tests 绿；真实模型验收与 dogfood 仍 blocked |
 | 2026-11-20 | 真实模型 Run（API 路径）完成：CodeBuddy v2.185.0 创建文件并 accept 成 commit；M1 的 UI 点击验收与 dogfood 待做 |
 | 2026-11-20 | 真实模型 Run（UI 路径）完成：Studio 建角色 + 一步 Pipeline 后点 Run pipeline，CodeBuddy 落 commit `ea4553f7d2`；同时修复 UI 不 provision / 不刷新 Run 列表两个缺陷 |
+| 2026-11-21 | 真实 dogfood 3 条完成（Studio 重跑策略 / Studio 预算面板 / CLI export --summary）：接受率 3/3、检查通过 3/3、返工 1 次小修；5 角色团队真实任务待跑 |

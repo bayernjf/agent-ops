@@ -8,7 +8,7 @@
 > 产品规划（非活跃待办，不计入上方待办）：多 Agent 角色与团队 v0.2/v0.3，PRD 见 `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md`，实施拆解见 `docs/prd/Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md`；PD-1～PD-9 已于 2026-11-19 拍板；后续方向备忘（Tier 0 能力包 / 现有 Harness / Personal Agent）见 PRD §12.1–12.2。
 
 - [x] **真实模型 UI E2E** — 已完成（2026-11-20）。UI 里新建 CodeBuddy 角色与一步 Pipeline 任务，点 `Run pipeline` 由真实 CodeBuddy 2.185.0 执行，任务 done、Run 可见（commit `ea4553f7d2`）。Claude Code / Codex 仍受 CC Switch `base_url` 阻塞，但不影响 CodeBuddy 路径；真实模型 API 路径与 UI 路径均已有证据。
-- [ ] **3–5 个本仓 dogfood** — 状态：open；下一步：收集 diff / 测试 / 失败率，验证是否能替代手工（真实模型入口已可用 CodeBuddy，无需等 Claude/Codex 登录）。
+- [x] **3–5 个本仓 dogfood** — 已完成 3 条（2026-11-21）：Studio 重跑策略、Studio 预算面板、CLI `export --summary`；接受率 3/3、检查通过率 3/3、返工 1 次人工小修。详见下方 “F10-01/F10-02 Dogfood” 章节。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；**M1 退出标准中的“真实模型 UI E2E”仍 blocked**，M2 的 3–5 个 dogfood 因此尚未开始。
@@ -450,3 +450,20 @@
   - UI 中可见：step “Implement / ui-codebuddy / Completed / ea4553f7d2”，Run 列表 “codebuddy Done UI_REAL.md | untracked”。
 - [x] UI 验收过程中发现并修复两个真实缺陷：① 新建任务表单不 provision worktree，`Run pipeline` 直接 409 “no worktree”；② 执行后不刷新已展开任务的 Run 列表（显示 “No runs yet”）。提交 `902d864 fix(studio): provision and refresh pipeline runs`。
 - [ ] 剩余：Claude Code / Codex 仍受 CC Switch `base_url` 阻塞；CodeBuddy 不上报 usage 与工具调用（记录为 null / unknown）；M1 的“4 步串行完整组合”此前由确定性 runner 验收。
+
+## F10-01/F10-02 Dogfood（3 个真实任务）— 已完成（2026-11-21）
+
+> 方法：在本仓为每个任务建一条一步 Pipeline（角色 `ui-codebuddy` → CodeBuddy 2.185.0）；执行后审阅 agent 的 commit，把 diff 应用到 `dev`，再用本仓自己的检查验收。Pipeline 步骤由系统自动 accept，人对最终 diff 负责。
+
+| # | 任务 | agent commit | 落入 dev | 文件 | 运行时长 | 验收 | 返工 |
+|---|---|---|---|---|---|---|---|
+| 1 | Studio 失败 Run 的 Keep/Fresh 重跑策略 | `dbb14d2` | `4784db0` | 3 | 199.9 s | Studio tsc + 257 tests + build 全过 | 0 |
+| 2 | 任务详情预算面板（role / team 两个 scope） | `ddd49a4` | `fc69c9e` | 5 | 291.7 s | 同上 | 0 |
+| 3 | `agent-ops export --summary` | `fef3658` | `27c47be` | 1 | 360.0 s | CLI typecheck + 实跑命令；审阅发现 `5m 60.0s` 取整缺陷 | 1 次人工小修（`bbeb927`） |
+
+- 接受率：**3/3**（三条全部应用进 `dev`）。
+- 检查通过率：**3/3**（改动应用后本仓检查全绿；检查由验收方执行，不是 agent 自证）。
+- 返工率：**1/3**（dogfood 3 的时长取整缺陷由人修复，未回退给 agent 重跑）。
+- CodeBuddy 不上报 usage，成本记为未上报；工具调用审计为 `unknown`。
+- 局限：任务都较小（1–5 文件、约 3–6 分钟）；固定使用 CodeBuddy；受限工具策略在 CodeBuddy 上无法执行（adapter `toolPolicy: unsupported`，受限角色会被直接拒绝）。
+- [ ] 未做：M2 退出标准还有一条“5 角色团队完成一个真实仓库任务（架构→实现→审查→测试→汇总）”，尚未用真实模型跑；现有 3 条 dogfood 不覆盖 5 角色串行。
