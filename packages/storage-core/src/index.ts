@@ -347,6 +347,31 @@ export type KernelAuditEvent = {
   at: string;
 };
 
+/**
+ * One task's evidence in a single document: the task and its pipeline, every run with its diff,
+ * output and exit code, the handoff receipts, the audit trail and usage totals. Totals stay null
+ * when no run reported usage, so a consumer can tell "not reported" from "zero".
+ */
+export type TaskEvidenceExport = {
+  version: 1;
+  exportedAt: string;
+  task: TaskRecord;
+  pipeline: TaskPipeline | null;
+  runs: Array<RunRecord & { handoff: RunHandoff | null }>;
+  handoffs: RunHandoff[];
+  audit: KernelAuditEvent[];
+  totals: {
+    runs: number;
+    acceptedCommits: number;
+    changedFiles: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    costUsd: number | null;
+    reportingRuns: number;
+    durationMs: number;
+  };
+};
+
 type RunRow = Omit<RunRecord, 'artifacts' | 'roleId' | 'runtimeId' | 'runtimeVersion' | 'inputTokens' | 'outputTokens' | 'costUsd'> & {
   artifacts: string;
   roleId: string;
@@ -1412,6 +1437,55 @@ export class KernelStore {
     ));
     const limit = Math.min(Math.max(filter.limit ?? 200, 1), 1000);
     return events.length > limit ? events.slice(events.length - limit) : events;
+  }
+
+  /** Bundle one task's evidence for export. Returns null when the task does not exist. */
+  exportTask(id: string): TaskEvidenceExport | null {
+    const task = this.getTask(id);
+    if (!task) return null;
+    const runs = this.listRuns(id).map(run => ({ ...run, handoff: this.getHandoffForRun(run.id) }));
+    const handoffs = this.listHandoffs(id);
+    const audit = this.listAudit({ taskId: id, limit: 1000 });
+
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let costUsd = 0;
+    let reportingRuns = 0;
+    let durationMs = 0;
+    let acceptedCommits = 0;
+    const changedFiles = new Set<string>();
+    for (const run of runs) {
+      durationMs += run.artifacts.durationMs;
+      for (const file of run.artifacts.changedFiles) changedFiles.add(file);
+      if (run.commitSha) acceptedCommits++;
+      if (run.inputTokens !== null || run.outputTokens !== null || run.costUsd !== null) {
+        reportingRuns++;
+        inputTokens += run.inputTokens ?? 0;
+        outputTokens += run.outputTokens ?? 0;
+        costUsd += run.costUsd ?? 0;
+      }
+    }
+
+    return {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      task,
+      pipeline: task.pipeline,
+      runs,
+      handoffs,
+      audit,
+      totals: {
+        runs: runs.length,
+        acceptedCommits,
+        changedFiles: changedFiles.size,
+        // Null, not zero: a Runtime that reported nothing must not look like a free run.
+        inputTokens: reportingRuns > 0 ? inputTokens : null,
+        outputTokens: reportingRuns > 0 ? outputTokens : null,
+        costUsd: reportingRuns > 0 ? costUsd : null,
+        reportingRuns,
+        durationMs,
+      },
+    };
   }
 
   private async collectEvidence(
