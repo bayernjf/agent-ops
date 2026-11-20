@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.log
 .DS_Store
+# Daemon data dir when `agent-ops start` is run from the repo root: SQLite DB + task worktrees.
+.agent-ops/
