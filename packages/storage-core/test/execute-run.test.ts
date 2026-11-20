@@ -145,6 +145,38 @@ describe('KernelStore executeRun', () => {
     }
   });
 
+  it('records reported tool calls and marks unknown when the runtime reports none', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+
+      const reported = await store.createRun(task.id, 'codex');
+      await store.executeRun(reported.id, fakeRunner(0, [
+        JSON.stringify({ type: 'result', permission_denials: [{ tool_name: 'Bash', reason: 'not allowed' }] }),
+        JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read' }] } }),
+      ].join('\n')));
+      const reportedArtifacts = store.getRun(reported.id)?.artifacts;
+      expect(reportedArtifacts?.toolAudit).toEqual({ source: 'runtime', reason: null });
+      expect(reportedArtifacts?.toolCalls).toEqual([
+        { name: 'Bash', status: 'denied', reason: 'not allowed' },
+        { name: 'Read', status: 'ok', reason: null },
+      ]);
+
+      const silent = await store.createRun(task.id, 'codex');
+      await store.executeRun(silent.id, fakeRunner(0, 'the agent wrote a summary and stopped'));
+      expect(store.getRun(silent.id)?.artifacts.toolCalls).toEqual([]);
+      expect(store.getRun(silent.id)?.artifacts.toolAudit).toEqual({
+        source: 'unknown',
+        reason: 'The runtime output did not report tool calls.',
+      });
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   it('runs a read-only reviewer Role without allowing a write', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
     try {
