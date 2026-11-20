@@ -137,7 +137,7 @@
 - [x] MCP `agent_ops_create_task` 接受 `pipeline.steps`；新增 `agent_ops_execute_pipeline`（POST execute，`ADDITIVE` 注解）。
 - [x] 测试：pipeline 持久化/自动 id/重开 DB、两步串行成功（每步不同文件、第二步可见第一步文件、两个不同 commit SHA、Role 分别正确、Task done、worktree clean）、第一步失败即停（仅 1 个 Run、pipeline failed、Task failed）、server pipeline 读取与执行、MCP create_task pipeline 透传；全仓 typecheck 0，49 文件 / 643 tests 绿。
 - [x] 本轮提交：`79644d3 feat(storage-core): add serial task pipelines`、`dffa9db test(storage-core): cover pipeline execution`。
-- [ ] F6 只覆盖 F6-01/F6-02/F6-03；每步审批/暂停恢复（F6-04）、失败重跑与 step base reset（F6-05）、并行 DAG（F6-06）未做。
+- [ ] F6 只覆盖 F6-01/F6-02/F6-03；每步审批/暂停恢复（F6-04）、失败重跑与 step base reset（F6-05）、并行 DAG（F6-06）在后续完成（见 F6-04/F6-05/F6-06 章节）。
 - [ ] Pipeline 当前只允许 `idle` 启动，completed/failed 不能直接重跑；step 间不替换 output 模板，下游只依赖上一步 commit 的 worktree 状态。
 
 ## 技术债 — 已完成
@@ -177,7 +177,7 @@
 - [x] Studio：建任务表单每步新增"需要人工审批后继续"开关；pipeline 面板与 step 行渲染 `awaiting_approval`，暂停时显示 Approve / Reject 按钮；zh/en 文案与状态配色补齐。
 - [x] 测试：storage-core 3 例（暂停、approve 继续、驳回 reset、无门禁拒绝）、server-core 2 例 HTTP approve/reject；全仓 typecheck 0，49 文件 / 649 tests 绿。
 - [x] 本轮提交：`e6e4658 feat(storage-core): pause pipeline steps for approval`、`d4ddacc feat(server-core): expose pipeline approval routes`、`4b4ba7c feat(studio): gate pipeline steps in the task board`。
-- [ ] F6-04 只覆盖串行 Pipeline 的单点审批门禁；F6-06 并行 DAG、F7-05 Run 详情扩展仍未做。
+- [ ] F6-04 只覆盖串行 Pipeline 的单点审批门禁；F6-06 并行 DAG 已在后续完成，F7-05 Run 详情扩展也在后续完成。
 
 ## F6-05 失败重跑 — 已完成（2026-11-20）
 
@@ -189,7 +189,7 @@
 - [x] MCP 新增 `agent_ops_retry_pipeline`；Studio failed 状态的按钮从错误的 execute 改为 Retry failed step，并沿用 busy/错误处理。
 - [x] 测试：三步 Pipeline 首步保留、第二步失败后重试成功、失败文件被清掉、首步 runner 不重复执行、首步 commit 不变、最终 4 个 commit 且 worktree clean；驳回第二步时保留第一步 commit 与文件；server HTTP 重试与 completed 再重试 409；全仓 typecheck 0，49 文件 / 652 tests 绿。
 - [x] 本轮提交：`20d707a feat(storage-core): retry failed pipelines`、`4ec87aa feat(server-core): expose pipeline retry`、`53687f3 feat(studio): retry failed pipeline steps`、`28e4e5a test(storage-core): cover pipeline retry`。
-- [ ] F6-05 只支持 failed pipeline 的重试；completed pipeline 仍不支持 reset 后重跑，step 间 output 模板替换也未做。F6-06 并行 DAG、F7-05 Run 详情扩展仍未做。
+- [ ] F6-05 只支持 failed pipeline 的重试；completed pipeline 仍不支持 reset 后重跑，step 间 output 模板替换也未做。F6-06 并行 DAG 已在后续完成，F7-05 Run 详情扩展也在后续完成。
 
 ## M1 退出验收 — 4 步串行完整组合 — 已完成（2026-11-20）
 
@@ -417,3 +417,17 @@
 - [x] 本轮提交：文档同步提交（README、AGENTS、本 handoff 段落）。
 - [x] 后续补齐：`docs/prd/...实施拆解` 已加入“角色与团队功能面完成记录（2026-11-20）”、M2 状态行与 §11 变更记录行（725 tests 基线）。
 - [ ] 未做：README 的能力表按模块描述，不逐条列出 API 路由。
+
+## F6-06 并行 DAG — 已完成（内核版，2026-11-20）
+
+- [x] pipeline step 增加 `dependsOn`：显式 `[]` 表示 DAG 根，未写则沿用串行“上一步”语义；`normalizePipeline` 校验依赖存在、禁自依赖、禁环。
+- [x] `KernelStore.executeDagPipeline(taskId, { runner?, maxConcurrency? })`：按依赖层级调度 ready steps，`maxConcurrency`（默认 2，1–8）分波执行；每步独立 worktree `tasks/<taskId>/dag/<stepId>`，从**最后一个依赖的 commit** 检出。
+- [x] 失败步骤的依赖者标记 `skipped`，其余分支继续跑；任务最终状态：任一 completed → `review`，全部失败 → `failed`。
+- [x] 每步成功后 accept 并 pin 到 `refs/agent-ops/tasks/<taskId>/lanes/dag-<stepId>`；`pipeline.results` 落库（skipped 记为 failed + error）。
+- [x] 新增 `evidenceBase`：DAG step 的 diff 以它自己的 branch base 为准，避免把上游依赖的文件算成本步改动（否则 join 的 changedFiles 会重复上游文件并制造假冲突）。
+- [x] 多依赖时记录 warning（只从最后一个依赖检出，其它依赖 commit 不合并）；跨步骤 changedFiles 交集作为 conflicts 报告，不自动合并。
+- [x] 暂不支持 DAG 中的 `requiresApproval`（显式拒绝并提示改用串行 Pipeline）。
+- [x] server：`POST /api/tasks/:id/pipeline/dag`；MCP：`agent_ops_execute_dag`，`create_task` 的 step 接受 `dependsOn`。
+- [x] 测试：两个根并发（实测 maxActive=2）、join 从 right 检出（可见 RIGHT.md、不可见 LEFT.md）、冲突报告 `SHARED.md`、warning 说明 left 未合并；失败根导致 child skipped 而 other 完成；环 / 未知依赖在 createTask 被拒；requiresApproval 在 DAG 被拒；server 200/400。全仓 typecheck 0，62 文件 / 729 tests 绿。
+- [x] 本轮提交：`30f09ff feat(storage-core): run pipelines as a DAG`、`8f4688a feat(server-core): expose DAG pipeline runs`、`3b307cd feat(cli): add the DAG run tool`。
+- [ ] 未做：没有 DAG 级别的自动合并/合成，多依赖只从最后一个依赖检出；Studio 没有 DAG 编辑器或运行入口；DAG 不支持审批门；真实模型下未验证。

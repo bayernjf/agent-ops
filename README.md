@@ -7,7 +7,7 @@
 - 内核 **5 个 package**：`agent-runtime` / `workflow` / `policy` / `storage-core` / `server-core`；内核 **2 个 app**：`cli` / `daemon`。
 - `daemon` **双模**：默认只挂载内核 Task/Run 控制面（`server-core`）；`AGENT_OPS_ENABLE_WEBAPP=1` 时懒加载 webapp-delivery 云链路（Project / Blueprint / Apply / Release）。
 - webapp-delivery 的 7 个 package 与 1 个 app（`studio`）隔离在 `plugins/webapp-delivery/`，内核不反向依赖插件。
-- 全仓 `npm run typecheck` 通过，`npm test` 61 文件 / 725 tests 全绿。
+- 全仓 `npm run typecheck` 通过，`npm test` 62 文件 / 729 tests 全绿。
 - **真实模型的 UI E2E 仍 blocked**：本机 CLI 未登录（Claude Code / Codex），当前验收使用确定性 runner，不代表真实模型任务已验收。
 
 ## 内核能力
@@ -18,6 +18,7 @@
 | Roles | 角色绑定 Profile / base agent、系统提示、验收标准、工具策略与成本预算；内置 architect / implementer / reviewer / tester / researcher 模板 |
 | Teams + Handoff | 团队 = 花名册 + 交接边；Pipeline 每跨一条边写一条交接收据（上游 commit + changedFiles） |
 | 串行 Pipeline | 每步独立 Run，成功后自动提交并交接；支持每步审批门、失败重跑、从失败 step 重试 |
+| 并行 DAG | 步骤可写 `dependsOn`（`[]` 为根）；ready steps 在各自 worktree 内有界并发，失败依赖跳过下游，文件冲突只报告、不合并 |
 | Coordinator | 按团队花名册与交接边推导 Pipeline（确定性拓扑序），预览后由人点击应用；另有不调模型的分步汇总 |
 | 并行 lanes | 每角色独立 worktree，有界并发；lane 结束后统一任务状态；文件级冲突只报告、不自动合并；接受 / 驳回按 lane 独立提交与 pin |
 | 证据与审计 | Run 证据（含实际工具调用与被拒原因，拿不到标 unknown）；append-only 审计可回放；单任务 JSON 导出；成功率 / 返工 / 用量 / 耗时指标 |
