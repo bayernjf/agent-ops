@@ -181,6 +181,11 @@ async function detect(command: string, spawn: ProbeSpawn = runProbe): Promise<De
 const detectionCache = new Map<string, DetectionResult>();
 const helpCache = new Map<string, string>();
 
+/** Version evidence for one installed Runtime command. Reuses the same cache as discovery. */
+export async function probeAgentVersion(command: string): Promise<string | null> {
+  return (await detect(command)).version;
+}
+
 // `subcommand` selects the help level to read, so a CLI whose flags live one level down is asked
 // about the level it actually documents them at.
 //

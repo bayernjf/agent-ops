@@ -1,5 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-export { discoverAgentRuntimes, probeAgentCapabilities, resolveExecutablePath, resolveProbeExecutable, runProbe, type AgentDescriptor, type AgentCapability, type CustomAgentInput, type AgentSource, type CapabilityProbe, type ProbeSpawn, type ProbeResult } from './catalog.js';
+import { probeAgentVersion } from './catalog.js';
+export { discoverAgentRuntimes, probeAgentCapabilities, probeAgentVersion, resolveExecutablePath, resolveProbeExecutable, runProbe, type AgentDescriptor, type AgentCapability, type CustomAgentInput, type AgentSource, type CapabilityProbe, type ProbeSpawn, type ProbeResult } from './catalog.js';
 export {
   type AgentAdapterStatus,
   type RuntimeAdapter,
@@ -108,6 +109,12 @@ export type CodexRuntimeProbe = {
  */
 export type CodexExecutionErrorCode = 'unsupported_platform';
 
+export type CodexExecutionUsage = {
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  costUsd?: number | null;
+};
+
 export type CodexExecutionResult = {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
@@ -116,6 +123,10 @@ export type CodexExecutionResult = {
   output: string;
   startedAt: string;
   completedAt: string;
+  /** Runtime version probed from the executed command, when available. */
+  runtimeVersion?: string | null;
+  /** Usage and cost reported by a Runtime that exposes them; absent means "not reported". */
+  usage?: CodexExecutionUsage;
   /** Set only when the runner declined to spawn; `output` then carries the reason for humans. */
   errorCode?: CodexExecutionErrorCode;
 };
@@ -368,10 +379,10 @@ export type CodexProcessRunner = (command: string, arguments_: string[], options
  * production code only ever uses `runCodexProcess`, bound to the platform it runs on.
  */
 export function runCodexProcessOnPlatform(platform: NodeJS.Platform): CodexProcessRunner {
-  return (command, arguments_, options) => new Promise(resolve => {
+  return async (command, arguments_, options) => {
     if (platform === 'win32') {
       const refusedAt = new Date().toISOString();
-      resolve({
+      return {
         exitCode: null,
         signal: null,
         timedOut: false,
@@ -380,77 +391,81 @@ export function runCodexProcessOnPlatform(platform: NodeJS.Platform): CodexProce
         output: describeWindowsExecutionUnsupported(command),
         startedAt: refusedAt,
         completedAt: refusedAt,
+        runtimeVersion: null,
+      };
+    }
+    // A missing or failed version probe must not block or fail the actual run.
+    const runtimeVersion = await probeAgentVersion(command).catch(() => null);
+    return new Promise(resolve => {
+      const startedAt = new Date().toISOString();
+      const child: ChildProcess = spawn(command, arguments_, { cwd: options.cwd, env: options.env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let output = '';
+      let timedOut = false;
+      let cancelled = false;
+      let exited = false;
+      let timeout: NodeJS.Timeout | undefined;
+      let killTimer: NodeJS.Timeout | undefined;
+      const emit = (chunk: string, stream: 'stdout' | 'stderr') => {
+        if (!options.onOutput) return;
+        try {
+          options.onOutput(chunk, stream);
+        } catch {
+          // A listener must never break the child-process lifecycle.
+        }
+      };
+      const cleanup = () => {
+        if (timeout) clearTimeout(timeout);
+        if (killTimer) clearTimeout(killTimer);
+        options.signal?.removeEventListener('abort', onAbort);
+      };
+      const onAbort = () => {
+        if (exited || cancelled) return;
+        cancelled = true;
+        if (timeout) clearTimeout(timeout);
+        child.kill('SIGTERM');
+        // A child that ignores SIGTERM must not keep the cancellation hanging forever.
+        killTimer = setTimeout(() => {
+          if (!exited) child.kill('SIGKILL');
+        }, 5_000);
+        killTimer.unref();
+      };
+      child.stdout?.on('data', chunk => {
+        const text = String(chunk);
+        emit(text, 'stdout');
+        output = boundedAppend(output, text);
       });
-      return;
-    }
-    const startedAt = new Date().toISOString();
-    const child: ChildProcess = spawn(command, arguments_, { cwd: options.cwd, env: options.env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let output = '';
-    let timedOut = false;
-    let cancelled = false;
-    let exited = false;
-    let timeout: NodeJS.Timeout | undefined;
-    let killTimer: NodeJS.Timeout | undefined;
-    const emit = (chunk: string, stream: 'stdout' | 'stderr') => {
-      if (!options.onOutput) return;
-      try {
-        options.onOutput(chunk, stream);
-      } catch {
-        // A listener must never break the child-process lifecycle.
+      child.stderr?.on('data', chunk => {
+        const text = String(chunk);
+        emit(text, 'stderr');
+        output = boundedAppend(output, text);
+      });
+      child.once('error', error => {
+        exited = true;
+        cleanup();
+        resolve({ exitCode: null, signal: null, timedOut, cancelled, output: boundedAppend(output, error.message), startedAt, completedAt: new Date().toISOString(), runtimeVersion });
+      });
+      child.once('close', (exitCode, signal) => {
+        exited = true;
+        cleanup();
+        resolve({ exitCode, signal, timedOut, cancelled, output, startedAt, completedAt: new Date().toISOString(), runtimeVersion });
+      });
+      timeout = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGTERM');
+        // `child.killed` only records that a signal was delivered, so it is already true here and can
+        // never report whether the process actually died. An agent that keeps working through SIGTERM
+        // has to be escalated against observed exit, otherwise the timeout bounds nothing.
+        killTimer = setTimeout(() => {
+          if (!exited) child.kill('SIGKILL');
+        }, 5_000);
+        killTimer.unref();
+      }, options.timeoutMs);
+      if (options.signal) {
+        if (options.signal.aborted) onAbort();
+        else options.signal.addEventListener('abort', onAbort, { once: true });
       }
-    };
-    const cleanup = () => {
-      if (timeout) clearTimeout(timeout);
-      if (killTimer) clearTimeout(killTimer);
-      options.signal?.removeEventListener('abort', onAbort);
-    };
-    const onAbort = () => {
-      if (exited || cancelled) return;
-      cancelled = true;
-      if (timeout) clearTimeout(timeout);
-      child.kill('SIGTERM');
-      // A child that ignores SIGTERM must not keep the cancellation hanging forever.
-      killTimer = setTimeout(() => {
-        if (!exited) child.kill('SIGKILL');
-      }, 5_000);
-      killTimer.unref();
-    };
-    child.stdout?.on('data', chunk => {
-      const text = String(chunk);
-      emit(text, 'stdout');
-      output = boundedAppend(output, text);
     });
-    child.stderr?.on('data', chunk => {
-      const text = String(chunk);
-      emit(text, 'stderr');
-      output = boundedAppend(output, text);
-    });
-    child.once('error', error => {
-      exited = true;
-      cleanup();
-      resolve({ exitCode: null, signal: null, timedOut, cancelled, output: boundedAppend(output, error.message), startedAt, completedAt: new Date().toISOString() });
-    });
-    child.once('close', (exitCode, signal) => {
-      exited = true;
-      cleanup();
-      resolve({ exitCode, signal, timedOut, cancelled, output, startedAt, completedAt: new Date().toISOString() });
-    });
-    timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-      // `child.killed` only records that a signal was delivered, so it is already true here and can
-      // never report whether the process actually died. An agent that keeps working through SIGTERM
-      // has to be escalated against observed exit, otherwise the timeout bounds nothing.
-      killTimer = setTimeout(() => {
-        if (!exited) child.kill('SIGKILL');
-      }, 5_000);
-      killTimer.unref();
-    }, options.timeoutMs);
-    if (options.signal) {
-      if (options.signal.aborted) onAbort();
-      else options.signal.addEventListener('abort', onAbort, { once: true });
-    }
-  });
+  };
 }
 
 export const runCodexProcess: CodexProcessRunner = runCodexProcessOnPlatform(process.platform);
