@@ -8,10 +8,10 @@
 > 产品规划（非活跃待办，不计入上方待办）：多 Agent 角色与团队 v0.2/v0.3，PRD 见 `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md`，实施拆解见 `docs/prd/Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md`；PD-1～PD-9 已于 2026-11-19 拍板；后续方向备忘（Tier 0 能力包 / 现有 Harness / Personal Agent）见 PRD §12.1–12.2。
 
 - [x] **真实模型 UI E2E** — 已完成（2026-11-20）。UI 里新建 CodeBuddy 角色与一步 Pipeline 任务，点 `Run pipeline` 由真实 CodeBuddy 2.185.0 执行，任务 done、Run 可见（commit `ea4553f7d2`）。Claude Code / Codex 仍受 CC Switch `base_url` 阻塞，但不影响 CodeBuddy 路径；真实模型 API 路径与 UI 路径均已有证据。
-- [x] **3–5 个本仓 dogfood** — 已完成 3 条（2026-11-21）：Studio 重跑策略、Studio 预算面板、CLI `export --summary`；接受率 3/3、检查通过率 3/3、返工 1 次人工小修。详见下方 “F10-01/F10-02 Dogfood” 章节。
+- [x] **3–5 个本仓 dogfood** — 已完成 3 条真实任务 + 1 次五角色团队运行（2026-11-21）：单任务接受率 3/3、检查通过率 3/3、返工 1 次人工小修；五角色串行 5 步全部完成并落 5 个 commit（发现“落盘 owner 未指派”的产品缺口）。详见下方 “F10-01/F10-02 Dogfood” 章节。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
-> 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；**M1 退出标准中的“真实模型 UI E2E”仍 blocked**，M2 的 3–5 个 dogfood 因此尚未开始。
+> 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
 > 迁移方案与执行记录见 `bayjf/docs/tier0/Tier0-agent-dev并入AgentOps-迁移方案-2026-11-18.md`。
 
 ## 迁移（move 阶段）— 已完成
@@ -451,7 +451,7 @@
 - [x] UI 验收过程中发现并修复两个真实缺陷：① 新建任务表单不 provision worktree，`Run pipeline` 直接 409 “no worktree”；② 执行后不刷新已展开任务的 Run 列表（显示 “No runs yet”）。提交 `902d864 fix(studio): provision and refresh pipeline runs`。
 - [ ] 剩余：Claude Code / Codex 仍受 CC Switch `base_url` 阻塞；CodeBuddy 不上报 usage 与工具调用（记录为 null / unknown）；M1 的“4 步串行完整组合”此前由确定性 runner 验收。
 
-## F10-01/F10-02 Dogfood（3 个真实任务）— 已完成（2026-11-21）
+## F10-01/F10-02 Dogfood（3 个真实任务 + 1 次五角色团队运行）— 已完成（2026-11-21）
 
 > 方法：在本仓为每个任务建一条一步 Pipeline（角色 `ui-codebuddy` → CodeBuddy 2.185.0）；执行后审阅 agent 的 commit，把 diff 应用到 `dev`，再用本仓自己的检查验收。Pipeline 步骤由系统自动 accept，人对最终 diff 负责。
 
@@ -467,3 +467,12 @@
 - CodeBuddy 不上报 usage，成本记为未上报；工具调用审计为 `unknown`。
 - 局限：任务都较小（1–5 文件、约 3–6 分钟）；固定使用 CodeBuddy；受限工具策略在 CodeBuddy 上无法执行（adapter `toolPolicy: unsupported`，受限角色会被直接拒绝）。
 - [ ] 未做：M2 退出标准还有一条“5 角色团队完成一个真实仓库任务（架构→实现→审查→测试→汇总）”，尚未用真实模型跑；现有 3 条 dogfood 不覆盖 5 角色串行。
+
+### Dogfood 4：五角色团队串行（2026-11-21）
+
+- 团队 `CB Delivery`（5 个角色，全部绑定 CodeBuddy），任务 “Dogfood 4: five-role team run”；Coordinator 按交接边推导出 5 步 Pipeline，全部在 `dev` 的同一 worktree 串行执行。
+- 结果：5 步全部 `completed`、5 个 agent commit（`2086d1f` → `a15a624` → `2caf8e3` → `e260347` → `fc0b54e`）、4 条 handoff 收据（artifacts 1→2→3→4）、总耗时 420 s；产物整体应用为 `c36df4d`。
+- 产物：`docs/dogfood/team-run/01-plan.md` … `05-summary.md`（385 行）。
+- 关键发现：五步只产出「笔记」，**落盘 owner 从未被指派**；summarizer 明确拒绝把本轮写成“通过”，并列出 reviewer/tester 一致确认的缺口（预算上限漏 `maxOutputTokens`、分桶字段说明不足、证据表述需区分单 Run 与汇总指标）。这是“不无证据声称通过”的约束在真实链路里生效的证据。
+- 结论：5 角色串行在真实模型下跑通（本轮交付物为 docs 目录）；但“团队任务需要一个落盘 / 最终集成 step 的 owner”是 Coordinator 推导 Pipeline 目前没有表达的，记为产品缺口。
+- [ ] 未做：没有让这 5 个角色产出真实代码改动（worktree 无 node_modules，跑测试不可行）；Coordinator 不会自动指定最后落盘/汇总 step 的 owner。
