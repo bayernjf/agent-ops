@@ -121,4 +121,26 @@ describe('KernelStore metrics', () => {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
   });
+
+  it('scopes the metrics to one team', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-metrics-'));
+    try {
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const left = await store.roles.createRole({ name: 'Left', baseAgentId: 'codex' });
+      const right = await store.roles.createRole({ name: 'Right', baseAgentId: 'codex' });
+      const leftTeam = await store.teams.createTeam({ name: 'Left team', roleIds: [left.id] });
+      const rightTeam = await store.teams.createTeam({ name: 'Right team', roleIds: [right.id] });
+      await store.createTask({ repo: '/r', baseRef: 'main', title: 'Left task', teamId: leftTeam.id });
+      await store.createTask({ repo: '/r', baseRef: 'main', title: 'Right task', teamId: rightTeam.id });
+
+      expect(store.getMetrics().tasks.total).toBe(2);
+      expect(store.getMetrics().teamId).toBeNull();
+      const scoped = store.getMetrics({ teamId: leftTeam.id });
+      expect(scoped.teamId).toBe(leftTeam.id);
+      expect(scoped.tasks).toMatchObject({ total: 1, open: 1 });
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
 });

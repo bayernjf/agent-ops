@@ -424,6 +424,8 @@ export type ParallelTeamResult = {
 export type KernelMetrics = {
   generatedAt: string;
   window: { since: string | null; until: string | null };
+  /** Set when the metrics were scoped to one team. */
+  teamId: string | null;
   tasks: { total: number; done: number; failed: number; cancelled: number; open: number };
   runs: {
     total: number;
@@ -1616,7 +1618,7 @@ export class KernelStore {
   }
 
   /** Aggregate success, rework, usage and timing over tasks and runs, optionally windowed. */
-  getMetrics(filter: { since?: string; until?: string } = {}): KernelMetrics {
+  getMetrics(filter: { since?: string; until?: string; teamId?: string } = {}): KernelMetrics {
     const since = filter.since ? Date.parse(filter.since) : null;
     const until = filter.until ? Date.parse(filter.until) : null;
     const inWindow = (iso: string) => {
@@ -1626,10 +1628,11 @@ export class KernelStore {
       if (until !== null && !Number.isNaN(until) && at > until) return false;
       return true;
     };
+    const inScope = (task: TaskRecord) => !filter.teamId || task.teamId === filter.teamId;
 
     const taskTotals = { total: 0, done: 0, failed: 0, cancelled: 0, open: 0 };
     for (const task of this.listTasks()) {
-      if (!inWindow(task.createdAt)) continue;
+      if (!inScope(task) || !inWindow(task.createdAt)) continue;
       taskTotals.total++;
       if (task.status === 'done') taskTotals.done++;
       else if (task.status === 'failed') taskTotals.failed++;
@@ -1657,6 +1660,7 @@ export class KernelStore {
     let costUsd = 0;
 
     for (const task of this.listTasks()) {
+      if (!inScope(task)) continue;
       for (const run of this.listRuns(task.id)) {
         if (!inWindow(run.createdAt)) continue;
         runsTotals.total++;
@@ -1732,6 +1736,7 @@ export class KernelStore {
     return {
       generatedAt: new Date().toISOString(),
       window: { since: filter.since ?? null, until: filter.until ?? null },
+      teamId: filter.teamId ?? null,
       tasks: taskTotals,
       runs: { ...runsTotals, successRate: runsTotals.executed > 0 ? runsTotals.succeeded / runsTotals.executed : null },
       rework: { retries, rejections, reworkRate: runsTotals.executed > 0 ? (retries + rejections) / runsTotals.executed : null },
