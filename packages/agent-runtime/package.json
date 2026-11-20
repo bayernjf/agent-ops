@@ -8,6 +8,7 @@
     "./failure-classification": "./src/failure-classification.ts"
   },
   "dependencies": {
+    "@agent-ops/policy": "*",
     "zod": "^3.25.76"
   },
   "scripts": {

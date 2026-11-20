@@ -16,12 +16,21 @@ export {
   type RuntimeToolPolicy,
   type ToolPolicyEnforcement,
   type ResolvedToolPolicy,
+  type CanonicalToolPolicy,
+  type ToolDecision,
+  type ToolPolicyCapability,
+  type UnifiedPolicyVerdict,
   normalizeToolName,
   hasRestrictedToolPolicy,
   isReadOnlyToolPolicy,
+  isReadOnlyTool,
   effectiveAllowedTools,
+  evaluateToolPolicy,
   resolveToolPolicy,
   KNOWN_WRITE_TOOLS,
+  READ_ONLY_TOOL_NAMES,
+  WRITE_TOOL_NAMES,
+  KNOWN_TOOL_NAMES,
 } from './tool-policy.js';
 import { resolveToolPolicy, hasRestrictedToolPolicy, type RuntimeToolPolicy, type ResolvedToolPolicy } from './tool-policy.js';
 import type { AgentRole } from './roles.js';
