@@ -90,6 +90,7 @@ export type CreateTaskInput = {
   priority?: TaskPriority;
   baseCommit?: string;
   roleId?: string;
+  teamId?: string;
   pipeline?: TaskPipelineInput;
 };
 
@@ -105,15 +106,17 @@ export type TaskRecord = {
   priority: TaskPriority;
   baseCommit: string;
   roleId: string | null;
+  teamId: string | null;
   pipeline: TaskPipeline | null;
   status: TaskRunState;
   createdAt: string;
   updatedAt: string;
 };
 
-type TaskRow = Omit<TaskRecord, 'acceptanceCriteria' | 'roleId' | 'pipeline'> & {
+type TaskRow = Omit<TaskRecord, 'acceptanceCriteria' | 'roleId' | 'teamId' | 'pipeline'> & {
   acceptanceCriteria: string;
   roleId: string;
+  teamId: string;
   pipeline: string;
 };
 
@@ -147,7 +150,7 @@ function toTaskRecord(row: TaskRow): TaskRecord {
   }
   const priority: TaskPriority =
     row.priority === 'low' || row.priority === 'high' ? row.priority : 'medium';
-  return { ...row, acceptanceCriteria, priority, roleId: row.roleId || null, pipeline: parseTaskPipeline(row.pipeline) };
+  return { ...row, acceptanceCriteria, priority, roleId: row.roleId || null, teamId: row.teamId || null, pipeline: parseTaskPipeline(row.pipeline) };
 }
 
 export type RunArtifacts = {
@@ -426,6 +429,15 @@ export class KernelStore {
       if (!role) throw new Error(`Role ${linkedRoleId} was not found.`);
       if (!role.enabled) throw new Error(`Role ${linkedRoleId} is disabled.`);
     }
+    const linkedTeamId = input.teamId?.trim() || undefined;
+    if (linkedTeamId) {
+      const team = await this.teams.getTeam(linkedTeamId);
+      if (!team) throw new Error(`Team ${linkedTeamId} was not found.`);
+      if (!team.enabled) throw new Error(`Team ${linkedTeamId} is disabled.`);
+      if (linkedRoleId && !team.roleIds.includes(linkedRoleId)) {
+        throw new Error(`Role ${linkedRoleId} is not on team ${linkedTeamId}.`);
+      }
+    }
     const pipeline = await this.normalizePipeline(input.pipeline);
     const now = new Date().toISOString();
     const record: TaskRecord = {
@@ -440,6 +452,7 @@ export class KernelStore {
       priority: input.priority ?? 'medium',
       baseCommit: input.baseCommit ?? '',
       roleId: linkedRoleId ?? null,
+      teamId: linkedTeamId ?? null,
       pipeline,
       status: 'queued',
       createdAt: now,
@@ -449,6 +462,7 @@ export class KernelStore {
       ...record,
       acceptanceCriteria: JSON.stringify(record.acceptanceCriteria),
       roleId: record.roleId ?? '',
+      teamId: record.teamId ?? '',
       pipeline: record.pipeline ? JSON.stringify(record.pipeline) : '',
     }).run();
     await this.persist();

@@ -15,6 +15,7 @@ export const tasks = sqliteTable('tasks', {
   priority: text('priority').notNull().default('medium'),
   baseCommit: text('base_commit').notNull().default(''),
   roleId: text('role_id').notNull().default(''),
+  teamId: text('team_id').notNull().default(''),
   pipeline: text('pipeline').notNull().default(''),
   status: text('status').notNull(),
   createdAt: text('created_at').notNull(),

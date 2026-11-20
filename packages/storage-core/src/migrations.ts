@@ -101,4 +101,10 @@ export const kernelMigrations: readonly Migration[] = [
       ALTER TABLE runs ADD COLUMN cost_usd REAL;
     `,
   },
+  {
+    id: '0016_task_team',
+    sql: `
+      ALTER TABLE tasks ADD COLUMN team_id TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];
