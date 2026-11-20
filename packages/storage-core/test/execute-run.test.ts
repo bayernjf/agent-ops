@@ -468,6 +468,37 @@ describe('KernelStore executeRun', () => {
     }
   });
 
+  it('accepts only the selected changed files and discards the rest', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+      const run = await store.createRun(task.id, 'codex');
+      await writeFile(join(task.worktreePath, 'keep.txt'), 'keep\n', 'utf8');
+      await writeFile(join(task.worktreePath, 'drop.txt'), 'drop\n', 'utf8');
+      // Simulate an agent that staged both files itself. A partial accept must reset the index
+      // and commit only the selected path, not everything the agent happened to stage.
+      await execFileAsync('git', ['add', '-A'], { cwd: task.worktreePath });
+      await store.executeRun(run.id, fakeRunner(0));
+      expect(store.getRun(run.id)?.artifacts.changedFiles).toEqual(expect.arrayContaining(['keep.txt', 'drop.txt']));
+
+      await expect(store.acceptRun(run.id, ['missing.txt'])).rejects.toThrow('not part of run');
+      expect(store.getRun(run.id)?.status).toBe('review');
+
+      const accepted = await store.acceptRun(run.id, ['keep.txt']);
+      expect(accepted.status).toBe('done');
+      expect(store.getTask(task.id)?.status).toBe('done');
+      expect((await execFileAsync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: task.worktreePath })).stdout.trim())
+        .toBe('keep.txt');
+      await expect(access(join(task.worktreePath, 'drop.txt'))).rejects.toBeTruthy();
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: task.worktreePath })).stdout.trim()).toBe('');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   it('refuses to accept a run that would commit a .env file', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
     try {

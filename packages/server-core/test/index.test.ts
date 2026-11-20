@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -514,6 +514,65 @@ describe('createKernelApp', () => {
         artifacts: { output: 'ok' },
       });
       expect(acceptedRun.commitSha).toMatch(/^[0-9a-f]{40}$/);
+
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts only selected files over the HTTP API', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-server-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const twoFileRunner: CodexProcessRunner = async (_command, _arguments, options) => {
+        await writeFile(join(options.cwd, 'keep.txt'), 'keep\n', 'utf8');
+        await writeFile(join(options.cwd, 'drop.txt'), 'drop\n', 'utf8');
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'ok',
+          startedAt: new Date(Date.now() - 10).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+      const app = createKernelApp(store, { runner: twoFileRunner });
+
+      const task = await store.createTask({ repo, baseRef: 'main', title: 'Two files' });
+      await store.provisionTask(task.id);
+      const run = await store.createRun(task.id, 'codex');
+      expect((await app.request(`/api/runs/${run.id}/execute`, { method: 'POST' })).status).toBe(200);
+
+      const invalid = await app.request(`/api/runs/${run.id}/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: ['missing.txt'] }),
+      });
+      expect(invalid.status).toBe(400);
+      expect(store.getRun(run.id)?.status).toBe('review');
+
+      const malformed = await app.request(`/api/runs/${run.id}/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"files":',
+      });
+      expect(malformed.status).toBe(400);
+      expect(store.getRun(run.id)?.status).toBe('review');
+
+      const accepted = await app.request(`/api/runs/${run.id}/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: ['keep.txt'] }),
+      });
+      expect(accepted.status).toBe(200);
+      expect((await accepted.json()) as object).toMatchObject({ status: 'done' });
+      const worktree = store.getTask(task.id)?.worktreePath ?? '';
+      expect((await execFileAsync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: worktree })).stdout.trim())
+        .toBe('keep.txt');
+      await expect(access(join(worktree, 'drop.txt'))).rejects.toBeTruthy();
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: worktree })).stdout.trim()).toBe('');
 
       await store.close();
     } finally {
