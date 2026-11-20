@@ -226,10 +226,19 @@ export function TasksView() {
     setPipelineBusyId(task.id);
     setError('');
     try {
+      // The create form does not provision a worktree, so a fresh task cannot run until it has one.
+      if (!task.worktreePath) {
+        const provision = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/provision`, { method: 'POST' });
+        const provisionBody = (await provision.json().catch(() => null)) as { error?: string } | null;
+        if (!provision.ok) throw new Error(provisionBody?.error ?? t('tasks.pipelineExecute'));
+      }
       const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/execute`, { method: 'POST' });
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineExecute'));
       await loadTasks();
+      // The expanded task cached its run list when it was opened; a pipeline run just added
+      // entries, so refresh it the same way retry/approve/reject do.
+      if (expandedId === task.id) await loadRuns(task.id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('tasks.pipelineExecute'));
     } finally {
