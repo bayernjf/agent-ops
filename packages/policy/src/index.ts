@@ -15,6 +15,19 @@ export {
   type AccountDiscoveryReport,
   type AccountDiscoveryStatus,
 } from './account-discovery.js';
+export { type CanonicalToolPolicy, type ToolDecision, type ToolPolicyCapability, type UnifiedPolicyVerdict } from './tool-policy.js';
+export {
+  DEFAULT_ALLOWED_TOOLS,
+  KNOWN_TOOL_NAMES,
+  READ_ONLY_TOOL_NAMES,
+  WRITE_TOOL_NAMES,
+  effectiveAllowedTools,
+  evaluateToolPolicy,
+  hasRestrictedToolPolicy,
+  isReadOnlyTool,
+  isReadOnlyToolPolicy,
+  normalizeToolName,
+} from './tool-policy.js';
 
 export type AutomationMode = 'auto' | 'ask' | 'forbid';
 export type ActionRisk = 'low' | 'medium' | 'high' | 'production' | 'secret';
