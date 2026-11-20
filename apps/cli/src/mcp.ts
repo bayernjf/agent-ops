@@ -404,6 +404,28 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   }, args => callDaemon('DELETE', `/api/roles/${encodeURIComponent(args.roleId)}`).then(toResult));
 
+  server.registerTool('agent_ops_list_role_templates', {
+    title: 'List role templates',
+    description: 'List the built-in Role templates (architect, implementer, reviewer, tester, researcher) with their prompts, acceptance criteria and tool policy.',
+    annotations: READ_ONLY,
+  }, () => callDaemon('GET', '/api/role-templates').then(toResult));
+
+  server.registerTool('agent_ops_create_role_from_template', {
+    title: 'Create role from template',
+    description: 'Create a role from a built-in template. Rename it, or point it at a Profile, before saving; the prompt and tool policy come from the template.',
+    inputSchema: {
+      templateId: z.string().min(1).describe('Template id as listed by agent_ops_list_role_templates.'),
+      name: z.string().trim().min(1).max(100).optional().describe('Override the template name.'),
+      description: z.string().max(500).optional().describe('Override the template description.'),
+      baseAgentId: z.string().trim().min(1).max(100).optional().describe('Override the verified base agent.'),
+      profileId: z.string().trim().min(1).max(100).optional().describe('Existing Agent Profile id; its base agent wins.'),
+    },
+    annotations: ADDITIVE,
+  }, args => {
+    const { templateId, ...fields } = args;
+    return callDaemon('POST', `/api/role-templates/${encodeURIComponent(templateId)}`, fields).then(toResult);
+  });
+
   const teamIdSchema = {
     teamId: z.string().min(1).describe('Team id as listed by agent_ops_list_teams.'),
   };

@@ -125,6 +125,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_create_feature_task',
       'agent_ops_create_project',
       'agent_ops_create_role',
+      'agent_ops_create_role_from_template',
       'agent_ops_create_run',
       'agent_ops_create_task',
       'agent_ops_create_team',
@@ -154,6 +155,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_list_audit',
       'agent_ops_list_handoffs',
       'agent_ops_list_projects',
+      'agent_ops_list_role_templates',
       'agent_ops_list_roles',
       'agent_ops_list_runs',
       'agent_ops_list_tasks',
@@ -218,6 +220,22 @@ describe('agent-ops MCP bridge', () => {
     const deleted = await client.callTool({ name: 'agent_ops_delete_role', arguments: { roleId: role.id } });
     expect(deleted.isError).toBeFalsy();
     expect(JSON.parse(textOf(deleted))).toMatchObject({ deleted: true });
+  });
+
+  it('creates a role from a template through the daemon', async () => {
+    const client = await startBridge();
+    const listed = await client.callTool({ name: 'agent_ops_list_role_templates', arguments: {} });
+    expect(listed.isError).toBeFalsy();
+    expect(textOf(listed)).toContain('researcher');
+
+    const created = await client.callTool({
+      name: 'agent_ops_create_role_from_template',
+      arguments: { templateId: 'researcher', name: 'Probe researcher' },
+    });
+    expect(created.isError).toBeFalsy();
+    const { role } = JSON.parse(textOf(created)) as { role: { name: string; runtimePolicy: { approvalMode: string } } };
+    expect(role.name).toBe('Probe researcher');
+    expect(role.runtimePolicy.approvalMode).toBe('auto');
   });
 
   it('creates, updates and deletes a team through the daemon', async () => {
