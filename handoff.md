@@ -375,3 +375,14 @@
 - [x] 测试：tool_use + permission_denials 解析顺序、重复去重、整体 JSON、纯文本标 unknown、坏 JSON 行跳过、上限 100；executeRun 端到端覆盖 reported / unknown 两种 artifact。全仓 typecheck 0，59 文件 / 708 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
 - [x] 本轮提交：`c3c330b feat(agent-runtime): read tool calls from output`、`84eec32 feat(storage-core): audit tool calls per run`、`f5e7f58 feat(studio): show run tool calls`。
 - [ ] 未做：只解析 JSON 里明确出现的字段，不覆盖所有 Runtime 的格式（Codex 不同版本的事件字段可能变化）；不记录参数与输出摘要（避免泄漏敏感内容）；不写入 `audit_events`（它是 Run 证据的一部分）；真实 CLI 的上报情况仍未在登录条件下验证。
+
+## F3-05 统一策略层 — 已完成（2026-11-20）
+
+- [x] `@agent-ops/policy/tool-policy`：运行时无关的策略求值——输入 `{allowedTools, blockedTools, approvalMode}` 与能力（`native | wrapper | unsupported`），输出 allow/deny 决策、readOnly、enforcement（`exact | coarse | unsupported`）、`approval{mode, humanGate}`、warnings 与 `unsupportedReason`；**不抛错**，由调用方决定拒绝还是提示。
+- [x] 语义集中：`READ_ONLY_TOOL_NAMES` / `WRITE_TOOL_NAMES` / `KNOWN_TOOL_NAMES`、`isReadOnlyToolPolicy`、`effectiveAllowedTools` 全部搬到 policy 包；agent-runtime 只保留方言说明。
+- [x] `resolveToolPolicy` 改为委托统一层：Codex 的 sandbox 提示、Claude 的 `--allowedTools`、无映射 native adapter 的 “advisory” 提示仍留在 adapter 侧；unsupported 仍拒绝受限策略。
+- [x] server：`POST /api/policy/evaluate` 对每个注册 Runtime 返回同一份决策与该 Runtime 的 enforcement；MCP：新增 `agent_ops_evaluate_policy`。
+- [x] agent-runtime 新增 `@agent-ops/policy` 依赖；`vitest.config.ts` 补 `@agent-ops/policy/tool-policy` 子路径别名（vitest 对 workspace 符号链接的 subpath 解析不稳定，与既有注释一致）。
+- [x] 测试：只读/宽/仅禁三类策略的 readOnly 与决策、unsupported 不抛错并带原因、wrapper 标 coarse、approval 透传；server 端 codex `exact` + hermes `unsupported` + 400；MCP 端到端。全仓 typecheck 0，60 文件 / 718 tests 绿。
+- [x] 本轮提交：`673d584 feat(policy): add a runtime-neutral tool policy`、`d2dd663 refactor(agent-runtime): use the unified policy layer`、`121a426 feat(server-core): evaluate policies across runtimes`、`d2852d8 feat(cli): add the policy evaluation tool`。
+- [ ] 未做：决策基于内置工具名表，未知工具不会被判 deny；`approvalMode` 只是被携带，没有跨 Runtime 的审批执行器；Studio 没有策略预览 UI；`wrapper` 能力目前没有 adapter 使用（只有 native / unsupported）。
