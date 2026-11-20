@@ -312,7 +312,7 @@ E0 基础闭环修复
 - 3–5 个 dogfood 完成，记录接受率/测试通过率/返工率。
 - 无 P0 数据丢失/权限违规。
 
-**状态（2026-11-21）**：上表第 1–4、6 项已完成并有测试；第 5 项已用 CodeBuddy 完成 3 条真实 dogfood（接受率 3/3、检查通过 3/3、返工 1 次人工小修）。退出标准里的“5 角色团队完成真实仓库任务”已用真实模型跑通一轮串行（架构→实现→审查→测试→汇总，5 个 commit + 4 条 handoff，产物为 `docs/dogfood/team-run/`），该轮暴露“落盘 owner 未指派”的缺口并已补上 Team `ownerRoleId` 与 Coordinator 置末标记；那轮历史运行本身尚未重跑出可验收的落盘。
+**状态（2026-11-21）**：上表第 1–4、6 项已完成并有测试；第 5 项已用 CodeBuddy 完成 3 条真实 dogfood（接受率 3/3、检查通过 3/3、返工 1 次人工小修）。退出标准里的“5 角色团队完成真实仓库任务”首轮暴露“落盘 owner 未指派”缺口，owner 机制补齐后以 Dogfood 6 重跑成功：5 步全部完成、owner 写出 `05-final.md`（应用为 `4065cca`），该退出标准已满足；限制是交付物为文档而非代码改动。
 
 ### M3 并行与扩展（2026-12-25 → 2027-01-14）
 
@@ -612,3 +612,4 @@ npm --workspace @agent-ops/studio run build
 | 2026-11-21 | 真实 dogfood 3 条完成（Studio 重跑策略 / Studio 预算面板 / CLI export --summary）：接受率 3/3、检查通过 3/3、返工 1 次小修；5 角色团队真实任务待跑 |
 | 2026-11-21 | 五角色团队串行真实跑通：5 步全 completed、5 个 agent commit、4 条 handoff、420 s；产物为 docs 笔记，暴露“落盘 owner 未指派”缺口 |
 | 2026-11-21 | Team owner 机制完成：ownerRoleId 校验、计划置末并标记 ownsDeliverable、summary 暴露 owner；Dogfood 5 以 2 步团队实测落盘 |
+| 2026-11-21 | Dogfood 6：带 owner 的五角色交付跑通，owner 写出 `05-final.md`（`4065cca`）；M2 的 5 角色退出标准满足（交付物为文档） |
