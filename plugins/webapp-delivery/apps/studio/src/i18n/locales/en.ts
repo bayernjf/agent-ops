@@ -784,6 +784,7 @@ export const en = {
     stepPrompt: 'Step prompt',
     addStep: 'Add step',
     pipelineExecute: 'Run pipeline',
+    pipelineRetry: 'Retry failed step',
     pipelineRunning: 'Running…',
     pipelineApprove: 'Approve step',
     pipelineReject: 'Reject step',

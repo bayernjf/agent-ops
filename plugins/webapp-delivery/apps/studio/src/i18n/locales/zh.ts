@@ -766,6 +766,7 @@ export const zh = {
     stepPrompt: '步骤提示',
     addStep: '添加步骤',
     pipelineExecute: '运行 Pipeline',
+    pipelineRetry: '重试失败步骤',
     pipelineRunning: '运行中…',
     pipelineApprove: '通过该步',
     pipelineReject: '驳回该步',

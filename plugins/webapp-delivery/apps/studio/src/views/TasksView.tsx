@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, ListTodo, Play, Plus, RefreshCw, Square, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, ListTodo, Play, Plus, RefreshCw, RotateCcw, Square, Trash2, X } from 'lucide-react';
 import { useI18n, type KeyPath } from '../i18n/i18n';
 import type { AgentRole, KernelRun, KernelTask, KernelTaskState, TaskPipeline, TaskPipelineStep, TaskPipelineStepResult } from '../types';
 import { apiFetch, apiStreamFetch } from '../lib/api';
@@ -212,6 +212,22 @@ export function TasksView() {
       await loadTasks();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('tasks.pipelineExecute'));
+    } finally {
+      setPipelineBusyId(null);
+    }
+  };
+
+  const retryPipeline = async (task: KernelTask) => {
+    setPipelineBusyId(task.id);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/retry`, { method: 'POST' });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineRetry'));
+      await loadTasks();
+      if (expandedId === task.id) await loadRuns(task.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.pipelineRetry'));
     } finally {
       setPipelineBusyId(null);
     }
@@ -509,9 +525,14 @@ export function TasksView() {
                         <div className="pipeline-panel">
                           <div className="pipeline-head">
                             <span className={`state ${pipeline.status}`}>{t(`tasks.pipelineStatus.${pipeline.status}` as KeyPath)}</span>
-                            {(pipeline.status === 'idle' || pipeline.status === 'failed') && (
+                            {pipeline.status === 'idle' && (
                               <button className="secondary-button" type="button" onClick={() => void executePipeline(task)} disabled={pipelineBusyId === task.id}>
                                 <Play size={14} aria-hidden="true" /> {pipelineBusyId === task.id ? t('tasks.pipelineRunning') : t('tasks.pipelineExecute')}
+                              </button>
+                            )}
+                            {pipeline.status === 'failed' && (
+                              <button className="secondary-button" type="button" onClick={() => void retryPipeline(task)} disabled={pipelineBusyId === task.id}>
+                                <RotateCcw size={14} aria-hidden="true" /> {pipelineBusyId === task.id ? t('tasks.pipelineRunning') : t('tasks.pipelineRetry')}
                               </button>
                             )}
                             {pipeline.status === 'awaiting_approval' && (
