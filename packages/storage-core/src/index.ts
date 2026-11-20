@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { eq, asc, desc } from 'drizzle-orm';
@@ -356,6 +357,7 @@ export type KernelAuditEventType =
   | 'pipeline.step.rejected'
   | 'pipeline.retried'
   | 'pipeline.planned'
+  | 'parallel.executed'
   | 'handoff.recorded';
 
 export type KernelAuditActor = 'operator' | 'system';
@@ -389,6 +391,29 @@ export type CoordinatorSummary = {
   awaiting: number;
   handoffs: number;
   blockers: Array<{ stepId: string; status: string }>;
+};
+
+/** One role's lane in a parallel run: its own worktree, run and changed files. */
+export type ParallelLaneResult = {
+  roleId: string;
+  roleName: string;
+  runId: string | null;
+  worktreePath: string | null;
+  status: string;
+  changedFiles: string[];
+  error: string | null;
+};
+
+export type ParallelConflict = { file: string; roleIds: string[] };
+
+/** What a bounded parallel run produced. Lanes are independent; nothing is merged automatically. */
+export type ParallelTeamResult = {
+  taskId: string;
+  teamId: string;
+  maxConcurrency: number;
+  lanes: ParallelLaneResult[];
+  conflicts: ParallelConflict[];
+  taskStatus: TaskRunState;
 };
 
 /** Aggregated success, rework, usage and timing over the kernel's tasks and runs. */
@@ -1009,12 +1034,18 @@ export class KernelStore {
     return updated;
   }
 
-  async executeRun(id: string, runner?: CodexProcessRunner): Promise<RunRecord> {
+  async executeRun(
+    id: string,
+    runner?: CodexProcessRunner,
+    options: { worktreePath?: string; taskStatus?: 'auto' | 'none' } = {},
+  ): Promise<RunRecord> {
     const run = this.getRun(id);
     if (!run) throw new Error(`Run ${id} was not found.`);
     const task = this.getTask(run.taskId);
     if (!task) throw new Error(`Task ${run.taskId} was not found.`);
-    if (!task.worktreePath) throw new Error(`Task ${run.taskId} has no worktree. Provision it before executing a run.`);
+    const worktreePath = options.worktreePath ?? task.worktreePath;
+    if (!worktreePath) throw new Error(`Task ${run.taskId} has no worktree. Provision it before executing a run.`);
+    const trackTask = options.taskStatus !== 'none';
     if (run.status !== 'queued' && run.status !== 'failed') {
       throw new Error(`Run ${id} cannot be executed from status ${run.status}.`);
     }
@@ -1033,7 +1064,7 @@ export class KernelStore {
       acceptanceCriteria: task.acceptanceCriteria,
       priority: task.priority,
     };
-    const plan = buildAgentExecutionPlan(approvedTask, task.worktreePath, resolved.agentId, {
+    const plan = buildAgentExecutionPlan(approvedTask, worktreePath, resolved.agentId, {
       execute: true,
       profile: resolved.profile,
       role: role ?? undefined,
@@ -1049,7 +1080,7 @@ export class KernelStore {
     // A rejected run can be executed again under the same run id; stale terminal events
     // would make a new SSE subscriber close on the previous attempt.
     await this.clearRunEvents(id);
-    await this.updateTaskStatus(task.id, 'running');
+    if (trackTask) await this.updateTaskStatus(task.id, 'running');
     await this.updateRunStatus(id, 'running');
     this.emitRunEvent(id, 'started');
 
@@ -1080,20 +1111,20 @@ export class KernelStore {
       outputTokens: result.usage?.outputTokens ?? null,
       costUsd: result.usage?.costUsd ?? null,
     });
-    const evidence = await this.collectEvidence(task, result, cancelled);
+    const evidence = await this.collectEvidence(task, result, cancelled, worktreePath);
     if (cancelled) {
-      await this.updateTaskStatus(task.id, 'cancelled');
+      if (trackTask) await this.updateTaskStatus(task.id, 'cancelled');
       const record = await this.updateRunStatus(id, 'cancelled', evidence.diffStat, evidence.artifacts);
       this.emitRunEvent(id, 'cancelled');
       return record;
     }
     if (result.exitCode === 0 && !result.timedOut) {
-      await this.updateTaskStatus(task.id, 'review');
+      if (trackTask) await this.updateTaskStatus(task.id, 'review');
       const record = await this.updateRunStatus(id, 'review', evidence.diffStat, evidence.artifacts);
       this.emitRunEvent(id, 'completed');
       return record;
     }
-    await this.updateTaskStatus(task.id, 'failed');
+    if (trackTask) await this.updateTaskStatus(task.id, 'failed');
     const record = await this.updateRunStatus(id, 'failed', evidence.diffStat, evidence.artifacts);
     this.emitRunEvent(id, 'failed');
     return record;
@@ -1773,6 +1804,158 @@ export class KernelStore {
     };
   }
 
+  /**
+   * Run every role of the task's Team as an independent lane: one detached worktree per role,
+   * bounded concurrency, no automatic merge. Lanes end in `review`; the caller accepts what it
+   * wants, and file-level overlaps are reported rather than resolved.
+   */
+  async executeParallelTeam(
+    taskId: string,
+    options: { runner?: CodexProcessRunner; maxConcurrency?: number } = {},
+  ): Promise<ParallelTeamResult> {
+    const task = this.getTask(taskId);
+    if (!task) throw new Error(`Task ${taskId} was not found.`);
+    if (!task.teamId) throw new Error(`Task ${taskId} is not assigned to a Team.`);
+    const team = await this.teams.getTeam(task.teamId);
+    if (!team) throw new Error(`Team ${task.teamId} was not found.`);
+    if (!team.enabled) throw new Error(`Team ${team.id} is disabled.`);
+    if (!task.worktreePath) throw new Error(`Task ${taskId} has no worktree. Provision it before parallel execution.`);
+    if (task.status !== 'queued' && task.status !== 'review') {
+      throw new Error(`Task ${taskId} is ${task.status}; parallel execution starts from queued or review only.`);
+    }
+
+    const maxConcurrency = Math.min(Math.max(options.maxConcurrency ?? 2, 1), 8);
+    await this.updateTaskStatus(taskId, 'running');
+
+    type LaneState = ParallelLaneResult & { lanePath: string | null };
+    const lanes: LaneState[] = [];
+    const pending: LaneState[] = [];
+    const base = task.baseCommit || task.baseRef;
+
+    for (const roleId of team.roleIds) {
+      const role = await this.roles.getRole(roleId);
+      if (!role || !role.enabled) {
+        lanes.push({
+          roleId,
+          roleName: role?.name ?? roleId,
+          runId: null,
+          worktreePath: null,
+          lanePath: null,
+          status: 'failed',
+          changedFiles: [],
+          error: role ? `Role ${roleId} is disabled.` : `Role ${roleId} was not found.`,
+        });
+        continue;
+      }
+      const agentId = role.profileId ?? role.baseAgentId;
+      if (!agentId) {
+        lanes.push({
+          roleId,
+          roleName: role.name,
+          runId: null,
+          worktreePath: null,
+          lanePath: null,
+          status: 'failed',
+          changedFiles: [],
+          error: `Role ${roleId} has no resolvable agent.`,
+        });
+        continue;
+      }
+      const lanePath = join(this.dataDirectory, 'tasks', taskId, 'lanes', role.id);
+      try {
+        if (existsSync(lanePath)) await removeWorktree(task.repo, lanePath).catch(() => undefined);
+        await addWorktree(task.repo, base, lanePath);
+        const run = await this.createRun(taskId, agentId, role.id, `Parallel lane: ${role.name}`);
+        const lane: LaneState = {
+          roleId,
+          roleName: role.name,
+          runId: run.id,
+          worktreePath: lanePath,
+          lanePath,
+          status: 'queued',
+          changedFiles: [],
+          error: null,
+        };
+        lanes.push(lane);
+        pending.push(lane);
+      } catch (error) {
+        lanes.push({
+          roleId,
+          roleName: role.name,
+          runId: null,
+          worktreePath: null,
+          lanePath: null,
+          status: 'failed',
+          changedFiles: [],
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Bounded waves: each wave runs at most `maxConcurrency` lanes at the same time.
+    for (let index = 0; index < pending.length; index += maxConcurrency) {
+      await Promise.all(pending.slice(index, index + maxConcurrency).map(async lane => {
+        try {
+          const executed = await this.executeRun(lane.runId as string, options.runner, {
+            worktreePath: lane.lanePath as string,
+            taskStatus: 'none',
+          });
+          lane.status = executed.status;
+          lane.changedFiles = executed.artifacts.changedFiles;
+        } catch (error) {
+          lane.status = 'failed';
+          lane.error = error instanceof Error ? error.message : String(error);
+        }
+      }));
+    }
+
+    const fileOwners = new Map<string, Set<string>>();
+    for (const lane of lanes) {
+      for (const file of lane.changedFiles) {
+        const owners = fileOwners.get(file) ?? new Set<string>();
+        owners.add(lane.roleId);
+        fileOwners.set(file, owners);
+      }
+    }
+    const conflicts: ParallelConflict[] = [...fileOwners.entries()]
+      .filter(([, owners]) => owners.size > 1)
+      .map(([file, owners]) => ({ file, roleIds: [...owners] }));
+
+    const succeeded = lanes.some(lane => lane.status === 'review' || lane.status === 'done');
+    const taskStatus: TaskRunState = succeeded ? 'review' : 'failed';
+    await this.updateTaskStatus(taskId, taskStatus);
+    await this.recordAudit({
+      type: 'parallel.executed',
+      taskId,
+      teamId: team.id,
+      data: {
+        teamId: team.id,
+        maxConcurrency,
+        lanes: lanes.length,
+        succeeded: lanes.filter(lane => lane.status === 'review' || lane.status === 'done').length,
+        failed: lanes.filter(lane => lane.status === 'failed').length,
+        conflicts: conflicts.length,
+      },
+    });
+
+    return {
+      taskId,
+      teamId: team.id,
+      maxConcurrency,
+      lanes: lanes.map(lane => ({
+        roleId: lane.roleId,
+        roleName: lane.roleName,
+        runId: lane.runId,
+        worktreePath: lane.worktreePath,
+        status: lane.status,
+        changedFiles: lane.changedFiles,
+        error: lane.error,
+      })),
+      conflicts,
+      taskStatus,
+    };
+  }
+
   /** Build the Role's dry-run execution plan. Returns null when the Role does not exist. */
   async testRolePlan(roleId: string, input: { objective?: string } = {}): Promise<RoleTestPlan | null> {
     const role = await this.roles.getRole(roleId);
@@ -1869,8 +2052,9 @@ export class KernelStore {
     task: TaskRecord,
     result: CodexExecutionResult,
     cancelled: boolean,
+    worktreePath: string = task.worktreePath,
   ): Promise<{ diffStat: string; artifacts: RunArtifacts }> {
-    const cwd = task.worktreePath;
+    const cwd = worktreePath;
     const trackedStat = await this.gitOutput(cwd, ['diff', '--stat', task.baseRef]);
     const trackedNames = await this.gitOutput(cwd, ['diff', '--name-only', task.baseRef]);
     // `git diff` ignores files the agent created but never staged, which is the common
