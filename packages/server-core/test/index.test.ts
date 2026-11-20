@@ -480,11 +480,26 @@ describe('createKernelApp', () => {
 
       const runDetail = await app.request(`/api/runs/${run.id}`);
       expect(runDetail.status).toBe(200);
-      expect((await runDetail.json()) as object).toMatchObject({
+      const runEvidence = (await runDetail.json()) as {
+        roleId: string | null;
+        runtimeId: string | null;
+        runtimeVersion: string | null;
+        command: string;
+        inputTokens: number | null;
+        outputTokens: number | null;
+        costUsd: number | null;
+        artifacts: { output: string; exitCode: number | null };
+      };
+      expect(runEvidence).toMatchObject({
         roleId: role.role.id,
         runtimeId: 'codex',
+        runtimeVersion: null,
+        inputTokens: null,
+        outputTokens: null,
+        costUsd: null,
         artifacts: { output: 'ok', exitCode: 0 },
       });
+      expect(runEvidence.command).toContain('codex exec');
 
       const events = await app.request(`/api/runs/${run.id}/events`);
       expect(events.status).toBe(200);
