@@ -602,11 +602,14 @@ export function TasksView() {
                               </span>
                             </div>
 
-                            {(run.roleId || run.runtimeId || run.commitSha) && (
+                            {(run.roleId || run.runtimeId || run.commitSha || run.runtimeVersion || run.inputTokens != null || run.outputTokens != null || run.costUsd != null) && (
                               <div className="run-evidence-meta run-identity">
                                 <span>{t('tasks.role')}: {run.roleId ?? '—'}</span>
                                 <span>{t('tasks.runtime')}: {run.runtimeId ?? '—'}</span>
+                                <span>{t('tasks.version')}: {run.runtimeVersion ?? '—'}</span>
                                 <span>{t('tasks.commit')}: {run.commitSha ? run.commitSha.slice(0, 10) : '—'}</span>
+                                <span>{t('tasks.tokens')}: {run.inputTokens ?? '—'} / {run.outputTokens ?? '—'}</span>
+                                <span>{t('tasks.cost')}: {run.costUsd != null ? `$${run.costUsd.toFixed(4)}` : '—'}</span>
                               </div>
                             )}
 
@@ -629,6 +632,12 @@ export function TasksView() {
                                 </div>
                                 {run.artifacts?.changedFiles.length ? (
                                   <p className="run-evidence-files">{run.artifacts.changedFiles.join(', ')}</p>
+                                ) : null}
+                                {run.command ? (
+                                  <>
+                                    <h4>{t('tasks.command')}</h4>
+                                    <pre className="run-evidence-pre">{run.command}</pre>
+                                  </>
                                 ) : null}
                                 <h4>{t('tasks.output')}</h4>
                                 <pre className="run-evidence-pre">{run.artifacts?.output || t('tasks.noOutput')}</pre>

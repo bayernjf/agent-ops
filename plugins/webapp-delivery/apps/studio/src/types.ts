@@ -434,6 +434,11 @@ export type KernelRun = {
   commitSha?: string;
   roleId?: string | null;
   runtimeId?: string | null;
+  runtimeVersion?: string | null;
+  command?: string;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  costUsd?: number | null;
   createdAt: string;
   updatedAt: string;
 };
