@@ -936,6 +936,9 @@ export const zh = {
     applyPlan: '应用计划',
     planFailed: '无法生成计划。',
     applyFailed: '无法应用计划。',
+    blockers: '卡点',
+    noBlockers: '暂无卡点。',
+    usage: '团队用量',
   },
   metrics: {
     eyebrow: '内核指标',
@@ -953,6 +956,7 @@ export const zh = {
     rework: '返工',
     reworkNote: '重跑 {retries} · 驳回 {rejections}',
     cost: '成本',
+    tokens: 'Token（输入 / 输出）',
     costNote: '{runs} 次运行上报',
     notReported: '未上报',
     avgDuration: '平均耗时',

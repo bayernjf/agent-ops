@@ -2,19 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Gauge, RefreshCw } from 'lucide-react';
 import { useI18n } from '../i18n/i18n';
 import { apiFetch } from '../lib/api';
+import { formatCost, formatDuration, formatPercent } from '../lib/format';
 import type { KernelMetrics } from '../types';
-
-function formatDuration(durationMs: number): string {
-  return durationMs < 1000 ? `${durationMs} ms` : `${(durationMs / 1000).toFixed(1)} s`;
-}
-
-function formatPercent(value: number | null): string {
-  return value === null ? '—' : `${Math.round(value * 100)}%`;
-}
-
-function formatCost(value: number | null): string {
-  return value === null ? '—' : `$${value.toFixed(4)}`;
-}
 
 /**
  * Aggregated kernel metrics: success, rework, usage and timing across tasks and runs, plus

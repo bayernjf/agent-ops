@@ -2349,6 +2349,25 @@ select option {
   font-size: 12px;
 }
 
+.team-metric-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.team-metric-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.team-metric-list span { color: var(--text-2); }
+.team-metric-list strong { color: var(--text-1); font-size: 14px; }
+
 /* Kernel metrics: KPI cards plus per-runtime and per-role tables. */
 .metrics-view .error { margin: 16px 0 0; }
 

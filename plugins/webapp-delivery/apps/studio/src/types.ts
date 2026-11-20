@@ -502,6 +502,7 @@ export type RoleTemplate = {
 export type KernelMetrics = {
   generatedAt: string;
   window: { since: string | null; until: string | null };
+  teamId: string | null;
   tasks: { total: number; done: number; failed: number; cancelled: number; open: number };
   runs: { total: number; executed: number; succeeded: number; failed: number; cancelled: number; inFlight: number; successRate: number | null };
   rework: { retries: number; rejections: number; reworkRate: number | null };
