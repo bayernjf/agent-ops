@@ -526,6 +526,19 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}`).then(toResult));
 
+  server.registerTool('agent_ops_get_budget', {
+    title: 'Get task budget',
+    description: 'Report a task\'s Role and Team spending against their budgets, based only on the usage runs actually reported. An unreported dimension never blocks on its own.',
+    inputSchema: {
+      ...taskIdSchema,
+      roleId: z.string().min(1).optional().describe('Role scope to check; omit it to report the team scope only.'),
+    },
+    annotations: READ_ONLY,
+  }, args => {
+    const query = args.roleId ? `?roleId=${encodeURIComponent(args.roleId)}` : '';
+    return callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}/budget${query}`).then(toResult);
+  });
+
   server.registerTool('agent_ops_list_handoffs', {
     title: 'List handoffs',
     description: 'List a task\'s handoff receipts: which step committed which sha and which downstream run received it.',

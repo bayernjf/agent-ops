@@ -143,6 +143,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_get_acceptance',
       'agent_ops_get_apply',
       'agent_ops_get_baseline_plan',
+      'agent_ops_get_budget',
       'agent_ops_get_connectors',
       'agent_ops_get_credentials_meta',
       'agent_ops_get_delivery_report',
@@ -282,6 +283,22 @@ describe('agent-ops MCP bridge', () => {
     const deleted = await client.callTool({ name: 'agent_ops_delete_team', arguments: { teamId: team.id } });
     expect(deleted.isError).toBeFalsy();
     expect(JSON.parse(textOf(deleted))).toMatchObject({ deleted: true });
+  });
+
+  it('reads a task budget through the daemon', async () => {
+    const client = await startBridge();
+    const created = await client.callTool({
+      name: 'agent_ops_create_task',
+      arguments: { repo: '/r', baseRef: 'main', title: 'Budgetless' },
+    });
+    expect(created.isError).toBeFalsy();
+    const { id } = JSON.parse(textOf(created)) as { id: string };
+
+    const budget = await client.callTool({ name: 'agent_ops_get_budget', arguments: { taskId: id } });
+    expect(budget.isError).toBeFalsy();
+    const body = JSON.parse(textOf(budget)) as { role: unknown; team: unknown };
+    expect(body.role).toBeNull();
+    expect(body.team).toBeNull();
   });
 
   it('evaluates a tool policy through the daemon', async () => {
