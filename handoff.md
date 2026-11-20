@@ -270,4 +270,15 @@
 - [x] MCP：新增 `agent_ops_list_audit`。
 - [x] 测试：角色/团队/派活的事件顺序与过滤、Pipeline 回放顺序 `task.created → run.accepted → handoff.recorded → run.accepted`、reject 记录、重启后事件仍在且新事件 seq 递增；server 三向过滤与 limit；MCP 返回 `role.created`。全仓 typecheck 0，51 文件 / 669 tests 绿。
 - [x] 本轮提交：`7a7d7af feat(storage-core): record kernel audit events`、`bfb4398 feat(server-core): serve the audit log`、`e746600 feat(cli): add the audit tool`。
-- [ ] 未做：Studio 暂无审计面板；`actor` 只区分 operator/system，没有具体操作人身份（本地单用户内核还没有身份模型）；F8-03 证据导出未做；审计表不自动截断。
+- [ ] 未做：Studio 暂无审计面板；`actor` 只区分 operator/system，没有具体操作人身份（本地单用户内核还没有身份模型）；审计表不自动截断。（F8-03 见下节。）
+
+## F8-03 证据导出 — 已完成（2026-11-20）
+
+- [x] `KernelStore.exportTask(id)` 产出单任务证据包：task + pipeline、每个 Run（diff / output / exitCode / 时长 / changedFiles / commit / role / runtime / usage）、handoff 收据、该任务的审计事件，以及 totals。
+- [x] totals：runs、acceptedCommits（有 commit 的 Run）、changedFiles（去重）、inputTokens/outputTokens/costUsd、reportingRuns、durationMs；**没有任何 Run 上报 usage 时三个 usage 字段为 `null`**，不写 0。
+- [x] server：`GET /api/tasks/:id/export`（`content-disposition: attachment; filename="agent-ops-task-<id>.json"`），未知任务 404。
+- [x] MCP：新增 `agent_ops_export_task`。
+- [x] CLI：`agent-ops export <taskId> [--out <file>]`，默认打到 stdout；连接信息取 `AGENT_OPS_DAEMON_URL` / `AGENT_OPS_DAEMON_TOKEN`（或 `~/.agent-ops/daemon-token`）；`--out` 时打印写入字节数。
+- [x] 测试：两步 Pipeline 的导出含 2 个 Run（第二个带 handoff、diff/output 可读）、审计 4 条、totals `runs=2 / acceptedCommits=2 / changedFiles=2 / reportingRuns=0 / usage=null / durationMs>0`；空任务 totals 归零且 costUsd 为 null；server 附件头与 404；MCP 导出返回 task id 与 totals。全仓 typecheck 0，52 文件 / 673 tests 绿。
+- [x] 本轮提交：`ef4c752 feat(storage-core): export a task's evidence`、`4be9c5b feat(server-core): serve task evidence exports`、`810ff5a feat(cli): add the task export surface`。
+- [ ] 未做：导出只有 JSON，没有打包 zip/tar，也不含 worktree 里的二进制产物；artifacts 沿用采集时的截断版本，导出不再二次限长；F8-04 指标聚合未做。
