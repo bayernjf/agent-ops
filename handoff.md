@@ -328,4 +328,16 @@
 - [x] Studio：TeamsView 任务队列里 `queued` 任务显示“生成计划”，预览步骤后点“应用计划”才落库。
 - [x] 测试：拓扑排序（链/并列/菱形/越界边）；协调器 plan→apply→execute→summary（3 步全部 completed、2 条交接、卡点为空、重复 apply 被拒）；无 Team 报错；server 200/400/404；MCP 端到端 plan/apply。全仓 typecheck 0，57 文件 / 695 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
 - [x] 本轮提交：`4190eb9 feat(agent-runtime): order team roles by handoff`、`cdfe346 feat(storage-core): add a team coordinator`、`dea6f98 feat(server-core): serve coordinator plans`、`c0b5e8e feat(cli): add coordinator tools`、`b124e4a feat(studio): plan a pipeline from a team`。
-- [ ] 未做：这是**串行**协调器；并行派活、独立 worktree、有界并发与自动冲突检查仍属 F5-07；“拆任务”只按花名册拆到角色，不按内容再拆子任务；汇总不调模型、不做语义总结；Studio 未在真实浏览器点击。
+- [ ] 未做：这是**串行**协调器；并行版见下节（F5-07）。“拆任务”只按花名册拆到角色，不按内容再拆子任务；汇总不调模型、不做语义总结；Studio 未在真实浏览器点击。
+
+## F5-07 并行团队 — 已完成（内核版，2026-11-20）
+
+- [x] `KernelStore.executeParallelTeam(taskId, { runner?, maxConcurrency? })`：为团队每个角色创建独立 lane，worktree 从任务 base commit 拉开（`tasks/<taskId>/lanes/<roleId>`），按 `maxConcurrency`（默认 2，范围 1–8）分波执行。
+- [x] `executeRun` 增加可选 `worktreePath` 与 `taskStatus: 'none'`：lane 在各自 worktree 里执行、证据从该 worktree 采集，且不会让每个 lane 改写任务状态；任务状态在全部 lane 结束后统一落一次（有任一成功 → `review`，全部失败 → `failed`）。
+- [x] 冲突可见而非自动合并：按各 lane 的 `changedFiles` 求交集，返回 `{ file, roleIds }` 列表；不 merge、不解决。
+- [x] 单个 lane 失败不阻塞其它 lane；角色停用/缺失/无可解析 agent 时该 lane 直接记失败原因。
+- [x] 审计：新增 `parallel.executed` 事件（并发上限、lane 数、成功/失败、冲突数）。
+- [x] server：`POST /api/tasks/:id/parallel/execute`（`maxConcurrency` 1–8，越界 400）；MCP：新增 `agent_ops_execute_parallel`。
+- [x] 测试：3 角色团队按并发 2 跑 3 条 lane，实测最大并发 = 2、三个独立 worktree、每 lane 自有文件 + 两条 lane 共享的 `SHARED.md` 被列为冲突、任务落 `review`、审计含 `parallel.executed`；一个 lane 失败时另一个仍成功且任务仍 `review`；未 provision 的任务报 `no worktree`；server 200/400。全仓 typecheck 0，58 文件 / 698 tests 绿。
+- [x] 本轮提交：`2411c85 feat(storage-core): add parallel team lanes`、`a63ef21 feat(server-core): expose parallel lanes`、`64033fb feat(cli): add the parallel lane tool`。
+- [ ] 未做：**没有自动合并或合成**——lane 产出的 commit 需要人工逐个接受或放弃；现有 `acceptRun` 会把任务直接置 `done`，并行任务的接受语义尚未定义；`releaseTask` 不会清理 lane worktree；Studio 没有并行入口；真实模型的并行执行未跑（CLI 登录仍阻塞）。
