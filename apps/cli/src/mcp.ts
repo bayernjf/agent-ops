@@ -531,6 +531,27 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}/handoffs`).then(toResult));
 
+  server.registerTool('agent_ops_plan_team_pipeline', {
+    title: 'Plan a team pipeline',
+    description: 'Derive a serial pipeline from the task\'s Team roster and handoff edges. It returns the proposed steps and writes nothing until agent_ops_apply_team_plan is called.',
+    inputSchema: taskIdSchema,
+    annotations: READ_ONLY,
+  }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/coordinator/plan`).then(toResult));
+
+  server.registerTool('agent_ops_apply_team_plan', {
+    title: 'Apply a team plan',
+    description: 'Write the team-derived pipeline onto a queued task. This call is the human approval gate; the task still runs step by step afterwards.',
+    inputSchema: taskIdSchema,
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/coordinator/apply`).then(toResult));
+
+  server.registerTool('agent_ops_coordinator_summary', {
+    title: 'Coordinator summary',
+    description: 'Summarize a task\'s pipeline without a model: per-step status, commit and changed-file count, plus the blocking steps.',
+    inputSchema: taskIdSchema,
+    annotations: READ_ONLY,
+  }, args => callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}/coordinator`).then(toResult));
+
   server.registerTool('agent_ops_list_audit', {
     title: 'List audit events',
     description: 'Replay kernel audit events: role and team edits, task assignment, accepted or rejected runs, pipeline gates and handoffs. Newest-last, capped by limit.',
