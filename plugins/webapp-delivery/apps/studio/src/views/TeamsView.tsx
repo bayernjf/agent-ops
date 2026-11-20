@@ -16,6 +16,7 @@ type TeamForm = {
   description: string;
   roleIds: string[];
   handoffs: HandoffDraft[];
+  ownerRoleId: string;
   enabled: boolean;
 };
 
@@ -24,6 +25,7 @@ const emptyForm: TeamForm = {
   description: '',
   roleIds: [],
   handoffs: [],
+  ownerRoleId: '',
   enabled: true,
 };
 
@@ -32,6 +34,7 @@ const toForm = (team: AgentTeam): TeamForm => ({
   description: team.description ?? '',
   roleIds: team.roleIds,
   handoffs: team.handoffs.map(handoff => ({ fromRoleId: handoff.fromRoleId, toRoleId: handoff.toRoleId, note: handoff.note ?? '' })),
+  ownerRoleId: team.ownerRoleId ?? '',
   enabled: team.enabled,
 });
 
@@ -118,15 +121,17 @@ export function TeamsView() {
   const update = <K extends keyof TeamForm>(key: K, value: TeamForm[K]) => setForm(prev => ({ ...prev, [key]: value }));
 
   const toggleRoster = (roleId: string) => {
-    setForm(prev => ({
-      ...prev,
-      roleIds: prev.roleIds.includes(roleId)
-        ? prev.roleIds.filter(id => id !== roleId)
-        : [...prev.roleIds, roleId],
-      handoffs: prev.roleIds.includes(roleId)
-        ? prev.handoffs.filter(handoff => handoff.fromRoleId !== roleId && handoff.toRoleId !== roleId)
-        : prev.handoffs,
-    }));
+    setForm(prev => {
+      const removing = prev.roleIds.includes(roleId);
+      return {
+        ...prev,
+        roleIds: removing ? prev.roleIds.filter(id => id !== roleId) : [...prev.roleIds, roleId],
+        handoffs: removing
+          ? prev.handoffs.filter(handoff => handoff.fromRoleId !== roleId && handoff.toRoleId !== roleId)
+          : prev.handoffs,
+        ownerRoleId: removing && prev.ownerRoleId === roleId ? '' : prev.ownerRoleId,
+      };
+    });
   };
 
   const updateHandoff = (index: number, patch: Partial<HandoffDraft>) => {
@@ -164,6 +169,7 @@ export function TeamsView() {
         description: form.description.trim() || undefined,
         roleIds: form.roleIds,
         handoffs,
+        ownerRoleId: form.ownerRoleId || undefined,
         enabled: form.enabled,
       };
       const response = editingId === 'new'
@@ -291,6 +297,14 @@ export function TeamsView() {
               )}
             </fieldset>
 
+            <label>{t('teams.owner')}
+              <select value={form.ownerRoleId} onChange={event => update('ownerRoleId', event.target.value)}>
+                <option value="">{t('teams.ownerNone')}</option>
+                {form.roleIds.map(roleId => <option key={roleId} value={roleId}>{roleName(roleId)}</option>)}
+              </select>
+              <small>{t('teams.ownerHint')}</small>
+            </label>
+
             <fieldset className="team-handoffs">
               <legend>{t('teams.handoffs')}</legend>
               {form.handoffs.length === 0 ? (
@@ -369,6 +383,7 @@ export function TeamsView() {
                 <div>
                   <h2>{selected.name}</h2>
                   <p>{selected.description ?? t('teams.detailFallback')}</p>
+                  <p>{selected.ownerRoleId ? `${t('teams.owner')}: ${roleName(selected.ownerRoleId)}` : t('teams.ownerNone')}</p>
                 </div>
               </div>
 

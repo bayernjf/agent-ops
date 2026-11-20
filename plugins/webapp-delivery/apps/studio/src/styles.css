@@ -2256,6 +2256,8 @@ select option {
   font-size: 13px;
 }
 
+.team-form small { display: block; margin-top: 4px; color: var(--text-3); font-size: 11px; }
+
 .team-roster,
 .team-handoffs {
   margin: 0 0 14px;

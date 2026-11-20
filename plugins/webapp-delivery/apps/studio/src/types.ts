@@ -591,6 +591,8 @@ export type AgentTeam = {
   description?: string;
   roleIds: string[];
   handoffs: TeamHandoff[];
+  /** The role that owns the final write; it runs last and must not hand off. */
+  ownerRoleId?: string;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
