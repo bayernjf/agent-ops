@@ -375,8 +375,37 @@ export type KernelTask = {
   title: string;
   objective: string;
   status: KernelTaskState;
+  pipeline?: TaskPipeline | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type TaskPipelineStep = {
+  id: string;
+  name: string;
+  roleId?: string;
+  profileId?: string;
+  agentId?: string;
+  prompt?: string;
+};
+
+export type TaskPipelineStepResult = {
+  stepId: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  runId?: string;
+  commitSha?: string;
+  output?: string;
+  error?: string;
+  startedAt?: string;
+  completedAt?: string;
+};
+
+export type TaskPipeline = {
+  steps: TaskPipelineStep[];
+  results: TaskPipelineStepResult[];
+  status: 'idle' | 'running' | 'completed' | 'failed';
+  startedAt?: string;
+  completedAt?: string;
 };
 
 export type KernelRunArtifacts = {
