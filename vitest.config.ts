@@ -15,6 +15,7 @@ const subpaths: Array<{ find: string; replacement: string }> = [
   { find: '@agent-ops/blueprint/client', replacement: join(pluginsDir, 'blueprint', 'src', 'client.ts') },
   { find: '@agent-ops/blueprint/workspace', replacement: join(pluginsDir, 'blueprint', 'src', 'workspace.ts') },
   { find: '@agent-ops/policy/confirmations', replacement: join(packagesDir, 'policy', 'src', 'confirmations.ts') },
+  { find: '@agent-ops/policy/tool-policy', replacement: join(packagesDir, 'policy', 'src', 'tool-policy.ts') },
   { find: '@agent-ops/agent-runtime/failure-classification', replacement: join(packagesDir, 'agent-runtime', 'src', 'failure-classification.ts') },
 ];
 

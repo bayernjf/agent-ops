@@ -833,6 +833,13 @@ export const en = {
     cost: 'Cost',
     commit: 'Commit',
     lane: 'Lane',
+    toolAudit: 'Tool calls',
+    toolAuditUnknown: 'The runtime did not report tool calls.',
+    toolStatus: {
+      ok: 'Called',
+      denied: 'Denied',
+      unknown: 'Unknown',
+    },
     handoff: 'Handoff',
     timedOut: 'Timed out',
     cancelled: 'Cancelled',

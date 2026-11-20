@@ -423,6 +423,9 @@ export type KernelRunArtifacts = {
   signal: string | null;
   timedOut: boolean;
   cancelled: boolean;
+  /** Tool calls the runtime reported; empty when it did not report any. */
+  toolCalls?: Array<{ name: string; status: 'ok' | 'denied' | 'unknown'; reason: string | null }>;
+  toolAudit?: { source: 'runtime' | 'unknown'; reason: string | null };
   startedAt: string;
   completedAt: string;
   durationMs: number;

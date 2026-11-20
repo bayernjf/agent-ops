@@ -12,16 +12,19 @@ import {
   buildAgentExecutionPlan,
   describeRuntimeExecutorRejection,
   executeCodexPlan,
+  extractToolAudit,
   orderTeamRoles,
   resolveRoleRuntime,
   resolveRuntimeExecutor,
   runtimeProviderAgentId,
+  TOOL_AUDIT_LIMIT,
   type AgentAdapterStatus,
   type AgentRole,
   type ApprovedTask,
   type CodexExecutionResult,
   type CodexProcessRunner,
   type ResolvedToolPolicy,
+  type ToolCallAudit,
 } from '@agent-ops/agent-runtime';
 import type { TaskRunState } from '@agent-ops/workflow';
 import { tasks, runs, runEvents, runHandoffs, auditEvents } from './schema.js';
@@ -223,6 +226,10 @@ export type RunArtifacts = {
   timedOut: boolean;
   /** True when the run was stopped through POST /api/runs/:id/cancel. */
   cancelled: boolean;
+  /** Tool calls the runtime reported, bounded and de-duplicated; empty when it reported none. */
+  toolCalls: ToolCallAudit[];
+  /** Where the tool audit came from; `unknown` means the runtime did not report tool usage. */
+  toolAudit: { source: 'runtime' | 'unknown'; reason: string | null };
   startedAt: string;
   completedAt: string;
   durationMs: number;
@@ -264,6 +271,8 @@ export function emptyRunArtifacts(): RunArtifacts {
     signal: null,
     timedOut: false,
     cancelled: false,
+    toolCalls: [],
+    toolAudit: { source: 'unknown', reason: null },
     startedAt: '',
     completedAt: '',
     durationMs: 0,
@@ -539,6 +548,18 @@ function parseRunArtifacts(raw: string): RunArtifacts {
       signal: typeof parsed.signal === 'string' ? parsed.signal : null,
       timedOut: parsed.timedOut === true,
       cancelled: parsed.cancelled === true,
+      toolCalls: Array.isArray(parsed.toolCalls)
+        ? parsed.toolCalls
+          .filter((call): call is ToolCallAudit => Boolean(call) && typeof call === 'object' && typeof call.name === 'string')
+          .slice(0, TOOL_AUDIT_LIMIT)
+        : defaults.toolCalls,
+      toolAudit: parsed.toolAudit && typeof parsed.toolAudit === 'object'
+        && (parsed.toolAudit.source === 'runtime' || parsed.toolAudit.source === 'unknown')
+        ? {
+          source: parsed.toolAudit.source,
+          reason: typeof parsed.toolAudit.reason === 'string' ? parsed.toolAudit.reason : null,
+        }
+        : defaults.toolAudit,
       startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : '',
       completedAt: typeof parsed.completedAt === 'string' ? parsed.completedAt : '',
       durationMs: typeof parsed.durationMs === 'number' && Number.isFinite(parsed.durationMs)
@@ -2122,6 +2143,9 @@ export class KernelStore {
     const diffStat = [trackedStat.trim(), untrackedStat].filter(Boolean).join('\n');
 
     const boundedOutput = boundedText(result.output ?? '', RUN_OUTPUT_LIMIT);
+    // The tool audit reads the raw output, not the bounded copy: a JSON tool report may sit
+    // past the truncation point even though the remaining output is only logs.
+    const toolAudit = extractToolAudit(result.output ?? '');
     const started = Date.parse(result.startedAt);
     const completed = Date.parse(result.completedAt);
     const durationMs = Number.isFinite(started) && Number.isFinite(completed)
@@ -2140,6 +2164,8 @@ export class KernelStore {
         signal: result.signal,
         timedOut: result.timedOut,
         cancelled,
+        toolCalls: toolAudit.calls,
+        toolAudit: { source: toolAudit.source, reason: toolAudit.reason },
         startedAt: result.startedAt,
         completedAt: result.completedAt,
         durationMs,

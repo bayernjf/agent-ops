@@ -760,6 +760,40 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('evaluates a tool policy across runtimes', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const response = await app.request('/api/policy/evaluate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ allowedTools: ['Read', 'Grep'], approvalMode: 'human' }),
+      });
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        policy: { approvalMode: string };
+        verdicts: Array<{ runtimeId: string; enforcement: string; readOnly: boolean; approval: { mode: string; humanGate: boolean }; decisions: unknown[] }>;
+      };
+      expect(body.policy.approvalMode).toBe('human');
+      expect(body.verdicts.find(verdict => verdict.runtimeId === 'codex')).toMatchObject({
+        enforcement: 'exact',
+        readOnly: true,
+        approval: { mode: 'human', humanGate: true },
+      });
+      expect(body.verdicts.find(verdict => verdict.runtimeId === 'hermes')?.enforcement).toBe('unsupported');
+
+      const invalid = await app.request('/api/policy/evaluate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ allowedTools: 'not-an-array' }),
+      });
+      expect(invalid.status).toBe(400);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a role whose runtime is not verified or whose profile is missing', async () => {
     const { store, directory } = await openStore();
     try {

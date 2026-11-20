@@ -56,6 +56,7 @@ function hasEvidence(run: KernelRun): boolean {
     || artifacts.timedOut
     || artifacts.cancelled
     || artifacts.changedFiles.length > 0
+    || (artifacts.toolCalls?.length ?? 0) > 0
   ));
 }
 
@@ -707,6 +708,22 @@ export function TasksView() {
                                     <pre className="run-evidence-pre">{run.command}</pre>
                                   </>
                                 ) : null}
+                                <h4>{t('tasks.toolAudit')}</h4>
+                                {(run.artifacts?.toolCalls?.length ?? 0) > 0 ? (
+                                  <ul className="run-tool-list">
+                                    {run.artifacts?.toolCalls?.map(call => (
+                                      <li key={`${call.name}-${call.status}-${call.reason ?? ''}`}>
+                                        <span>{call.name}</span>
+                                        <span className={`state ${call.status === 'denied' ? 'failed' : call.status === 'ok' ? 'done' : 'queued'}`}>
+                                          {t(`tasks.toolStatus.${call.status}` as KeyPath)}
+                                        </span>
+                                        {call.reason && <small>{call.reason}</small>}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <p className="run-evidence-note">{run.artifacts?.toolAudit?.reason ?? t('tasks.toolAuditUnknown')}</p>
+                                )}
                                 <h4>{t('tasks.output')}</h4>
                                 <pre className="run-evidence-pre">{run.artifacts?.output || t('tasks.noOutput')}</pre>
                                 {run.artifacts?.outputTruncated && <p className="run-evidence-note">{t('tasks.outputTruncated')}</p>}
