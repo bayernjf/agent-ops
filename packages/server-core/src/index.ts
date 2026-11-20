@@ -377,6 +377,14 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     return c.json({ handoffs: store.listHandoffs(taskId) });
   });
 
+  app.get('/api/tasks/:id/export', (c) => {
+    const taskId = c.req.param('id');
+    const exported = store.exportTask(taskId);
+    if (!exported) return c.json({ error: `Task ${taskId} was not found.` }, 404);
+    c.header('content-disposition', `attachment; filename="agent-ops-task-${taskId}.json"`);
+    return c.json(exported);
+  });
+
   app.post('/api/tasks/:id/pipeline/execute', async (c) => {
     try {
       return c.json(await store.executeTaskPipeline(c.req.param('id'), options.runner));

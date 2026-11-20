@@ -560,6 +560,32 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('exports a task evidence bundle over the API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Export me' });
+
+      const response = await app.request(`/api/tasks/${task.id}/export`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-disposition')).toContain(task.id);
+      const body = (await response.json()) as {
+        task: { id: string };
+        totals: { runs: number; costUsd: number | null };
+        audit: Array<{ type: string }>;
+      };
+      expect(body.task.id).toBe(task.id);
+      expect(body.totals.runs).toBe(0);
+      expect(body.totals.costUsd).toBeNull();
+      expect(body.audit.map(event => event.type)).toContain('task.created');
+
+      expect((await app.request('/api/tasks/missing/export')).status).toBe(404);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a role whose runtime is not verified or whose profile is missing', async () => {
     const { store, directory } = await openStore();
     try {
