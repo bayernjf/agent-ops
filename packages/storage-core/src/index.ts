@@ -53,6 +53,8 @@ export type TaskPipelineStepInput = {
   agentId?: string;
   prompt?: string;
   requiresApproval?: boolean;
+  /** Steps this step depends on for a DAG run; defaults to the previous step in a serial run. */
+  dependsOn?: string[];
 };
 
 export type TaskPipelineStep = {
@@ -63,6 +65,7 @@ export type TaskPipelineStep = {
   agentId?: string;
   prompt?: string;
   requiresApproval?: boolean;
+  dependsOn?: string[];
 };
 
 export type TaskPipelineStepResult = {
@@ -371,6 +374,7 @@ export type KernelAuditEventType =
   | 'pipeline.step.rejected'
   | 'pipeline.retried'
   | 'pipeline.planned'
+  | 'pipeline.dag.executed'
   | 'parallel.executed'
   | 'budget.blocked'
   | 'run.rerun'
@@ -407,6 +411,29 @@ export type CoordinatorSummary = {
   awaiting: number;
   handoffs: number;
   blockers: Array<{ stepId: string; status: string }>;
+};
+
+/** One step of a DAG run: it executed in its own worktree branched from its dependencies. */
+export type DagStepResult = {
+  stepId: string;
+  name: string;
+  status: 'completed' | 'failed' | 'skipped';
+  runId: string | null;
+  commitSha: string | null;
+  worktreePath: string | null;
+  changedFiles: string[];
+  error: string | null;
+};
+
+export type DagConflict = { file: string; stepIds: string[] };
+
+export type DagPipelineResult = {
+  taskId: string;
+  maxConcurrency: number;
+  steps: DagStepResult[];
+  conflicts: DagConflict[];
+  warnings: string[];
+  taskStatus: TaskRunState;
 };
 
 /** One role's lane in a parallel run: its own worktree, run and changed files. */
@@ -757,8 +784,31 @@ export class KernelStore {
         ...(agentId ? { agentId } : {}),
         ...(raw.prompt?.trim() ? { prompt: raw.prompt.trim() } : {}),
         ...(raw.requiresApproval ? { requiresApproval: true } : {}),
+        // An explicit dependsOn (even an empty one) is authoritative: `[]` marks a DAG root.
+        ...(raw.dependsOn ? { dependsOn: [...new Set(raw.dependsOn.map(dep => dep.trim()).filter(Boolean))] } : {}),
       });
     }
+
+    const ids = new Set(steps.map(step => step.id));
+    for (const step of steps) {
+      for (const dependency of step.dependsOn ?? []) {
+        if (!ids.has(dependency)) throw new Error(`Pipeline step ${step.id} depends on unknown step ${dependency}.`);
+        if (dependency === step.id) throw new Error(`Pipeline step ${step.id} cannot depend on itself.`);
+      }
+    }
+    // A DAG run needs an acyclic dependency graph; refuse one here instead of failing mid-run.
+    const byId = new Map(steps.map(step => [step.id, step]));
+    const visiting = new Set<string>();
+    const visited = new Set<string>();
+    const visit = (id: string): void => {
+      if (visited.has(id)) return;
+      if (visiting.has(id)) throw new Error(`Pipeline dependency cycle detected at step ${id}.`);
+      visiting.add(id);
+      for (const dependency of byId.get(id)?.dependsOn ?? []) visit(dependency);
+      visiting.delete(id);
+      visited.add(id);
+    };
+    for (const step of steps) visit(step.id);
     return { steps, results: [], status: 'idle' };
   }
 
@@ -1106,7 +1156,7 @@ export class KernelStore {
   async executeRun(
     id: string,
     runner?: CodexProcessRunner,
-    options: { worktreePath?: string; laneId?: string; taskStatus?: 'auto' | 'none'; worktree?: 'auto' | 'keep' | 'fresh' } = {},
+    options: { worktreePath?: string; laneId?: string; taskStatus?: 'auto' | 'none'; worktree?: 'auto' | 'keep' | 'fresh'; evidenceBase?: string } = {},
   ): Promise<RunRecord> {
     const run = this.getRun(id);
     if (!run) throw new Error(`Run ${id} was not found.`);
@@ -1207,7 +1257,7 @@ export class KernelStore {
       outputTokens: result.usage?.outputTokens ?? null,
       costUsd: result.usage?.costUsd ?? null,
     });
-    const evidence = await this.collectEvidence(task, result, cancelled, worktreePath);
+    const evidence = await this.collectEvidence(task, result, cancelled, worktreePath, options.evidenceBase ?? task.baseRef);
     if (cancelled) {
       if (trackTask) await this.updateTaskStatus(task.id, 'cancelled');
       const record = await this.updateRunStatus(id, 'cancelled', evidence.diffStat, evidence.artifacts);
@@ -2145,6 +2195,170 @@ export class KernelStore {
     };
   }
 
+  /**
+   * Run a pipeline as a DAG: every ready step gets its own worktree branched from its
+   * dependencies' commits, up to `maxConcurrency` run at once. Steps whose dependencies
+   * failed are skipped, and file-level overlaps are reported, never merged.
+   */
+  async executeDagPipeline(
+    taskId: string,
+    options: { runner?: CodexProcessRunner; maxConcurrency?: number } = {},
+  ): Promise<DagPipelineResult> {
+    if (this.activePipelines.has(taskId)) throw new Error(`Task ${taskId} already has a running pipeline.`);
+    this.activePipelines.add(taskId);
+    try {
+      const task = this.getTask(taskId);
+      if (!task) throw new Error(`Task ${taskId} was not found.`);
+      const pipeline = task.pipeline;
+      if (!pipeline || pipeline.steps.length === 0) throw new Error(`Task ${taskId} has no pipeline configured.`);
+      if (pipeline.steps.some(step => step.requiresApproval)) {
+        throw new Error('DAG execution does not support per-step approval yet; remove requiresApproval or use the serial pipeline.');
+      }
+      if (!task.worktreePath) throw new Error(`Task ${taskId} has no worktree. Provision it before a DAG run.`);
+      if (task.status !== 'queued' && task.status !== 'review') {
+        throw new Error(`Task ${taskId} is ${task.status}; a DAG run starts from queued or review only.`);
+      }
+
+      const maxConcurrency = Math.min(Math.max(options.maxConcurrency ?? 2, 1), 8);
+      const base = task.baseCommit || task.baseRef;
+      const startedAt = new Date().toISOString();
+      const positions = new Map(pipeline.steps.map((step, position) => [step.id, position]));
+      const dependencyIds = (step: TaskPipelineStep): string[] => {
+        // An explicit dependsOn wins, including `[]` for a root; only steps that never named
+        // dependencies fall back to the serial "previous step" default.
+        if (step.dependsOn) return step.dependsOn;
+        const position = positions.get(step.id) ?? 0;
+        return position > 0 ? [pipeline.steps[position - 1]!.id] : [];
+      };
+
+      const results = new Map<string, DagStepResult>();
+      const warnings: string[] = [];
+      await this.updateTaskStatus(taskId, 'running');
+
+      const runStep = async (step: TaskPipelineStep): Promise<void> => {
+        const dependencies = dependencyIds(step);
+        const branchFrom = dependencies.length === 0
+          ? base
+          : results.get(dependencies[dependencies.length - 1] ?? '')?.commitSha ?? null;
+        if (dependencies.length > 1) {
+          warnings.push(`Step ${step.id} branched from ${dependencies[dependencies.length - 1]}; commits from ${dependencies.slice(0, -1).join(', ')} are not merged.`);
+        }
+        if (dependencies.length > 0 && !branchFrom) {
+          results.set(step.id, { stepId: step.id, name: step.name, status: 'skipped', runId: null, commitSha: null, worktreePath: null, changedFiles: [], error: 'A dependency produced no commit.' });
+          return;
+        }
+
+        const lanePath = join(this.dataDirectory, 'tasks', taskId, 'dag', step.id);
+        let runId: string | null = null;
+        try {
+          if (existsSync(lanePath)) await removeWorktree(task.repo, lanePath).catch(() => undefined);
+          await addWorktree(task.repo, branchFrom ?? base, lanePath);
+          const agentId = await this.resolvePipelineStepAgent(step);
+          const instruction = `DAG step: ${step.name}${step.prompt ? `\n\n${step.prompt}` : ''}`;
+          const run = await this.createRun(taskId, agentId, step.roleId, instruction);
+          runId = run.id;
+          const executed = await this.executeRun(run.id, options.runner, { worktreePath: lanePath, laneId: `dag-${step.id}`, taskStatus: 'none', evidenceBase: branchFrom ?? base });
+          if (executed.status !== 'review') {
+            results.set(step.id, { stepId: step.id, name: step.name, status: 'failed', runId, commitSha: null, worktreePath: lanePath, changedFiles: executed.artifacts.changedFiles, error: `Run ended in ${executed.status}.` });
+            return;
+          }
+          const accepted = await this.acceptRun(run.id);
+          results.set(step.id, { stepId: step.id, name: step.name, status: 'completed', runId, commitSha: accepted.commitSha, worktreePath: lanePath, changedFiles: accepted.artifacts.changedFiles, error: null });
+        } catch (error) {
+          results.set(step.id, {
+            stepId: step.id,
+            name: step.name,
+            status: 'failed',
+            runId,
+            commitSha: null,
+            worktreePath: existsSync(lanePath) ? lanePath : null,
+            changedFiles: [],
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      };
+
+      const pending = new Set(pipeline.steps.map(step => step.id));
+      while (pending.size > 0) {
+        // Drop dependents of failed or skipped steps before scheduling anything.
+        for (const step of pipeline.steps) {
+          if (!pending.has(step.id)) continue;
+          const blocked = dependencyIds(step)
+            .map(id => results.get(id))
+            .find(entry => entry && entry.status !== 'completed');
+          if (blocked) {
+            results.set(step.id, { stepId: step.id, name: step.name, status: 'skipped', runId: null, commitSha: null, worktreePath: null, changedFiles: [], error: `Dependency ${blocked.stepId} did not complete.` });
+            pending.delete(step.id);
+          }
+        }
+
+        const ready = pipeline.steps.filter(step => (
+          pending.has(step.id) && dependencyIds(step).every(id => results.get(id)?.status === 'completed')
+        ));
+        if (ready.length === 0) {
+          for (const step of pipeline.steps) {
+            if (!pending.has(step.id)) continue;
+            results.set(step.id, { stepId: step.id, name: step.name, status: 'skipped', runId: null, commitSha: null, worktreePath: null, changedFiles: [], error: 'Dependencies were not met.' });
+            pending.delete(step.id);
+          }
+          break;
+        }
+
+        for (let start = 0; start < ready.length; start += maxConcurrency) {
+          await Promise.all(ready.slice(start, start + maxConcurrency).map(step => runStep(step)));
+        }
+        for (const step of ready) pending.delete(step.id);
+      }
+
+      const fileOwners = new Map<string, Set<string>>();
+      for (const result of results.values()) {
+        for (const file of result.changedFiles) {
+          const owners = fileOwners.get(file) ?? new Set<string>();
+          owners.add(result.stepId);
+          fileOwners.set(file, owners);
+        }
+      }
+      const conflicts: DagConflict[] = [...fileOwners.entries()]
+        .filter(([, owners]) => owners.size > 1)
+        .map(([file, owners]) => ({ file, stepIds: [...owners] }));
+
+      const steps = pipeline.steps.map(step => results.get(step.id)).filter((result): result is DagStepResult => Boolean(result));
+      const completed = steps.filter(step => step.status === 'completed').length;
+      const failed = steps.filter(step => step.status === 'failed').length;
+      const skipped = steps.filter(step => step.status === 'skipped').length;
+      const taskStatus: TaskRunState = completed > 0 ? 'review' : 'failed';
+      const completedAt = new Date().toISOString();
+
+      const saved: TaskPipeline = {
+        steps: pipeline.steps,
+        results: steps.map(step => ({
+          stepId: step.stepId,
+          status: step.status === 'completed' ? 'completed' as const : 'failed' as const,
+          ...(step.runId ? { runId: step.runId } : {}),
+          ...(step.commitSha ? { commitSha: step.commitSha } : {}),
+          ...(step.error ? { error: step.error } : {}),
+          startedAt,
+          completedAt,
+        })),
+        status: completed > 0 ? 'completed' : 'failed',
+        startedAt,
+        completedAt,
+      };
+      await this.saveTaskPipeline(taskId, saved);
+      await this.updateTaskStatus(taskId, taskStatus);
+      await this.recordAudit({
+        type: 'pipeline.dag.executed',
+        taskId,
+        teamId: task.teamId,
+        data: { maxConcurrency, steps: pipeline.steps.length, completed, failed, skipped, conflicts: conflicts.length },
+      });
+
+      return { taskId, maxConcurrency, steps, conflicts, warnings, taskStatus };
+    } finally {
+      this.activePipelines.delete(taskId);
+    }
+  }
+
   /** Build the Role's dry-run execution plan. Returns null when the Role does not exist. */
   async testRolePlan(roleId: string, input: { objective?: string } = {}): Promise<RoleTestPlan | null> {
     const role = await this.roles.getRole(roleId);
@@ -2242,10 +2456,11 @@ export class KernelStore {
     result: CodexExecutionResult,
     cancelled: boolean,
     worktreePath: string = task.worktreePath,
+    baseRef: string = task.baseRef,
   ): Promise<{ diffStat: string; artifacts: RunArtifacts }> {
     const cwd = worktreePath;
-    const trackedStat = await this.gitOutput(cwd, ['diff', '--stat', task.baseRef]);
-    const trackedNames = await this.gitOutput(cwd, ['diff', '--name-only', task.baseRef]);
+    const trackedStat = await this.gitOutput(cwd, ['diff', '--stat', baseRef]);
+    const trackedNames = await this.gitOutput(cwd, ['diff', '--name-only', baseRef]);
     // `git diff` ignores files the agent created but never staged, which is the common
     // case for a non-interactive run. Capture their patches explicitly so the review
     // surface reflects every change, not just the tracked ones.
@@ -2254,7 +2469,7 @@ export class KernelStore {
     );
     const changedFiles = [...new Set([...splitLines(trackedNames), ...untrackedNames])];
 
-    let fullDiff = await this.gitOutput(cwd, ['diff', task.baseRef]);
+    let fullDiff = await this.gitOutput(cwd, ['diff', baseRef]);
     for (const file of untrackedNames) {
       if (fullDiff.length >= RUN_DIFF_LIMIT) break;
       const patch = await this.untrackedDiff(cwd, file);
