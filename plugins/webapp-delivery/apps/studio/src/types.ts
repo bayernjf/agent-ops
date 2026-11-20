@@ -354,6 +354,7 @@ export type View =
   | { kind: 'activity' }
   | { kind: 'tasks' }
   | { kind: 'teams' }
+  | { kind: 'metrics' }
   | { kind: 'roles' };
 
 export type ProjectTab =
@@ -491,6 +492,19 @@ export type RoleTemplate = {
   systemPrompt: string;
   acceptanceCriteria: string[];
   runtimePolicy: RoleRuntimePolicy;
+};
+
+/** Mirrors `KernelMetrics` in `@agent-ops/storage-core` for the browser. */
+export type KernelMetrics = {
+  generatedAt: string;
+  window: { since: string | null; until: string | null };
+  tasks: { total: number; done: number; failed: number; cancelled: number; open: number };
+  runs: { total: number; executed: number; succeeded: number; failed: number; cancelled: number; inFlight: number; successRate: number | null };
+  rework: { retries: number; rejections: number; reworkRate: number | null };
+  usage: { reportingRuns: number; inputTokens: number | null; outputTokens: number | null; costUsd: number | null };
+  timing: { totalDurationMs: number; averageDurationMs: number | null };
+  byRuntime: Array<{ runtimeId: string; runs: number; succeeded: number; failed: number; cancelled: number; durationMs: number; costUsd: number | null }>;
+  byRole: Array<{ roleId: string; runs: number; succeeded: number; failed: number; cancelled: number; durationMs: number }>;
 };
 
 /** Mirrors `RoleTestPlan` in `@agent-ops/storage-core` for the browser. */
