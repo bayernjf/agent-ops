@@ -136,6 +136,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_doctor',
       'agent_ops_dry_run',
       'agent_ops_evaluate_policy',
+      'agent_ops_execute_dag',
       'agent_ops_execute_parallel',
       'agent_ops_execute_pipeline',
       'agent_ops_execute_run',
