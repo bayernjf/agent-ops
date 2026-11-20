@@ -404,6 +404,62 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   }, args => callDaemon('DELETE', `/api/roles/${encodeURIComponent(args.roleId)}`).then(toResult));
 
+  const teamIdSchema = {
+    teamId: z.string().min(1).describe('Team id as listed by agent_ops_list_teams.'),
+  };
+  const teamFieldsSchema = {
+    name: z.string().trim().min(1).max(100).optional().describe('Human-readable team name.'),
+    description: z.string().max(500).optional().describe('What this team is for.'),
+    roleIds: z.array(z.string().trim().min(1).max(100)).max(50).optional().describe('Ordered roster of role ids on this team.'),
+    handoffs: z.array(z.object({
+      fromRoleId: z.string().trim().min(1).max(100),
+      toRoleId: z.string().trim().min(1).max(100),
+      note: z.string().trim().max(500).optional().describe('What the downstream role picks up.'),
+    })).max(200).optional().describe('Handoff edges between roster roles; must stay acyclic.'),
+    enabled: z.boolean().optional().describe('Whether the team may own new tasks.'),
+  };
+
+  server.registerTool('agent_ops_list_teams', {
+    title: 'List teams',
+    description: 'List local teams: roster of role ids, handoff edges and enabled state.',
+    annotations: READ_ONLY,
+  }, () => callDaemon('GET', '/api/teams').then(toResult));
+
+  server.registerTool('agent_ops_get_team', {
+    title: 'Get team',
+    description: 'Get one team with its roster and handoff edges.',
+    inputSchema: teamIdSchema,
+    annotations: READ_ONLY,
+  }, args => callDaemon('GET', `/api/teams/${encodeURIComponent(args.teamId)}`).then(toResult));
+
+  server.registerTool('agent_ops_create_team', {
+    title: 'Create team',
+    description: 'Create a team from an existing set of roles and acyclic handoff edges.',
+    inputSchema: {
+      ...teamFieldsSchema,
+      name: z.string().trim().min(1).max(100).describe('Human-readable team name.'),
+      roleIds: z.array(z.string().trim().min(1).max(100)).min(1).max(50).describe('Ordered roster of role ids on this team.'),
+    },
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', '/api/teams', args).then(toResult));
+
+  server.registerTool('agent_ops_update_team', {
+    title: 'Update team',
+    description: 'Update a team roster or handoff edges. At least one field must change.',
+    inputSchema: { ...teamIdSchema, ...teamFieldsSchema },
+    annotations: ADDITIVE,
+  }, args => {
+    const { teamId, ...fields } = args;
+    return callDaemon('PUT', `/api/teams/${encodeURIComponent(teamId)}`, fields).then(toResult);
+  });
+
+  server.registerTool('agent_ops_delete_team', {
+    title: 'Delete team',
+    description: 'Delete a team definition. Existing tasks keep their recorded team id.',
+    inputSchema: teamIdSchema,
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  }, args => callDaemon('DELETE', `/api/teams/${encodeURIComponent(args.teamId)}`).then(toResult));
+
   server.registerTool('agent_ops_list_tasks', {
     title: 'List tasks',
     description: 'List all kernel tasks (repo work items) with their status.',
@@ -429,6 +485,7 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
       acceptanceCriteria: z.array(z.string().trim().min(1).max(500)).max(20).optional().describe('Verifiable acceptance criteria.'),
       priority: z.enum(['low', 'medium', 'high']).optional().describe('Task priority; defaults to medium.'),
       roleId: z.string().trim().min(1).optional().describe('Optional Role that owns this task; see agent_ops_list_roles.'),
+      teamId: z.string().trim().min(1).optional().describe('Optional Team that owns this task; see agent_ops_list_teams.'),
       pipeline: z.object({
         steps: z.array(z.object({
           id: z.string().trim().min(1).max(100).optional(),
@@ -450,6 +507,7 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     ...(args.acceptanceCriteria ? { acceptanceCriteria: args.acceptanceCriteria } : {}),
     ...(args.priority ? { priority: args.priority } : {}),
     ...(args.roleId ? { roleId: args.roleId } : {}),
+    ...(args.teamId ? { teamId: args.teamId } : {}),
     ...(args.pipeline ? { pipeline: args.pipeline } : {}),
   }).then(toResult));
 

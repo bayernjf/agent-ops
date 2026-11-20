@@ -127,7 +127,9 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_create_role',
       'agent_ops_create_run',
       'agent_ops_create_task',
+      'agent_ops_create_team',
       'agent_ops_delete_role',
+      'agent_ops_delete_team',
       'agent_ops_doctor',
       'agent_ops_dry_run',
       'agent_ops_execute_pipeline',
@@ -147,10 +149,12 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_get_run',
       'agent_ops_get_runtime',
       'agent_ops_get_task',
+      'agent_ops_get_team',
       'agent_ops_list_projects',
       'agent_ops_list_roles',
       'agent_ops_list_runs',
       'agent_ops_list_tasks',
+      'agent_ops_list_teams',
       'agent_ops_provision_task',
       'agent_ops_reject_run',
       'agent_ops_release_task',
@@ -159,6 +163,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_revise_blueprint',
       'agent_ops_submit_acceptance',
       'agent_ops_update_role',
+      'agent_ops_update_team',
     ]);
     // Acceptance submissions are exposed by design; the approval acts never are.
     expect(names.some(name => name.includes('approve'))).toBe(false);
@@ -208,6 +213,45 @@ describe('agent-ops MCP bridge', () => {
     expect(JSON.parse(textOf(updated))).toMatchObject({ role: { enabled: false } });
 
     const deleted = await client.callTool({ name: 'agent_ops_delete_role', arguments: { roleId: role.id } });
+    expect(deleted.isError).toBeFalsy();
+    expect(JSON.parse(textOf(deleted))).toMatchObject({ deleted: true });
+  });
+
+  it('creates, updates and deletes a team through the daemon', async () => {
+    const client = await startBridge();
+    const createRole = async (name: string) => {
+      const res = await client.callTool({ name: 'agent_ops_create_role', arguments: { name, baseAgentId: 'codex' } });
+      expect(res.isError).toBeFalsy();
+      return (JSON.parse(textOf(res)) as { role: { id: string } }).role;
+    };
+    const architect = await createRole('Team architect');
+    const implementer = await createRole('Team implementer');
+
+    const created = await client.callTool({
+      name: 'agent_ops_create_team',
+      arguments: {
+        name: 'MCP delivery',
+        roleIds: [architect.id, implementer.id],
+        handoffs: [{ fromRoleId: architect.id, toRoleId: implementer.id }],
+      },
+    });
+    expect(created.isError).toBeFalsy();
+    const { team } = JSON.parse(textOf(created)) as { team: { id: string; roleIds: string[] } };
+    expect(team).toMatchObject({ id: 'mcp-delivery', roleIds: [architect.id, implementer.id] });
+
+    const listed = await client.callTool({ name: 'agent_ops_list_teams', arguments: {} });
+    expect(listed.isError).toBeFalsy();
+    expect(textOf(listed)).toContain(team.id);
+
+    const single = await client.callTool({ name: 'agent_ops_get_team', arguments: { teamId: team.id } });
+    expect(single.isError).toBeFalsy();
+    expect(JSON.parse(textOf(single))).toMatchObject({ team: { handoffs: [{ fromRoleId: architect.id, toRoleId: implementer.id }] } });
+
+    const updated = await client.callTool({ name: 'agent_ops_update_team', arguments: { teamId: team.id, enabled: false } });
+    expect(updated.isError).toBeFalsy();
+    expect(JSON.parse(textOf(updated))).toMatchObject({ team: { enabled: false } });
+
+    const deleted = await client.callTool({ name: 'agent_ops_delete_team', arguments: { teamId: team.id } });
     expect(deleted.isError).toBeFalsy();
     expect(JSON.parse(textOf(deleted))).toMatchObject({ deleted: true });
   });
