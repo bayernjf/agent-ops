@@ -42,6 +42,7 @@ export type TaskPipelineStepInput = {
   profileId?: string;
   agentId?: string;
   prompt?: string;
+  requiresApproval?: boolean;
 };
 
 export type TaskPipelineStep = {
@@ -51,11 +52,12 @@ export type TaskPipelineStep = {
   profileId?: string;
   agentId?: string;
   prompt?: string;
+  requiresApproval?: boolean;
 };
 
 export type TaskPipelineStepResult = {
   stepId: string;
-  status: 'pending' | 'running' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'awaiting_approval' | 'completed' | 'failed';
   runId?: string;
   commitSha?: string;
   output?: string;
@@ -67,7 +69,7 @@ export type TaskPipelineStepResult = {
 export type TaskPipeline = {
   steps: TaskPipelineStep[];
   results: TaskPipelineStepResult[];
-  status: 'idle' | 'running' | 'completed' | 'failed';
+  status: 'idle' | 'running' | 'awaiting_approval' | 'completed' | 'failed';
   startedAt?: string;
   completedAt?: string;
 };
@@ -119,7 +121,7 @@ function parseTaskPipeline(raw: string): TaskPipeline | null {
   try {
     const parsed = JSON.parse(raw) as TaskPipeline;
     if (!parsed || !Array.isArray(parsed.steps)) return null;
-    const status = parsed.status === 'running' || parsed.status === 'completed' || parsed.status === 'failed' ? parsed.status : 'idle';
+    const status = parsed.status === 'running' || parsed.status === 'awaiting_approval' || parsed.status === 'completed' || parsed.status === 'failed' ? parsed.status : 'idle';
     return {
       steps: parsed.steps,
       results: Array.isArray(parsed.results) ? parsed.results : [],
@@ -375,6 +377,7 @@ export class KernelStore {
         ...(profileId ? { profileId } : {}),
         ...(agentId ? { agentId } : {}),
         ...(raw.prompt?.trim() ? { prompt: raw.prompt.trim() } : {}),
+        ...(raw.requiresApproval ? { requiresApproval: true } : {}),
       });
     }
     return { steps, results: [], status: 'idle' };
@@ -734,66 +737,49 @@ export class KernelStore {
         throw new Error(`Task ${id} pipeline is ${task.pipeline.status}; only an idle pipeline can start. Retry hygiene is not implemented yet.`);
       }
 
-      let pipeline: TaskPipeline = {
+      const pipeline: TaskPipeline = {
         steps: task.pipeline.steps,
         results: [],
         status: 'running',
         startedAt: new Date().toISOString(),
       };
       await this.saveTaskPipeline(id, pipeline);
+      return await this.runPipelineSteps(id, pipeline, 0, runner);
+    } finally {
+      this.activePipelines.delete(id);
+    }
+  }
 
-      for (const [index, step] of pipeline.steps.entries()) {
-        const startedAt = new Date().toISOString();
-        const updateResult = (result: TaskPipelineStepResult) => {
-          pipeline = {
-            ...pipeline,
-            results: [...pipeline.results.filter(existing => existing.stepId !== step.id), result],
-          };
+  private async runPipelineSteps(id: string, initial: TaskPipeline, startIndex: number, runner?: CodexProcessRunner): Promise<TaskPipeline> {
+    let pipeline = initial;
+    for (let index = startIndex; index < pipeline.steps.length; index++) {
+      const step = pipeline.steps[index];
+      const startedAt = new Date().toISOString();
+      const updateResult = (result: TaskPipelineStepResult) => {
+        pipeline = {
+          ...pipeline,
+          results: [...pipeline.results.filter(existing => existing.stepId !== step.id), result],
         };
-        updateResult({ stepId: step.id, status: 'running', startedAt });
+      };
+      updateResult({ stepId: step.id, status: 'running', startedAt });
+      await this.saveTaskPipeline(id, pipeline);
+
+      let runId: string | undefined;
+      try {
+        const agentId = await this.resolvePipelineStepAgent(step);
+        const instruction = `Pipeline step ${index + 1}/${pipeline.steps.length}: ${step.name}${step.prompt ? `\n\n${step.prompt}` : ''}`;
+        const run = await this.createRun(id, agentId, step.roleId, instruction);
+        runId = run.id;
+        updateResult({ stepId: step.id, status: 'running', runId, startedAt });
         await this.saveTaskPipeline(id, pipeline);
 
-        let runId: string | undefined;
-        try {
-          const agentId = await this.resolvePipelineStepAgent(step);
-          const instruction = `Pipeline step ${index + 1}/${pipeline.steps.length}: ${step.name}${step.prompt ? `\n\n${step.prompt}` : ''}`;
-          const run = await this.createRun(id, agentId, step.roleId, instruction);
-          runId = run.id;
-          updateResult({ stepId: step.id, status: 'running', runId, startedAt });
-          await this.saveTaskPipeline(id, pipeline);
-
-          const executed = await this.executeRun(run.id, runner);
-          if (executed.status !== 'review') {
-            updateResult({
-              stepId: step.id,
-              status: 'failed',
-              runId,
-              error: `Run ended in ${executed.status}, expected review.`,
-              startedAt,
-              completedAt: new Date().toISOString(),
-            });
-            pipeline = { ...pipeline, status: 'failed', completedAt: new Date().toISOString() };
-            await this.saveTaskPipeline(id, pipeline);
-            return pipeline;
-          }
-
-          const accepted = await this.acceptRun(run.id);
-          updateResult({
-            stepId: step.id,
-            status: 'completed',
-            runId,
-            commitSha: accepted.commitSha,
-            output: executed.artifacts.output.slice(0, 2000),
-            startedAt,
-            completedAt: new Date().toISOString(),
-          });
-          await this.saveTaskPipeline(id, pipeline);
-        } catch (error) {
+        const executed = await this.executeRun(run.id, runner);
+        if (executed.status !== 'review') {
           updateResult({
             stepId: step.id,
             status: 'failed',
-            ...(runId ? { runId } : {}),
-            error: error instanceof Error ? error.message : String(error),
+            runId,
+            error: `Run ended in ${executed.status}, expected review.`,
             startedAt,
             completedAt: new Date().toISOString(),
           });
@@ -801,11 +787,106 @@ export class KernelStore {
           await this.saveTaskPipeline(id, pipeline);
           return pipeline;
         }
-      }
 
-      pipeline = { ...pipeline, status: 'completed', completedAt: new Date().toISOString() };
-      await this.saveTaskPipeline(id, pipeline);
-      return pipeline;
+        if (step.requiresApproval) {
+          updateResult({
+            stepId: step.id,
+            status: 'awaiting_approval',
+            runId,
+            output: executed.artifacts.output.slice(0, 2000),
+            startedAt,
+            completedAt: new Date().toISOString(),
+          });
+          pipeline = { ...pipeline, status: 'awaiting_approval' };
+          await this.saveTaskPipeline(id, pipeline);
+          return pipeline;
+        }
+
+        const accepted = await this.acceptRun(run.id);
+        updateResult({
+          stepId: step.id,
+          status: 'completed',
+          runId,
+          commitSha: accepted.commitSha,
+          output: executed.artifacts.output.slice(0, 2000),
+          startedAt,
+          completedAt: new Date().toISOString(),
+        });
+        await this.saveTaskPipeline(id, pipeline);
+      } catch (error) {
+        updateResult({
+          stepId: step.id,
+          status: 'failed',
+          ...(runId ? { runId } : {}),
+          error: error instanceof Error ? error.message : String(error),
+          startedAt,
+          completedAt: new Date().toISOString(),
+        });
+        pipeline = { ...pipeline, status: 'failed', completedAt: new Date().toISOString() };
+        await this.saveTaskPipeline(id, pipeline);
+        return pipeline;
+      }
+    }
+
+    pipeline = { ...pipeline, status: 'completed', completedAt: new Date().toISOString() };
+    await this.saveTaskPipeline(id, pipeline);
+    return pipeline;
+  }
+
+  private async awaitingPipelineStep(id: string): Promise<{ pipeline: TaskPipeline; index: number; runId: string; stepId: string }> {
+    const task = this.getTask(id);
+    if (!task) throw new Error(`Task ${id} was not found.`);
+    const pipeline = task.pipeline;
+    if (!pipeline) throw new Error(`Task ${id} has no pipeline configured.`);
+    if (pipeline.status !== 'awaiting_approval') {
+      throw new Error(`Task ${id} pipeline is ${pipeline.status}; nothing is awaiting approval.`);
+    }
+    const awaiting = [...pipeline.results].reverse().find(result => result.status === 'awaiting_approval');
+    if (!awaiting?.runId) throw new Error(`Task ${id} has no step awaiting approval.`);
+    const index = pipeline.steps.findIndex(step => step.id === awaiting.stepId);
+    if (index < 0) throw new Error(`Pipeline step ${awaiting.stepId} was not found.`);
+    return { pipeline, index, runId: awaiting.runId, stepId: awaiting.stepId };
+  }
+
+  async approvePipelineStep(id: string, runner?: CodexProcessRunner): Promise<TaskPipeline> {
+    if (this.activePipelines.has(id)) throw new Error(`Task ${id} already has a running pipeline.`);
+    this.activePipelines.add(id);
+    try {
+      const { pipeline, index, runId, stepId } = await this.awaitingPipelineStep(id);
+      const accepted = await this.acceptRun(runId);
+      const resumed: TaskPipeline = {
+        ...pipeline,
+        results: pipeline.results.map(result => (
+          result.stepId === stepId ? { ...result, status: 'completed' as const, commitSha: accepted.commitSha } : result
+        )),
+        status: 'running',
+      };
+      await this.saveTaskPipeline(id, resumed);
+      return await this.runPipelineSteps(id, resumed, index + 1, runner);
+    } finally {
+      this.activePipelines.delete(id);
+    }
+  }
+
+  async rejectPipelineStep(id: string): Promise<TaskPipeline> {
+    if (this.activePipelines.has(id)) throw new Error(`Task ${id} already has a running pipeline.`);
+    this.activePipelines.add(id);
+    try {
+      const { pipeline, runId, stepId } = await this.awaitingPipelineStep(id);
+      await this.rejectRun(runId);
+      await this.updateTaskStatus(id, 'failed');
+      const failed: TaskPipeline = {
+        ...pipeline,
+        results: pipeline.results.map(result => (
+          result.stepId === stepId
+            ? { ...result, status: 'failed' as const, error: 'Rejected by operator.' }
+            : result
+        )),
+        status: 'failed',
+        completedAt: new Date().toISOString(),
+      };
+      await this.saveTaskPipeline(id, failed);
+      return failed;
     } finally {
       this.activePipelines.delete(id);
     }

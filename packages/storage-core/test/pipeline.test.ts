@@ -147,4 +147,119 @@ describe('KernelStore pipeline', () => {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
   });
+
+  it('pauses at a step that requires approval and resumes it after approval', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-pipeline-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Approval pipeline',
+        pipeline: {
+          steps: [
+            { id: 'gated', name: 'Gated', agentId: 'codex', requiresApproval: true },
+            { id: 'tail', name: 'Tail', agentId: 'codex' },
+          ],
+        },
+      });
+      const provisioned = await store.provisionTask(task.id);
+
+      let calls = 0;
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        calls++;
+        await writeFile(join(options.cwd, `STEP-${calls}.md`), `step ${calls}\n`, 'utf8');
+        return success();
+      };
+
+      const paused = await store.executeTaskPipeline(task.id, runner);
+      expect(calls).toBe(1);
+      expect(paused.status).toBe('awaiting_approval');
+      expect(paused.results[0]).toMatchObject({ stepId: 'gated', status: 'awaiting_approval' });
+      expect(paused.results[0]?.runId).toBeTruthy();
+      expect(paused.results[0]?.commitSha).toBeUndefined();
+      expect(store.getTask(task.id)?.status).toBe('review');
+      const gatedRun = store.getRun(paused.results[0]?.runId ?? '');
+      expect(gatedRun?.status).toBe('review');
+
+      const resumed = await store.approvePipelineStep(task.id, runner);
+      expect(calls).toBe(2);
+      expect(resumed.status).toBe('completed');
+      expect(resumed.results.map(result => result.status)).toEqual(['completed', 'completed']);
+      expect(resumed.results[0]?.commitSha).toMatch(/^[0-9a-f]{40}$/);
+      expect(resumed.results[1]?.commitSha).toMatch(/^[0-9a-f]{40}$/);
+      expect(resumed.results[0]?.commitSha).not.toBe(resumed.results[1]?.commitSha);
+      expect(store.getTask(task.id)?.status).toBe('done');
+      expect(store.getTask(task.id)?.pipeline?.status).toBe('completed');
+
+      const count = (await execFileAsync('git', ['rev-list', '--count', 'HEAD'], { cwd: provisioned.worktreePath })).stdout.trim();
+      expect(count).toBe('3');
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: provisioned.worktreePath })).stdout.trim()).toBe('');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('rejects a gated step, resets the worktree and stops the pipeline', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-pipeline-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Rejected pipeline',
+        pipeline: {
+          steps: [
+            { id: 'gated', name: 'Gated', agentId: 'codex', requiresApproval: true },
+            { id: 'tail', name: 'Tail', agentId: 'codex' },
+          ],
+        },
+      });
+      const provisioned = await store.provisionTask(task.id);
+      let calls = 0;
+      const paused = await store.executeTaskPipeline(task.id, async (_command, _arguments, options) => {
+        calls++;
+        await writeFile(join(options.cwd, 'REJECTED.md'), 'step\n', 'utf8');
+        return success();
+      });
+      expect(paused.status).toBe('awaiting_approval');
+
+      const rejected = await store.rejectPipelineStep(task.id);
+      expect(calls).toBe(1);
+      expect(rejected.status).toBe('failed');
+      expect(rejected.results[0]).toMatchObject({ stepId: 'gated', status: 'failed' });
+      expect(rejected.results[0]?.error).toContain('Rejected');
+      expect(rejected.results[1]).toBeUndefined();
+      expect(store.getTask(task.id)?.status).toBe('failed');
+      expect(store.listRuns(task.id)).toHaveLength(1);
+      // Reject resets the worktree, so the rejected step leaves no uncommitted file.
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: provisioned.worktreePath })).stdout.trim()).toBe('');
+      expect((await execFileAsync('git', ['rev-list', '--count', 'HEAD'], { cwd: provisioned.worktreePath })).stdout.trim()).toBe('1');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('refuses pipeline gates when nothing is awaiting approval', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-pipeline-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Idle pipeline',
+        pipeline: { steps: [{ id: 'only', name: 'Only', agentId: 'codex' }] },
+      });
+      await expect(store.approvePipelineStep(task.id)).rejects.toThrow('nothing is awaiting approval');
+      await expect(store.rejectPipelineStep(task.id)).rejects.toThrow('nothing is awaiting approval');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
 });
