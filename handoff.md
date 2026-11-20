@@ -365,3 +365,13 @@
 - [x] 测试：两个团队时全量 metrics 统计 2、按 `teamId` 只统计 1 且 `teamId` 字段正确；server `?teamId=` 透传；全仓 typecheck 0，58 文件 / 701 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
 - [x] 本轮提交：`38ca138 feat(storage-core): scope metrics to a team`、`be6b3ed feat(server-core): accept a teamId on metrics`、`05639c5 feat(cli): filter metrics by team`、`ed285bb feat(studio): show team blockers and usage`。
 - [ ] 未做：看板仍是列表式，没有按状态分列的看板视图；成本只有上报 usage 时才有数字；卡点不含“被驳回的 lane 等待重跑”这类更细的状态；Studio 未在真实浏览器点击。
+
+## F3-04 工具审计 — 已完成（2026-11-20）
+
+- [x] `agent-runtime/src/tool-audit.ts`：`extractToolAudit(output)` 从运行时输出读取工具调用——支持 `tool_use` / `tool_call` / `function_call` / `mcp_tool_call` 以及 `permission_denials`（带 reason 时记录），按 `name|status|reason` 去重、上限 100；先逐行解析 JSON，失败再整体解析一次。
+- [x] 拿不到就标 unknown：没有可解析的工具报告时返回 `source: 'unknown'` 加明确原因，不猜。
+- [x] `RunArtifacts` 增加 `toolCalls` 与 `toolAudit{source, reason}`；`executeRun` 在 collectEvidence 里解析**原始输出**（不是截断后的副本）并写入证据；旧记录读回为空 + unknown。
+- [x] Studio：Run 证据面板新增「工具调用」区，逐条显示 Called / Denied（拒绝原因一并显示）；没有上报时显示原因文案。
+- [x] 测试：tool_use + permission_denials 解析顺序、重复去重、整体 JSON、纯文本标 unknown、坏 JSON 行跳过、上限 100；executeRun 端到端覆盖 reported / unknown 两种 artifact。全仓 typecheck 0，59 文件 / 708 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
+- [x] 本轮提交：`c3c330b feat(agent-runtime): read tool calls from output`、`84eec32 feat(storage-core): audit tool calls per run`、`f5e7f58 feat(studio): show run tool calls`。
+- [ ] 未做：只解析 JSON 里明确出现的字段，不覆盖所有 Runtime 的格式（Codex 不同版本的事件字段可能变化）；不记录参数与输出摘要（避免泄漏敏感内容）；不写入 `audit_events`（它是 Run 证据的一部分）；真实 CLI 的上报情况仍未在登录条件下验证。
