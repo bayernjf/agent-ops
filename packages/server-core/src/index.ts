@@ -60,6 +60,10 @@ const createRunSchema = z.object({
   roleId: z.string().trim().min(1).optional(),
 });
 
+const acceptRunSchema = z.object({
+  files: z.array(z.string().trim().min(1).max(4_096)).min(1).max(1_000).optional(),
+});
+
 const customAgentSchema = z.object({
   name: z.string().trim().min(1),
   launchCommand: z.string().trim().min(1),
@@ -84,6 +88,9 @@ export type KernelAppOptions = {
 function errorResponse(context: Context, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes('was not found')) return context.json({ error: message }, 404);
+  if (message.includes('not part of run') || message.includes('Select at least one changed file') || message.includes('invalid worktree path')) {
+    return context.json({ error: message }, 400);
+  }
   if (message.includes('cannot be') || message.includes('no worktree') || message.includes('nothing is awaiting approval')) {
     return context.json({ error: message }, 409);
   }
@@ -444,7 +451,19 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
 
   app.post('/api/runs/:id/accept', async (c) => {
     try {
-      return c.json(await store.acceptRun(c.req.param('id')));
+      const raw = await c.req.text().catch(() => '');
+      if (!raw.trim()) return c.json(await store.acceptRun(c.req.param('id')));
+      let body: unknown;
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        return c.json({ error: 'Invalid accept payload.' }, 400);
+      }
+      const parsed = acceptRunSchema.safeParse(body);
+      if (!parsed.success) {
+        return c.json({ error: 'Invalid accept payload.', details: parsed.error.issues }, 400);
+      }
+      return c.json(await store.acceptRun(c.req.param('id'), parsed.data.files));
     } catch (error) {
       return errorResponse(c, error);
     }
