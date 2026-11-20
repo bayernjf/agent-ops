@@ -813,6 +813,7 @@ export const zh = {
     tokens: 'Token（输入 / 输出）',
     cost: '成本',
     commit: '提交',
+    handoff: '交接',
     timedOut: '已超时',
     cancelled: '已取消',
     liveOutput: '实时输出',

@@ -427,6 +427,17 @@ export type KernelRunArtifacts = {
   durationMs: number;
 };
 
+export type KernelRunHandoff = {
+  id: string;
+  fromStepId: string;
+  toStepId: string;
+  fromRunId: string;
+  toRunId: string;
+  fromCommitSha: string;
+  artifacts: string[];
+  createdAt: string;
+};
+
 export type KernelRun = {
   id: string;
   taskId: string;
@@ -442,6 +453,8 @@ export type KernelRun = {
   inputTokens?: number | null;
   outputTokens?: number | null;
   costUsd?: number | null;
+  /** The handoff that delivered work into this run, when a pipeline step preceded it. */
+  handoff?: KernelRunHandoff | null;
   createdAt: string;
   updatedAt: string;
 };

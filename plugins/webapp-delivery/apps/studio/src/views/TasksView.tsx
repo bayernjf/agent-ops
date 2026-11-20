@@ -656,6 +656,14 @@ export function TasksView() {
                               </div>
                             )}
 
+                            {run.handoff && (
+                              <div className="run-evidence-meta run-handoff">
+                                <span>{t('tasks.handoff')}: {run.handoff.fromStepId} → {run.handoff.toStepId}</span>
+                                <span>{t('tasks.commit')}: {run.handoff.fromCommitSha.slice(0, 10)}</span>
+                                <span>{t('tasks.changedFiles')}: {run.handoff.artifacts.length}</span>
+                              </div>
+                            )}
+
                             {run.status === 'running' && (
                               <details className="run-evidence" open>
                                 <summary>{t('tasks.liveOutput')}</summary>

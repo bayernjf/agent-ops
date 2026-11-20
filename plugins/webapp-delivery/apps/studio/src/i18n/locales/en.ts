@@ -831,6 +831,7 @@ export const en = {
     tokens: 'Tokens (in / out)',
     cost: 'Cost',
     commit: 'Commit',
+    handoff: 'Handoff',
     timedOut: 'Timed out',
     cancelled: 'Cancelled',
     liveOutput: 'Live output',
