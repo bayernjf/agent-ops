@@ -315,6 +315,14 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     }
   });
 
+  app.post('/api/tasks/:id/pipeline/retry', async (c) => {
+    try {
+      return c.json(await store.retryTaskPipeline(c.req.param('id'), options.runner));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
   app.post('/api/tasks/:id/pipeline/approve', async (c) => {
     try {
       return c.json(await store.approvePipelineStep(c.req.param('id'), options.runner));
