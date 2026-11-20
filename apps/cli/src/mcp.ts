@@ -711,10 +711,13 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
 
   server.registerTool('agent_ops_execute_run', {
     title: 'Execute run',
-    description: 'Execute a queued run: the agent works in the task worktree. Synchronous and may take minutes; if the client times out, poll with agent_ops_get_run.',
-    inputSchema: runIdSchema,
+    description: 'Execute a queued run: the agent works in the task worktree. Re-running a failed run starts from the task base commit unless worktree is "keep"; "fresh" recreates the worktree. Synchronous and may take minutes; if the client times out, poll with agent_ops_get_run.',
+    inputSchema: {
+      ...runIdSchema,
+      worktree: z.enum(['auto', 'keep', 'fresh']).optional().describe('Re-run hygiene: auto resets a failed worktree, keep preserves leftovers, fresh re-creates the worktree.'),
+    },
     annotations: ADDITIVE,
-  }, args => callDaemon('POST', `/api/runs/${encodeURIComponent(args.runId)}/execute`).then(toResult));
+  }, args => callDaemon('POST', `/api/runs/${encodeURIComponent(args.runId)}/execute`, args.worktree ? { worktree: args.worktree } : {}).then(toResult));
 
   server.registerTool('agent_ops_export_task', {
     title: 'Export task evidence',
