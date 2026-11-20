@@ -526,6 +526,19 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}`).then(toResult));
 
+  server.registerTool('agent_ops_get_budget', {
+    title: 'Get task budget',
+    description: 'Report a task\'s Role and Team spending against their budgets, based only on the usage runs actually reported. An unreported dimension never blocks on its own.',
+    inputSchema: {
+      ...taskIdSchema,
+      roleId: z.string().min(1).optional().describe('Role scope to check; omit it to report the team scope only.'),
+    },
+    annotations: READ_ONLY,
+  }, args => {
+    const query = args.roleId ? `?roleId=${encodeURIComponent(args.roleId)}` : '';
+    return callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}/budget${query}`).then(toResult);
+  });
+
   server.registerTool('agent_ops_list_handoffs', {
     title: 'List handoffs',
     description: 'List a task\'s handoff receipts: which step committed which sha and which downstream run received it.',
@@ -698,10 +711,13 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
 
   server.registerTool('agent_ops_execute_run', {
     title: 'Execute run',
-    description: 'Execute a queued run: the agent works in the task worktree. Synchronous and may take minutes; if the client times out, poll with agent_ops_get_run.',
-    inputSchema: runIdSchema,
+    description: 'Execute a queued run: the agent works in the task worktree. Re-running a failed run starts from the task base commit unless worktree is "keep"; "fresh" recreates the worktree. Synchronous and may take minutes; if the client times out, poll with agent_ops_get_run.',
+    inputSchema: {
+      ...runIdSchema,
+      worktree: z.enum(['auto', 'keep', 'fresh']).optional().describe('Re-run hygiene: auto resets a failed worktree, keep preserves leftovers, fresh re-creates the worktree.'),
+    },
     annotations: ADDITIVE,
-  }, args => callDaemon('POST', `/api/runs/${encodeURIComponent(args.runId)}/execute`).then(toResult));
+  }, args => callDaemon('POST', `/api/runs/${encodeURIComponent(args.runId)}/execute`, args.worktree ? { worktree: args.worktree } : {}).then(toResult));
 
   server.registerTool('agent_ops_export_task', {
     title: 'Export task evidence',

@@ -36,10 +36,12 @@ import { resolveToolPolicy, hasRestrictedToolPolicy, type RuntimeToolPolicy, typ
 import type { AgentRole } from './roles.js';
 export {
   type AgentRole,
+  type CostBudget,
   type RoleApprovalMode,
   type RoleRuntimePolicy,
   type RoleRuntimeResolution,
   roleRuntimePolicySchema,
+  costBudgetSchema,
   agentRoleSchema,
   agentRoleCreateSchema,
   agentRoleUpdateSchema,

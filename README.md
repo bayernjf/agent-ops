@@ -1,35 +1,45 @@
 # Agent Ops
 
-本地优先的 Agent 控制面：发现并调度本机已安装的编码 Agent（Claude Code / Codex / OpenCode），以 Task/Run 为单位，在隔离 worktree 内执行，产出可审阅的 diff / 测试 / 日志，人来验收。
+本地优先的 Agent 控制面：发现并调度本机已安装的编码 Agent（Claude Code / Codex / OpenCode 等），以 Task/Run 为单位在隔离 worktree 内执行，产出可审阅的证据，人来验收。
 
 ## 当前状态
 
-迁移（move 阶段）已完成：内核 4 个 package（agent-runtime / workflow / policy / storage-core）+ 2 个 app（cli / daemon）从 `agent-dev` 抽取到本仓；webapp-delivery 的 6 个包（blueprint / storage-webapp / delivery-server / provider-core / provider-cli / deployment-composer）与 1 个 app（studio）已隔离到 `plugins/webapp-delivery/`。内核不再反向依赖插件。typecheck 通过、测试全绿。
+- 内核 **5 个 package**：`agent-runtime` / `workflow` / `policy` / `storage-core` / `server-core`；内核 **2 个 app**：`cli` / `daemon`。
+- `daemon` **双模**：默认只挂载内核 Task/Run 控制面（`server-core`）；`AGENT_OPS_ENABLE_WEBAPP=1` 时懒加载 webapp-delivery 云链路（Project / Blueprint / Apply / Release）。
+- webapp-delivery 的 7 个 package 与 1 个 app（`studio`）隔离在 `plugins/webapp-delivery/`，内核不反向依赖插件。
+- 全仓 `npm run typecheck` 通过，`npm test` 61 文件 / 725 tests 全绿。
+- **真实模型的 UI E2E 仍 blocked**：本机 CLI 未登录（Claude Code / Codex），当前验收使用确定性 runner，不代表真实模型任务已验收。
 
-内核 Task/Run 控制面已具备运行证据链：每次 Run 持久化 stdout/stderr（有上限）、完整 diff（含未跟踪文件 patch，有上限）、exit code、耗时、超时标记与变更文件；运行中可通过 SSE 实时查看 stdout/stderr 并取消执行，取消同样落库为证据；Studio 的 Task 看板可展开审阅这些证据后再 accept/reject。
+## 内核能力
 
-迁移方案见：
-
-`bayjf/docs/tier0/Tier0-agent-dev并入AgentOps-迁移方案-2026-11-18.md`
+| 能力 | 说明 |
+|---|---|
+| Task / Run | 每任务一个 worktree；Run 持久化 stdout/stderr、完整 diff（含未跟踪 patch）、exit code、耗时、usage；SSE 实时输出与取消 |
+| Roles | 角色绑定 Profile / base agent、系统提示、验收标准、工具策略与成本预算；内置 architect / implementer / reviewer / tester / researcher 模板 |
+| Teams + Handoff | 团队 = 花名册 + 交接边；Pipeline 每跨一条边写一条交接收据（上游 commit + changedFiles） |
+| 串行 Pipeline | 每步独立 Run，成功后自动提交并交接；支持每步审批门、失败重跑、从失败 step 重试 |
+| Coordinator | 按团队花名册与交接边推导 Pipeline（确定性拓扑序），预览后由人点击应用；另有不调模型的分步汇总 |
+| 并行 lanes | 每角色独立 worktree，有界并发；lane 结束后统一任务状态；文件级冲突只报告、不自动合并；接受 / 驳回按 lane 独立提交与 pin |
+| 证据与审计 | Run 证据（含实际工具调用与被拒原因，拿不到标 unknown）；append-only 审计可回放；单任务 JSON 导出；成功率 / 返工 / 用量 / 耗时指标 |
+| 成本预算 | Role / Team 可设 cost / token 上限，按任务已上报用量检查，超限阻断 createRun 与 executeRun |
+| 重跑 hygiene | 失败 Run 默认 reset 到 base commit；可选 keep 保留残留或 fresh 重建 worktree |
 
 ## 目录
 
 ### 内核
 
-- `apps/daemon`：Hono Server（薄挂载层，只挂载 `@agent-ops/delivery-server`）。
-- `apps/cli`：doctor / serve / mcp 命令行与 MCP。
-- `packages/agent-runtime`：Agent 发现、能力探测、Profile、串行 Pipeline、失败分类。
-- `packages/workflow`：状态机引擎（xstate）。
-- `packages/policy`：账号发现、连接器、确认策略。
-- `packages/storage-core`：SQLite Ledger 内核，task/run/profile/worktree 数据层。
+- `apps/daemon`：Hono 服务入口，默认挂载 `createKernelApp`；`AGENT_OPS_ENABLE_WEBAPP=1` 时叠加 webapp-delivery。
+- `apps/cli`：`doctor` / `start` / `mcp` / `export` 命令与 MCP server。
+- `packages/agent-runtime`：Agent 探测、Runtime Registry、Profiles、Roles、Role 模板、Teams、串行 Pipeline、Tool Policy、失败分类、工具审计。
+- `packages/policy`：运行时无关的工具策略求值（allow / deny / approval）、账号发现、连接器、确认策略。
+- `packages/workflow`：Task/Run 状态机引擎（xstate）。
+- `packages/storage-core`：内核数据层（SQLite + JSON store）：Task/Run 证据、Role/Team、Pipeline、交接、审计、指标、预算、worktree 生命周期。
+- `packages/server-core`：内核 HTTP 控制面（`/api/tasks`、`/api/runs`、`/api/roles`、`/api/teams`、`/api/audit`、`/api/metrics`、`/api/policy/evaluate` 等）。
 
 ### webapp-delivery 插件
 
-- `plugins/webapp-delivery/apps/studio`：Web App 交付控制台 UI。
-- `plugins/webapp-delivery/packages/delivery-server`：webapp-delivery 的 HTTP 服务层（由 daemon 挂载）。
-- `plugins/webapp-delivery/packages/blueprint`：产品规范 schema 与计划生成。
-- `plugins/webapp-delivery/packages/storage-webapp`：project/blueprint/apply/release 数据层。
-- `plugins/webapp-delivery/packages/provider-core` / `provider-cli` / `deployment-composer`：webapp 交付与部署垂直链路。
+- `plugins/webapp-delivery/apps/studio`：Studio UI（Projects、Tasks、Roles、Teams、Metrics …）。
+- `plugins/webapp-delivery/packages/{blueprint, storage-webapp, delivery-server, delivery-workflow, provider-core, provider-cli, deployment-composer}`：webapp 交付与部署链路。
 
 ## 命令
 
@@ -38,3 +48,34 @@ npm install --legacy-peer-deps
 npm run typecheck
 npm test
 ```
+
+按 workspace 运行：
+
+```bash
+npm run typecheck -w @agent-ops/studio
+npm test -w @agent-ops/storage-core
+```
+
+CLI：
+
+```bash
+npx tsx apps/cli/src/index.ts doctor     # 本机工具链与连接器检查
+npx tsx apps/cli/src/index.ts start      # 启动内核 daemon
+npx tsx apps/cli/src/index.ts mcp        # MCP server（stdio）
+npx tsx apps/cli/src/index.ts export <taskId> [--out file]   # 导出单任务证据
+```
+
+## 文档
+
+- `handoff.md`：**唯一活跃待办入口**与逐项完成记录（含提交号）。
+- `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md`：角色 / 团队 / 交接 / 并行 PRD。
+- `docs/prd/Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md`：功能点拆解与验收口径。
+- `AGENTS.md`：仓库约定与分层边界。
+- 迁移方案：`bayjf/docs/tier0/Tier0-agent-dev并入AgentOps-迁移方案-2026-11-18.md`。
+
+## 已知限制
+
+- 真实模型验收仍受本机 CLI 登录阻塞；工具审计与 usage 只有在 Runtime 上报时才有效。
+- 并行团队不自动合并，也没有“选哪条 lane 作为最终交付”的一等操作。
+- 预算为任务内口径，不跨任务累计；只在启动前阻断。
+- Studio 部分新面板（Teams 计划、Metrics、试跑、工具审计）尚未在真实浏览器逐项点击验证。

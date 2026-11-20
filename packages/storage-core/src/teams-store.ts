@@ -14,6 +14,7 @@ export type CreateTeamInput = {
   description?: string;
   roleIds: string[];
   handoffs?: AgentTeam['handoffs'];
+  budget?: AgentTeam['budget'];
   enabled?: boolean;
 };
 
@@ -22,6 +23,7 @@ export type UpdateTeamInput = {
   description?: string;
   roleIds?: string[];
   handoffs?: AgentTeam['handoffs'];
+  budget?: AgentTeam['budget'];
   enabled?: boolean;
 };
 
@@ -78,6 +80,7 @@ export class TeamStore {
       description: parsed.description,
       roleIds: parsed.roleIds,
       handoffs: parsed.handoffs,
+      budget: parsed.budget,
       enabled: parsed.enabled,
       createdAt: now,
       updatedAt: now,

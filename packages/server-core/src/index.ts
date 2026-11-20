@@ -71,6 +71,10 @@ const acceptRunSchema = z.object({
   files: z.array(z.string().trim().min(1).max(4_096)).min(1).max(1_000).optional(),
 });
 
+const executeRunSchema = z.object({
+  worktree: z.enum(['auto', 'keep', 'fresh']).optional(),
+});
+
 const roleTemplateInstantiateSchema = z.object({
   name: z.string().trim().min(1).max(100).optional(),
   description: z.string().max(500).optional(),
@@ -487,6 +491,13 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     return summary ? c.json({ summary }) : c.json({ error: `Task ${taskId} was not found.` }, 404);
   });
 
+  app.get('/api/tasks/:id/budget', async (c) => {
+    const taskId = c.req.param('id');
+    const roleId = c.req.query('roleId')?.trim() || undefined;
+    const status = await store.budgetStatus(taskId, roleId);
+    return status ? c.json(status) : c.json({ error: `Task ${taskId} was not found.` }, 404);
+  });
+
   app.post('/api/tasks/:id/parallel/execute', async (c) => {
     const parsed = executeParallelSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: 'Invalid parallel input.', details: parsed.error.flatten() }, 400);
@@ -640,8 +651,10 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
   });
 
   app.post('/api/runs/:id/execute', async (c) => {
+    const parsed = executeRunSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: 'Invalid execute input.', details: parsed.error.flatten() }, 400);
     try {
-      return c.json(await store.executeRun(c.req.param('id'), options.runner));
+      return c.json(await store.executeRun(c.req.param('id'), options.runner, { worktree: parsed.data.worktree }));
     } catch (error) {
       return errorResponse(c, error);
     }

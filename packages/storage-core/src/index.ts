@@ -23,6 +23,7 @@ import {
   type ApprovedTask,
   type CodexExecutionResult,
   type CodexProcessRunner,
+  type CostBudget,
   type ResolvedToolPolicy,
   type ToolCallAudit,
 } from '@agent-ops/agent-runtime';
@@ -371,6 +372,8 @@ export type KernelAuditEventType =
   | 'pipeline.retried'
   | 'pipeline.planned'
   | 'parallel.executed'
+  | 'budget.blocked'
+  | 'run.rerun'
   | 'handoff.recorded';
 
 export type KernelAuditActor = 'operator' | 'system';
@@ -427,6 +430,30 @@ export type ParallelTeamResult = {
   lanes: ParallelLaneResult[];
   conflicts: ParallelConflict[];
   taskStatus: TaskRunState;
+};
+
+/** Spending against one budget scope, computed from a task's runs. */
+export type BudgetStatus = {
+  scope: 'role' | 'team';
+  scopeId: string;
+  configured: boolean;
+  exceeded: boolean;
+  reasons: string[];
+  limits: CostBudget;
+  spend: {
+    costUsd: number | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    /** Runs that reported at least one usage field; the basis of `spend`. */
+    reportingRuns: number;
+    totalRuns: number;
+  };
+};
+
+export type TaskBudgetStatus = {
+  taskId: string;
+  role: BudgetStatus | null;
+  team: BudgetStatus | null;
 };
 
 /** Aggregated success, rework, usage and timing over the kernel's tasks and runs. */
@@ -866,6 +893,7 @@ export class KernelStore {
     const task = this.getTask(taskId);
     if (!task) throw new Error(`Task ${taskId} was not found.`);
     const role = await this.resolveRunRole(task, roleId, agentId);
+    await this.assertBudget(task, role?.id, 'create-run');
     const now = new Date().toISOString();
     const artifacts = emptyRunArtifacts();
     const record: RunRecord = {
@@ -1078,7 +1106,7 @@ export class KernelStore {
   async executeRun(
     id: string,
     runner?: CodexProcessRunner,
-    options: { worktreePath?: string; laneId?: string; taskStatus?: 'auto' | 'none' } = {},
+    options: { worktreePath?: string; laneId?: string; taskStatus?: 'auto' | 'none'; worktree?: 'auto' | 'keep' | 'fresh' } = {},
   ): Promise<RunRecord> {
     const run = this.getRun(id);
     if (!run) throw new Error(`Run ${id} was not found.`);
@@ -1094,12 +1122,36 @@ export class KernelStore {
       throw new Error(`Run ${id} cannot be executed from status ${run.status}.`);
     }
 
+    // Re-run hygiene: a failed run leaves its worktree dirty, so the default is to start over
+    // from the task's base commit. `keep` preserves the leftovers on purpose; `fresh` discards
+    // the worktree itself and re-checks it out from the same base.
+    const hygiene = options.worktree ?? 'auto';
+    const restart = hygiene === 'fresh' || (hygiene !== 'keep' && run.status === 'failed');
+    if (restart) {
+      const base = task.baseCommit || task.baseRef;
+      const targetPath = run.worktreePath ?? ((options.worktreePath && options.worktreePath !== task.worktreePath) ? options.worktreePath : null) ?? worktreePath;
+      if (hygiene === 'fresh') {
+        await removeWorktree(task.repo, targetPath).catch(() => undefined);
+        await addWorktree(task.repo, base, targetPath);
+      } else {
+        await resetWorktree(targetPath, base || undefined);
+      }
+      await this.recordAudit({
+        type: 'run.rerun',
+        taskId: task.id,
+        teamId: task.teamId,
+        data: { runId: id, worktree: hygiene === 'fresh' ? 'fresh' : 'reset', laneId: run.laneId },
+      });
+    }
+
     const resolved = await resolveRuntimeExecutor(run.agentId, profileId => this.profiles.getProfile(profileId));
     if (!resolved.ok) throw new Error(describeRuntimeExecutorRejection(resolved));
     await this.updateRunRuntime(id, resolved.agentId);
 
     const role = run.roleId ? await this.roles.getRole(run.roleId) : null;
     if (run.roleId && !role) throw new Error(`Role ${run.roleId} was not found.`);
+    // A queued run can become over budget while it waits behind other runs.
+    await this.assertBudget(task, run.roleId ?? undefined, 'execute-run');
 
     const approvedTask: ApprovedTask = {
       id: task.id,
@@ -1775,6 +1827,78 @@ export class KernelStore {
       byRuntime,
       byRole,
     };
+  }
+
+  /** Spending against a Role's and the task team's budgets, computed from this task's runs. */
+  async budgetStatus(taskId: string, roleId?: string): Promise<TaskBudgetStatus | null> {
+    const task = this.getTask(taskId);
+    if (!task) return null;
+    const runs = this.listRuns(taskId);
+
+    let role: BudgetStatus | null = null;
+    if (roleId) {
+      const record = await this.roles.getRole(roleId);
+      role = this.budgetFor('role', roleId, record?.budget, runs.filter(run => run.roleId === roleId));
+    }
+
+    let team: BudgetStatus | null = null;
+    if (task.teamId) {
+      const record = await this.teams.getTeam(task.teamId);
+      team = this.budgetFor('team', task.teamId, record?.budget, runs);
+    }
+
+    return { taskId, role, team };
+  }
+
+  private budgetFor(scope: BudgetStatus['scope'], scopeId: string, budget: CostBudget | undefined, runs: RunRecord[]): BudgetStatus {
+    const sumReported = (values: Array<number | null>): number | null => {
+      const reported = values.filter((value): value is number => value !== null);
+      return reported.length > 0 ? reported.reduce((sum, value) => sum + value, 0) : null;
+    };
+    const spend = {
+      costUsd: sumReported(runs.map(run => run.costUsd)),
+      inputTokens: sumReported(runs.map(run => run.inputTokens)),
+      outputTokens: sumReported(runs.map(run => run.outputTokens)),
+      reportingRuns: runs.filter(run => run.inputTokens !== null || run.outputTokens !== null || run.costUsd !== null).length,
+      totalRuns: runs.length,
+    };
+    if (!budget) {
+      return { scope, scopeId, configured: false, exceeded: false, reasons: [], limits: {}, spend };
+    }
+
+    // Comparing only reported usage keeps the check honest: an unreported dimension cannot be
+    // proven to be under or over the limit, so it never blocks on its own.
+    const reasons: string[] = [];
+    if (budget.maxCostUsd !== undefined && spend.costUsd !== null && spend.costUsd >= budget.maxCostUsd) {
+      reasons.push(`cost $${spend.costUsd.toFixed(4)} reached the limit of $${budget.maxCostUsd}`);
+    }
+    if (budget.maxInputTokens !== undefined && spend.inputTokens !== null && spend.inputTokens >= budget.maxInputTokens) {
+      reasons.push(`${spend.inputTokens} input tokens reached the limit of ${budget.maxInputTokens}`);
+    }
+    if (budget.maxOutputTokens !== undefined && spend.outputTokens !== null && spend.outputTokens >= budget.maxOutputTokens) {
+      reasons.push(`${spend.outputTokens} output tokens reached the limit of ${budget.maxOutputTokens}`);
+    }
+    return { scope, scopeId, configured: true, exceeded: reasons.length > 0, reasons, limits: budget, spend };
+  }
+
+  /** Refuse to start work that would run past a Role or Team budget that is already exceeded. */
+  private async assertBudget(task: TaskRecord, roleId: string | undefined, action: string): Promise<void> {
+    const status = await this.budgetStatus(task.id, roleId);
+    if (!status) return;
+    const exceeded = [status.role, status.team].filter((entry): entry is BudgetStatus => Boolean(entry?.exceeded));
+    if (exceeded.length === 0) return;
+    await this.recordAudit({
+      type: 'budget.blocked',
+      taskId: task.id,
+      teamId: task.teamId,
+      data: {
+        action,
+        scopes: exceeded.map(entry => ({ scope: entry.scope, scopeId: entry.scopeId, reasons: entry.reasons })),
+      },
+    });
+    throw new Error(
+      `Budget exceeded for task ${task.id}: ${exceeded.map(entry => `${entry.scope} ${entry.scopeId} (${entry.reasons.join('; ')})`).join(', ')}.`,
+    );
   }
 
   /** Derive a serial pipeline from the task's Team: roster order, topological over handoffs. */

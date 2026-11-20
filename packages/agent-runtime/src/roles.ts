@@ -16,6 +16,22 @@ export type RoleRuntimePolicy = {
   approvalMode: RoleApprovalMode;
 };
 
+/** A spending ceiling for a Role or Team. Limits that are absent are unconstrained. */
+export type CostBudget = {
+  maxCostUsd?: number;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
+};
+
+export const costBudgetSchema = z.object({
+  maxCostUsd: z.number().positive().max(100_000).optional(),
+  maxInputTokens: z.number().int().positive().max(1_000_000_000).optional(),
+  maxOutputTokens: z.number().int().positive().max(1_000_000_000).optional(),
+}).refine(
+  value => value.maxCostUsd !== undefined || value.maxInputTokens !== undefined || value.maxOutputTokens !== undefined,
+  'A budget needs at least one limit.',
+);
+
 export type AgentRole = {
   id: string;
   name: string;
@@ -27,6 +43,8 @@ export type AgentRole = {
   systemPrompt?: string;
   acceptanceCriteria: string[];
   runtimePolicy: RoleRuntimePolicy;
+  /** Optional per-task spending ceiling checked before a run starts. */
+  budget?: CostBudget;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
@@ -50,6 +68,7 @@ export const agentRoleSchema = z.object({
   systemPrompt: z.string().max(10_000).optional(),
   acceptanceCriteria: z.array(z.string().trim().min(1).max(500)).max(20).default([]),
   runtimePolicy: roleRuntimePolicySchema,
+  budget: costBudgetSchema.optional(),
   enabled: z.boolean().default(true),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -71,6 +90,7 @@ export const agentRoleCreateSchema = z.object({
   systemPrompt: z.string().max(10_000).optional(),
   acceptanceCriteria: z.array(z.string().trim().min(1).max(500)).max(20).default([]),
   runtimePolicy: roleRuntimePolicySchema.default({ allowedTools: [], blockedTools: [], approvalMode: 'human' }),
+  budget: costBudgetSchema.optional(),
   enabled: z.boolean().default(true),
 }).superRefine((role, context) => {
   if (!role.baseAgentId && !role.profileId) {
@@ -90,6 +110,7 @@ export const agentRoleUpdateSchema = z.object({
   systemPrompt: z.string().max(10_000).optional(),
   acceptanceCriteria: z.array(z.string().trim().min(1).max(500)).max(20).optional(),
   runtimePolicy: roleRuntimePolicySchema.optional(),
+  budget: costBudgetSchema.optional(),
   enabled: z.boolean().optional(),
 }).refine(value => Object.keys(value).length > 0, 'At least one field must change.');
 

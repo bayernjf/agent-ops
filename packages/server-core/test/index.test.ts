@@ -760,6 +760,33 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('validates the rerun worktree policy on execute', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Rerun' });
+      const run = await store.createRun(task.id, 'codex');
+
+      const invalid = await app.request(`/api/runs/${run.id}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ worktree: 'sideways' }),
+      });
+      expect(invalid.status).toBe(400);
+
+      const accepted = await app.request(`/api/runs/${run.id}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ worktree: 'keep' }),
+      });
+      // The option is valid; the run still cannot start without a worktree.
+      expect(accepted.status).toBe(409);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('evaluates a tool policy across runtimes', async () => {
     const { store, directory } = await openStore();
     try {
@@ -788,6 +815,25 @@ describe('createKernelApp', () => {
         body: JSON.stringify({ allowedTools: 'not-an-array' }),
       });
       expect(invalid.status).toBe(400);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('serves a task budget status', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const role = await store.roles.createRole({ name: 'Budgeted', baseAgentId: 'codex', budget: { maxCostUsd: 5 } });
+      const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Budgeted', roleId: role.id });
+
+      const response = await app.request(`/api/tasks/${task.id}/budget?roleId=${role.id}`);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { role: { configured: boolean; exceeded: boolean; limits: { maxCostUsd: number }; spend: { totalRuns: number } } };
+      expect(body.role).toMatchObject({ configured: true, exceeded: false, limits: { maxCostUsd: 5 }, spend: { totalRuns: 0 } });
+
+      expect((await app.request('/api/tasks/missing/budget')).status).toBe(404);
     } finally {
       await store.close();
       await rm(directory, { recursive: true, force: true });
