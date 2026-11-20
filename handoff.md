@@ -282,3 +282,14 @@
 - [x] 测试：两步 Pipeline 的导出含 2 个 Run（第二个带 handoff、diff/output 可读）、审计 4 条、totals `runs=2 / acceptedCommits=2 / changedFiles=2 / reportingRuns=0 / usage=null / durationMs>0`；空任务 totals 归零且 costUsd 为 null；server 附件头与 404；MCP 导出返回 task id 与 totals。全仓 typecheck 0，52 文件 / 673 tests 绿。
 - [x] 本轮提交：`ef4c752 feat(storage-core): export a task's evidence`、`4be9c5b feat(server-core): serve task evidence exports`、`810ff5a feat(cli): add the task export surface`。
 - [ ] 未做：导出只有 JSON，没有打包 zip/tar，也不含 worktree 里的二进制产物；artifacts 沿用采集时的截断版本，导出不再二次限长；F8-04 指标聚合未做。
+
+## F1-06 Role 模板 — 已完成（2026-11-20）
+
+- [x] `agent-runtime/src/role-templates.ts`：5 个内置模板 architect / implementer / reviewer / tester / researcher，各自带 name、description、baseAgentId（codex）、systemPrompt、acceptanceCriteria、runtimePolicy（allowed/blocked tools + approvalMode）。
+- [x] 模板是常量而非存储数据：应用模板只预填字段，保存前可改；只读模板禁 Write/Edit/Bash，reviewer 为 `strict`，researcher 为 `auto`。
+- [x] server：`GET /api/role-templates`、`POST /api/role-templates/:templateId`（可选覆盖 name/description/baseAgentId/profileId）；沿用 `validateRoleBinding`，candidate runtime 仍返回 400，未知模板 404。
+- [x] MCP：`agent_ops_list_role_templates`、`agent_ops_create_role_from_template`。
+- [x] Studio：新建角色表单顶部展示模板卡片，点击即填充名称/描述/系统提示/验收标准/工具策略/审批模式；中英文文案同步。
+- [x] 测试：模板 id 唯一且通过 `agentRoleCreateSchema`、只读模板 blockedTools 覆盖 Write/Edit/Bash；server 列表 5 个、按模板创建出 strict 角色、未知模板 404、candidate 覆盖 400；MCP 列表与按模板创建。全仓 typecheck 0，53 文件 / 678 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
+- [x] 本轮提交：`d004042 feat(agent-runtime): add built-in role templates`、`463c596 feat(server-core): serve role templates`、`d3b4597 feat(cli): add role template tools`、`ae87a4e feat(studio): start roles from a template`。
+- [ ] 未做：模板只能在代码里内置，UI 不能编辑或新增模板；模板不预校验 baseAgent 是否仍可用（创建时由 binding 兜底）；F1-07 Role 测试运行未做。
