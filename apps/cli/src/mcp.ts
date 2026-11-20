@@ -619,6 +619,21 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: ADDITIVE,
   }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/provision`).then(toResult));
 
+  server.registerTool('agent_ops_evaluate_policy', {
+    title: 'Evaluate tool policy',
+    description: 'Evaluate an allow/deny/approval policy against every registered runtime without using any CLI dialect: returns canonical decisions, enforcement level and the human gate.',
+    inputSchema: {
+      allowedTools: z.array(z.string().trim().min(1).max(100)).max(100).optional().describe('Tools the Role may use.'),
+      blockedTools: z.array(z.string().trim().min(1).max(100)).max(100).optional().describe('Tools the Role must not use.'),
+      approvalMode: z.enum(['auto', 'human', 'strict']).optional().describe('Human gate the Role asks for.'),
+    },
+    annotations: READ_ONLY,
+  }, args => callDaemon('POST', '/api/policy/evaluate', {
+    allowedTools: args.allowedTools ?? [],
+    blockedTools: args.blockedTools ?? [],
+    approvalMode: args.approvalMode ?? 'human',
+  }).then(toResult));
+
   server.registerTool('agent_ops_execute_parallel', {
     title: 'Execute parallel lanes',
     description: 'Run one lane per team role, each in its own worktree, bounded by maxConcurrency. Lanes end in review; file conflicts are reported and never auto-merged. Synchronous and may take minutes.',

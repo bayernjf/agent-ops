@@ -135,6 +135,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_delete_team',
       'agent_ops_doctor',
       'agent_ops_dry_run',
+      'agent_ops_evaluate_policy',
       'agent_ops_execute_parallel',
       'agent_ops_execute_pipeline',
       'agent_ops_execute_run',
@@ -281,6 +282,19 @@ describe('agent-ops MCP bridge', () => {
     const deleted = await client.callTool({ name: 'agent_ops_delete_team', arguments: { teamId: team.id } });
     expect(deleted.isError).toBeFalsy();
     expect(JSON.parse(textOf(deleted))).toMatchObject({ deleted: true });
+  });
+
+  it('evaluates a tool policy through the daemon', async () => {
+    const client = await startBridge();
+    const evaluated = await client.callTool({
+      name: 'agent_ops_evaluate_policy',
+      arguments: { allowedTools: ['Read'], approvalMode: 'strict' },
+    });
+    expect(evaluated.isError).toBeFalsy();
+    const { verdicts } = JSON.parse(textOf(evaluated)) as {
+      verdicts: Array<{ runtimeId: string; enforcement: string; approval: { humanGate: boolean } }>;
+    };
+    expect(verdicts.find(verdict => verdict.runtimeId === 'codex')).toMatchObject({ enforcement: 'exact', approval: { humanGate: true } });
   });
 
   it('plans and applies a team pipeline through the daemon', async () => {
