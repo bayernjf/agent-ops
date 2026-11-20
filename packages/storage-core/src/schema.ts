@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 // Task/Run are the Agent Ops kernel model, independent of the webapp-delivery plugin
 // (Project/Blueprint/Apply/Release). A task binds one real repository and base ref; its
@@ -32,6 +32,11 @@ export const runs = sqliteTable('runs', {
   roleId: text('role_id').notNull().default(''),
   runtimeId: text('runtime_id').notNull().default(''),
   instruction: text('instruction').notNull().default(''),
+  runtimeVersion: text('runtime_version').notNull().default(''),
+  command: text('command').notNull().default(''),
+  inputTokens: integer('input_tokens'),
+  outputTokens: integer('output_tokens'),
+  costUsd: real('cost_usd'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 });

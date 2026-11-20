@@ -182,6 +182,15 @@ export type RunEvent = {
 export const RUN_OUTPUT_LIMIT = 64_000;
 export const RUN_DIFF_LIMIT = 256_000;
 export const RUN_EVENT_LIMIT = 500;
+export const RUN_COMMAND_LIMIT = 4_000;
+
+function normalizeCount(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
+}
+
+function normalizeCost(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
 
 export function emptyRunArtifacts(): RunArtifacts {
   return {
@@ -212,16 +221,36 @@ export type RunRecord = {
   roleId: string | null;
   /** Adapter actually resolved at execution time; null before execution. */
   runtimeId: string | null;
+  /** Version probed from the executed Runtime command, when available. */
+  runtimeVersion: string | null;
+  /** Bounded command line used for the execution, including the prompt. */
+  command: string;
+  /** Usage reported by the Runtime; null means "not reported", not zero. */
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
   /** Pipeline step or caller instruction appended to the task prompt; empty when none. */
   instruction: string;
   createdAt: string;
   updatedAt: string;
 };
 
-type RunRow = Omit<RunRecord, 'artifacts' | 'roleId' | 'runtimeId'> & {
+export type RunExecutionEvidence = {
+  runtimeVersion?: string | null;
+  command?: string;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  costUsd?: number | null;
+};
+
+type RunRow = Omit<RunRecord, 'artifacts' | 'roleId' | 'runtimeId' | 'runtimeVersion' | 'inputTokens' | 'outputTokens' | 'costUsd'> & {
   artifacts: string;
   roleId: string;
   runtimeId: string;
+  runtimeVersion: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
 };
 
 function parseRunArtifacts(raw: string): RunArtifacts {
@@ -257,6 +286,10 @@ function toRunRecord(row: RunRow): RunRecord {
     ...row,
     roleId: row.roleId || null,
     runtimeId: row.runtimeId || null,
+    runtimeVersion: row.runtimeVersion || null,
+    inputTokens: typeof row.inputTokens === 'number' ? row.inputTokens : null,
+    outputTokens: typeof row.outputTokens === 'number' ? row.outputTokens : null,
+    costUsd: typeof row.costUsd === 'number' ? row.costUsd : null,
     artifacts: parseRunArtifacts(row.artifacts),
   };
 }
@@ -509,6 +542,11 @@ export class KernelStore {
       commitSha: '',
       roleId: role?.id ?? null,
       runtimeId: null,
+      runtimeVersion: null,
+      command: '',
+      inputTokens: null,
+      outputTokens: null,
+      costUsd: null,
       instruction: instruction?.trim() ?? '',
       createdAt: now,
       updatedAt: now,
@@ -523,6 +561,11 @@ export class KernelStore {
       commitSha: record.commitSha,
       roleId: record.roleId ?? '',
       runtimeId: '',
+      runtimeVersion: '',
+      command: '',
+      inputTokens: null,
+      outputTokens: null,
+      costUsd: null,
       instruction: record.instruction,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
@@ -624,6 +667,33 @@ export class KernelStore {
     return { ...existing, runtimeId: normalized, updatedAt: now };
   }
 
+  async updateRunExecutionEvidence(id: string, evidence: RunExecutionEvidence): Promise<RunRecord> {
+    const existing = this.getRun(id);
+    if (!existing) throw new Error(`Run ${id} was not found.`);
+    const now = new Date().toISOString();
+    const updates: Partial<typeof runs.$inferInsert> = { updatedAt: now };
+    if (evidence.runtimeVersion !== undefined) {
+      updates.runtimeVersion = evidence.runtimeVersion?.trim() ?? '';
+    }
+    if (evidence.command !== undefined) {
+      updates.command = boundedText(evidence.command.trim(), RUN_COMMAND_LIMIT).text;
+    }
+    if (evidence.inputTokens !== undefined) {
+      updates.inputTokens = normalizeCount(evidence.inputTokens);
+    }
+    if (evidence.outputTokens !== undefined) {
+      updates.outputTokens = normalizeCount(evidence.outputTokens);
+    }
+    if (evidence.costUsd !== undefined) {
+      updates.costUsd = normalizeCost(evidence.costUsd);
+    }
+    this.kernelOrm.update(runs).set(updates).where(eq(runs.id, id)).run();
+    await this.persist();
+    const updated = this.getRun(id);
+    if (!updated) throw new Error(`Run ${id} was not found after updating its execution evidence.`);
+    return updated;
+  }
+
   async executeRun(id: string, runner?: CodexProcessRunner): Promise<RunRecord> {
     const run = this.getRun(id);
     if (!run) throw new Error(`Run ${id} was not found.`);
@@ -657,6 +727,8 @@ export class KernelStore {
       instruction: run.instruction || undefined,
     });
 
+    await this.updateRunExecutionEvidence(id, { command: plan.command.join(' ') });
+
     const controller = new AbortController();
     this.activeRuns.set(id, controller);
     // A rejected run can be executed again under the same run id; stale terminal events
@@ -687,6 +759,12 @@ export class KernelStore {
     }
 
     const cancelled = result.cancelled === true || controller.signal.aborted;
+    await this.updateRunExecutionEvidence(id, {
+      runtimeVersion: result.runtimeVersion ?? null,
+      inputTokens: result.usage?.inputTokens ?? null,
+      outputTokens: result.usage?.outputTokens ?? null,
+      costUsd: result.usage?.costUsd ?? null,
+    });
     const evidence = await this.collectEvidence(task, result, cancelled);
     if (cancelled) {
       await this.updateTaskStatus(task.id, 'cancelled');

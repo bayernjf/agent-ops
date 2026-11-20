@@ -91,4 +91,14 @@ export const kernelMigrations: readonly Migration[] = [
       ALTER TABLE runs ADD COLUMN instruction TEXT NOT NULL DEFAULT '';
     `,
   },
+  {
+    id: '0015_run_execution_evidence',
+    sql: `
+      ALTER TABLE runs ADD COLUMN runtime_version TEXT NOT NULL DEFAULT '';
+      ALTER TABLE runs ADD COLUMN command TEXT NOT NULL DEFAULT '';
+      ALTER TABLE runs ADD COLUMN input_tokens INTEGER;
+      ALTER TABLE runs ADD COLUMN output_tokens INTEGER;
+      ALTER TABLE runs ADD COLUMN cost_usd REAL;
+    `,
+  },
 ];
