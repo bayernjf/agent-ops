@@ -832,6 +832,7 @@ export const en = {
     tokens: 'Tokens (in / out)',
     cost: 'Cost',
     commit: 'Commit',
+    lane: 'Lane',
     handoff: 'Handoff',
     timedOut: 'Timed out',
     cancelled: 'Cancelled',

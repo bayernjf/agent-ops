@@ -456,6 +456,10 @@ export type KernelRun = {
   costUsd?: number | null;
   /** The handoff that delivered work into this run, when a pipeline step preceded it. */
   handoff?: KernelRunHandoff | null;
+  /** Worktree the run executed in; a parallel lane's path differs from the task's. */
+  worktreePath?: string | null;
+  /** Lane this run belongs to in a parallel team run. */
+  laneId?: string | null;
   createdAt: string;
   updatedAt: string;
 };

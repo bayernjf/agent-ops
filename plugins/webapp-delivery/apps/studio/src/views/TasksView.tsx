@@ -651,6 +651,7 @@ export function TasksView() {
                                 <span>{t('tasks.runtime')}: {run.runtimeId ?? '—'}</span>
                                 <span>{t('tasks.version')}: {run.runtimeVersion ?? '—'}</span>
                                 <span>{t('tasks.commit')}: {run.commitSha ? run.commitSha.slice(0, 10) : '—'}</span>
+                                {run.laneId && <span>{t('tasks.lane')}: {run.laneId}</span>}
                                 <span>{t('tasks.tokens')}: {run.inputTokens ?? '—'} / {run.outputTokens ?? '—'}</span>
                                 <span>{t('tasks.cost')}: {run.costUsd != null ? `$${run.costUsd.toFixed(4)}` : '—'}</span>
                               </div>
