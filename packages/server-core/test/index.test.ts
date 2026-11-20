@@ -408,6 +408,78 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('creates, lists, updates and deletes teams through the kernel API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const createRole = async (name: string) => {
+        const res = await app.request('/api/roles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, baseAgentId: 'codex' }),
+        });
+        expect(res.status).toBe(201);
+        return ((await res.json()) as { role: { id: string } }).role;
+      };
+      const architect = await createRole('Architect');
+      const implementer = await createRole('Implementer');
+
+      const created = await app.request('/api/teams', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Delivery',
+          roleIds: [architect.id, implementer.id],
+          handoffs: [{ fromRoleId: architect.id, toRoleId: implementer.id, note: 'Hand over the plan.' }],
+        }),
+      });
+      expect(created.status).toBe(201);
+      const team = ((await created.json()) as { team: { id: string; handoffs: unknown[] } }).team;
+      expect(team.id).toBe('delivery');
+      expect(team.handoffs).toHaveLength(1);
+
+      expect(((await (await app.request('/api/teams')).json()) as { teams: unknown[] }).teams).toHaveLength(1);
+      expect((await app.request(`/api/teams/${team.id}`)).status).toBe(200);
+
+      const updated = await app.request(`/api/teams/${team.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Delivery team' }),
+      });
+      expect(updated.status).toBe(200);
+      expect((await updated.json()) as object).toMatchObject({ team: { name: 'Delivery team' } });
+
+      const cycle = await app.request('/api/teams', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Loop',
+          roleIds: [architect.id, implementer.id],
+          handoffs: [
+            { fromRoleId: architect.id, toRoleId: implementer.id },
+            { fromRoleId: implementer.id, toRoleId: architect.id },
+          ],
+        }),
+      });
+      expect(cycle.status).toBe(400);
+      expect(await cycle.text()).toContain('Handoff cycle detected');
+
+      const unknownRole = await app.request('/api/teams', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Ghost', roleIds: ['missing-role'] }),
+      });
+      expect(unknownRole.status).toBe(404);
+
+      const deleted = await app.request(`/api/teams/${team.id}`, { method: 'DELETE' });
+      expect(deleted.status).toBe(200);
+      expect((await app.request(`/api/teams/${team.id}`)).status).toBe(404);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a role whose runtime is not verified or whose profile is missing', async () => {
     const { store, directory } = await openStore();
     try {

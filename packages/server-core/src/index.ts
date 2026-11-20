@@ -15,6 +15,8 @@ import {
   agentProfileUpdateSchema,
   agentRoleCreateSchema,
   agentRoleUpdateSchema,
+  agentTeamCreateSchema,
+  agentTeamUpdateSchema,
   resolveRoleRuntime,
   type AgentRole,
 } from '@agent-ops/agent-runtime';
@@ -52,6 +54,7 @@ const createTaskSchema = z.object({
   priority: z.enum(['low', 'medium', 'high']).optional(),
   baseCommit: z.string().trim().optional(),
   roleId: z.string().trim().min(1).optional(),
+  teamId: z.string().trim().min(1).optional(),
   pipeline: pipelineSchema.optional(),
 });
 
@@ -91,6 +94,7 @@ function errorResponse(context: Context, error: unknown) {
   if (message.includes('not part of run') || message.includes('Select at least one changed file') || message.includes('invalid worktree path')) {
     return context.json({ error: message }, 400);
   }
+  if (message.includes('is disabled')) return context.json({ error: message }, 400);
   if (message.includes('cannot be') || message.includes('no worktree') || message.includes('nothing is awaiting approval')) {
     return context.json({ error: message }, 409);
   }
@@ -273,6 +277,42 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
   app.delete('/api/roles/:roleId', async (c) => {
     const deleted = await store.roles.deleteRole(c.req.param('roleId'));
     return deleted ? c.json({ deleted: true }) : c.json({ error: 'Role not found.' }, 404);
+  });
+
+  app.get('/api/teams', async (c) => c.json({ teams: await store.teams.listTeams() }));
+
+  app.get('/api/teams/:teamId', async (c) => {
+    const team = await store.teams.getTeam(c.req.param('teamId'));
+    return team ? c.json({ team }) : c.json({ error: 'Team not found.' }, 404);
+  });
+
+  app.post('/api/teams', async (c) => {
+    const parsed = agentTeamCreateSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'Invalid team input.', details: parsed.error.flatten() }, 400);
+    try {
+      const team = await store.teams.createTeam(parsed.data);
+      return c.json({ team }, 201);
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  app.put('/api/teams/:teamId', async (c) => {
+    const parsed = agentTeamUpdateSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'Invalid team update.', details: parsed.error.flatten() }, 400);
+    const teamId = c.req.param('teamId');
+    if (!(await store.teams.getTeam(teamId))) return c.json({ error: 'Team not found.' }, 404);
+    try {
+      const team = await store.teams.updateTeam(teamId, parsed.data);
+      return team ? c.json({ team }) : c.json({ error: 'Team not found.' }, 404);
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  app.delete('/api/teams/:teamId', async (c) => {
+    const deleted = await store.teams.deleteTeam(c.req.param('teamId'));
+    return deleted ? c.json({ deleted: true }) : c.json({ error: 'Team not found.' }, 404);
   });
 
   app.post('/api/tasks', async (c) => {
