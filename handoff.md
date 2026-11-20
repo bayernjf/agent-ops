@@ -145,3 +145,14 @@
 - [x] 去重 health/doctor/runtime 路由：`createKernelApp` 新增 `diagnostics` 开关（默认 `true`，独立内核模式不变），webapp 模式 daemon 以 `diagnostics: false` 只挂 task/run，health/doctor/runtime 继续由 webapp 路由拥有；不再依赖“后挂载遮蔽内核副本”。
 - [x] 测试：server-core 断言 `diagnostics: false` 下四个诊断端点 404 且 `/api/tasks` 仍 200；delivery-server 的 `/api/health` 断言带 `version`（证明响应来自 webapp 路由）。
 - [x] 门禁：typecheck 0、44 文件 / 602 tests 绿。
+
+## F7-02 Studio RolesView — 已完成（2026-11-20）
+
+- [x] 新增 `studio/src/views/RolesView.tsx`：角色列表（名称/id、绑定 baseAgent 或 Profile、审批模式、启用状态）、新建、编辑、删除、启用/停用，全部对接 `/api/roles` CRUD。
+- [x] `types.ts` 新增 browser 侧 `AgentRole` / `RoleRuntimePolicy` / `RoleApprovalMode`，`View` 增加 `{ kind: 'roles' }`。
+- [x] `App.tsx` 侧边栏新增 Roles 入口、topbar 标题、standalone-view 渲染。
+- [x] `en.ts` / `zh.ts` 新增 `nav.roles` 与 `roles` 区块；表单 placeholder 也走 i18n，owned-copy 与 cross-locale 测试通过。
+- [x] `styles.css` 新增 role-table / role-form 样式，复用 task board chrome。
+- [x] 测试：studio smoke 新增 RolesView 渲染断言（标题 + 列头 + loading）；全仓 49 文件 / 644 tests 绿，typecheck 0。
+- [x] 本轮提交：`23ec2bf feat(studio): add the kernel roles view`、`06ad65c test(studio): cover the roles view render`。
+- [ ] F7-02 只覆盖角色管理 UI；F7-01 建任务 + Pipeline 编辑、F6-04 每步审批、F6-05 失败重跑仍未做。
