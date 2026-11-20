@@ -492,4 +492,5 @@
 - [x] server team schema 自动接受 owner（越界 400）；MCP 团队工具新增 `ownerRoleId`；Studio 团队表单新增「落盘角色」选择（角色离开花名册会自动清空），详情面板展示 owner。
 - [x] 测试：owner 越界 / owner 仍有 outgoing handoff 被拒；合法 owner 持久化；plan owner 置末 + `ownsDeliverable` + prompt 后缀；无 owner 时 warning；summary owner 状态；server 往返 + 400 + plan 暴露。全仓 typecheck 0，62 文件 / 732 tests 绿；Studio 257 tests 与 `vite build` 通过。
 - [x] 本轮提交：`f3aea53 feat(teams): name a team owner role`、`e0b115b feat(storage-core): mark the owner step in a team plan`、`c1b0f93 test(server-core): cover team owners over HTTP`、`6038f0d feat(cli): accept a team owner field`、`640faa1 feat(studio): set a team owner`。
-- [ ] 未做：owner 是“计划期约束”，不会事后检查 owner step 是否真的写了文件（Dogfood 5 已人工验证写过）；历史那次五角色运行没有 owner，要重跑才能产出可验收的落盘；Studio 新表单字段未在真实浏览器点击。
+- [ ] 未做：owner 是“计划期约束”，不会事后检查 owner step 是否真的写了文件（Dogfood 5 已人工验证写过）；历史那次五角色运行没有 owner，要重跑才能产出可验收的落盘。
+- [x] Studio 表单已在真实浏览器验证：`CB Owner Team` 的 owner 下拉只列花名册角色，并正确显示 `cb-writer`，提示文案也在。
