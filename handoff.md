@@ -7,7 +7,7 @@
 >
 > 产品规划（非活跃待办，不计入上方待办）：多 Agent 角色与团队 v0.2/v0.3，PRD 见 `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md`，实施拆解见 `docs/prd/Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md`；PD-1～PD-9 已于 2026-11-19 拍板；后续方向备忘（Tier 0 能力包 / 现有 Harness / Personal Agent）见 PRD §12.1–12.2。
 
-- [ ] **真实模型 UI E2E** — 状态：部分完成（2026-11-20）。真实模型 Run 已通过内核 API 跑通：CodeBuddy 2.185.0 创建 `REAL_MODEL.md`、exit 0、15.1s、accept 成 commit `2020338`、任务 `done`；证据导出确认 `runs=1 / acceptedCommits=1 / changedFiles=1`，usage 与工具审计按未上报记 `null` / `unknown`。剩余：在 Studio UI 里点击验收同一路径；Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
+- [x] **真实模型 UI E2E** — 已完成（2026-11-20）。UI 里新建 CodeBuddy 角色与一步 Pipeline 任务，点 `Run pipeline` 由真实 CodeBuddy 2.185.0 执行，任务 done、Run 可见（commit `ea4553f7d2`）。Claude Code / Codex 仍受 CC Switch `base_url` 阻塞，但不影响 CodeBuddy 路径；真实模型 API 路径与 UI 路径均已有证据。
 - [ ] **3–5 个本仓 dogfood** — 状态：open；下一步：收集 diff / 测试 / 失败率，验证是否能替代手工（真实模型入口已可用 CodeBuddy，无需等 Claude/Codex 登录）。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
@@ -437,7 +437,7 @@
 - [x] 本轮提交：`30f09ff feat(storage-core): run pipelines as a DAG`、`8f4688a feat(server-core): expose DAG pipeline runs`、`3b307cd feat(cli): add the DAG run tool`。
 - [ ] 未做：没有 DAG 级别的自动合并/合成，多依赖只从最后一个依赖检出；Studio 没有 DAG 编辑器或运行入口；DAG 不支持审批门；真实模型下未验证。
 
-## 真实模型 Run（CodeBuddy）— 已完成（API 路径，2026-11-20）
+## 真实模型 Run（CodeBuddy）— 已完成（API + UI，2026-11-20）
 
 - [x] 阻塞复盘：Claude Code / Codex 仍被 CC Switch 的 `base_url` 缺失挡住，但本机已安装并登录的 **CodeBuddy v2.185.0** 在 registry 中是 `verified` adapter，可直接使用。
 - [x] 真实执行路径：内核 daemon（`npx tsx apps/cli/src/index.ts start`，端口 3737，DB 落仓库 `.agent-ops/`）→ 建任务 “Real model acceptance” → provision → `agentId: codebuddy` 建 Run → `POST /api/runs/:id/execute`。
@@ -445,4 +445,8 @@
 - [x] 内容与提交验收：worktree 中 `REAL_MODEL.md` 精确为 `hello from codebuddy`；`accept` 后 commit `202033823e4ad7f7f12dcbc47717718016688c8a`，worktree clean，任务 `done`。
 - [x] 证据导出：`GET /api/tasks/<id>/export` 确认 `runs=1 / acceptedCommits=1 / changedFiles=1 / durationMs=15064`；usage 三字段为 `null`、tool audit 为 `unknown`（CodeBuddy 不上报），按“不伪造”口径记录。
 - [x] `.agent-ops/` 加入 `.gitignore`（daemon 从仓库根启动时 DB 与任务 worktree 都落在这里）。
-- [ ] 剩余：M1 退出标准写的是“从 UI 跑通”；本轮走的是内核 HTTP API（Studio 使用的同一套端点），Studio 里点击验收同一路径未做。真实 CLI 仍未上报 token/cost 与工具调用。
+- [x] Studio UI 验收（2026-11-20）：Roles 页新建角色 `UI CodeBuddy`（base agent `codebuddy`）→ Tasks 页新建任务 “UI real model run”（pipeline 一步 `Implement` 绑定该角色）→ 点 `Run pipeline` → 真实 CodeBuddy 执行 → 任务 `done`。
+  - 结果：run `669f2e22-abc2-4432-a22a-5265b3205398`、`codebuddy` 2.185.0、exit 0、14.7s、`changedFiles=['UI_REAL.md']`、commit `ea4553f7d2`；文件内容精确为 `hello from the studio UI`。
+  - UI 中可见：step “Implement / ui-codebuddy / Completed / ea4553f7d2”，Run 列表 “codebuddy Done UI_REAL.md | untracked”。
+- [x] UI 验收过程中发现并修复两个真实缺陷：① 新建任务表单不 provision worktree，`Run pipeline` 直接 409 “no worktree”；② 执行后不刷新已展开任务的 Run 列表（显示 “No runs yet”）。提交 `902d864 fix(studio): provision and refresh pipeline runs`。
+- [ ] 剩余：Claude Code / Codex 仍受 CC Switch `base_url` 阻塞；CodeBuddy 不上报 usage 与工具调用（记录为 null / unknown）；M1 的“4 步串行完整组合”此前由确定性 runner 验收。

@@ -8,7 +8,7 @@
 - `daemon` **双模**：默认只挂载内核 Task/Run 控制面（`server-core`）；`AGENT_OPS_ENABLE_WEBAPP=1` 时懒加载 webapp-delivery 云链路（Project / Blueprint / Apply / Release）。
 - webapp-delivery 的 7 个 package 与 1 个 app（`studio`）隔离在 `plugins/webapp-delivery/`，内核不反向依赖插件。
 - 全仓 `npm run typecheck` 通过，`npm test` 62 文件 / 730 tests 全绿。
-- **真实模型 Run 已跑通（2026-11-20）**：本机已登录的 **CodeBuddy v2.185.0**（registry 中的 `verified` adapter）通过内核 API 完成 1 条真实写任务并 accept（commit `2020338`）。Studio UI 点击验收仍待做；Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
+- **真实模型验收已完成（2026-11-20）**：CodeBuddy v2.185.0（registry 中的 `verified` adapter）通过内核 API 完成 1 条真实任务，随后在 Studio UI 里用“角色 + 一步 Pipeline + Run pipeline”跑通第二条（commit `ea4553f7d2`）。Claude Code / Codex 仍受 CC Switch `base_url` 阻塞，不影响 CodeBuddy 路径。
 
 ## 内核能力
 
