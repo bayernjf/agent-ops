@@ -57,6 +57,12 @@ export {
   getRoleTemplate,
 } from './role-templates.js';
 export {
+  type ToolCallAudit,
+  type ToolAudit,
+  TOOL_AUDIT_LIMIT,
+  extractToolAudit,
+} from './tool-audit.js';
+export {
   type AgentProfile,
   type AgentProfileOverrides,
   type ResolvedAgentConfig,
