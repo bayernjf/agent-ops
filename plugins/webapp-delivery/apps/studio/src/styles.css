@@ -1895,6 +1895,25 @@ select option {
   overflow-wrap: anywhere;
 }
 
+.run-file-picker {
+  margin-bottom: 10px;
+}
+
+.run-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--text-2);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.run-file-row input {
+  accent-color: var(--accent);
+}
+
 .run-evidence h4 {
   margin: 12px 0 6px;
   color: var(--text-2);
