@@ -845,6 +845,8 @@ export const zh = {
     update: '无法更新角色。',
     new: '新建角色',
     newTitle: '新建角色',
+    templates: '从模板开始',
+    templateHint: '模板只填入字段，保存前可修改。',
     editTitle: '编辑角色',
     name: '名称',
     descriptionLabel: '描述',

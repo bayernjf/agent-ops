@@ -482,6 +482,17 @@ export type AgentRole = {
   updatedAt: string;
 };
 
+/** Mirrors `RoleTemplate` in `@agent-ops/agent-runtime/role-templates` for the browser. */
+export type RoleTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  baseAgentId: string;
+  systemPrompt: string;
+  acceptanceCriteria: string[];
+  runtimePolicy: RoleRuntimePolicy;
+};
+
 /** Mirrors `TeamHandoff` in `@agent-ops/agent-runtime/teams` for the browser. */
 export type TeamHandoff = {
   fromRoleId: string;

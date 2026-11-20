@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Check, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, X } from 'lucide-react';
 import { useI18n, type KeyPath } from '../i18n/i18n';
 import { apiFetch } from '../lib/api';
-import type { AgentRole, RoleApprovalMode } from '../types';
+import type { AgentRole, RoleApprovalMode, RoleTemplate } from '../types';
 
 type RoleForm = {
   name: string;
@@ -55,6 +55,7 @@ const splitCommas = (value: string) => value.split(',').map(item => item.trim())
 export function RolesView() {
   const { t } = useI18n();
   const [roles, setRoles] = useState<AgentRole[]>([]);
+  const [templates, setTemplates] = useState<RoleTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -74,6 +75,11 @@ export function RolesView() {
       }
       const body = payload as { roles?: AgentRole[] } | null;
       setRoles(Array.isArray(body?.roles) ? body.roles : []);
+
+      // Templates only pre-fill the create form; a missing list must not block the role table.
+      const templateResponse = await apiFetch('/api/role-templates');
+      const templatePayload = (await templateResponse.json().catch(() => null)) as { templates?: RoleTemplate[] } | null;
+      if (templateResponse.ok && Array.isArray(templatePayload?.templates)) setTemplates(templatePayload.templates);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('roles.load'));
     } finally {
@@ -156,6 +162,21 @@ export function RolesView() {
 
   const update = <K extends keyof RoleForm>(key: K, value: RoleForm[K]) => setForm(prev => ({ ...prev, [key]: value }));
 
+  const applyTemplate = (template: RoleTemplate) => {
+    setForm({
+      name: template.name,
+      description: template.description,
+      baseAgentId: template.baseAgentId,
+      profileId: '',
+      systemPrompt: template.systemPrompt,
+      acceptanceCriteria: template.acceptanceCriteria.join('\n'),
+      allowedTools: template.runtimePolicy.allowedTools.join(', '),
+      blockedTools: template.runtimePolicy.blockedTools.join(', '),
+      approvalMode: template.runtimePolicy.approvalMode,
+      enabled: true,
+    });
+  };
+
   const approvalLabel = (mode: RoleApprovalMode) => t(`roles.approvalMode.${mode}` as KeyPath);
 
   return (
@@ -177,6 +198,20 @@ export function RolesView() {
         {editingId && (
           <div className="role-form">
             <h3>{editingId === 'new' ? t('roles.newTitle') : t('roles.editTitle')}</h3>
+            {editingId === 'new' && templates.length > 0 && (
+              <div className="role-templates">
+                <span>{t('roles.templates')}</span>
+                <p>{t('roles.templateHint')}</p>
+                <div className="role-template-list">
+                  {templates.map(template => (
+                    <button className="role-template" key={template.id} type="button" onClick={() => applyTemplate(template)}>
+                      <strong>{template.name}</strong>
+                      <small>{template.description}</small>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <label>{t('roles.name')}<input value={form.name} onChange={e => update('name', e.target.value)} placeholder={t('roles.placeholderName')} /></label>
             <label>{t('roles.descriptionLabel')}<input value={form.description} onChange={e => update('description', e.target.value)} /></label>
             <div className="role-form-grid">

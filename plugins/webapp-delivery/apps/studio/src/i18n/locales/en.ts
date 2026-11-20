@@ -863,6 +863,8 @@ export const en = {
     update: 'Unable to update the role.',
     new: 'New role',
     newTitle: 'New role',
+    templates: 'Start from a template',
+    templateHint: 'Templates fill the fields; edit before saving.',
     editTitle: 'Edit role',
     name: 'Name',
     descriptionLabel: 'Description',
