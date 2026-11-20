@@ -340,7 +340,7 @@
 - [x] server：`POST /api/tasks/:id/parallel/execute`（`maxConcurrency` 1–8，越界 400）；MCP：新增 `agent_ops_execute_parallel`。
 - [x] 测试：3 角色团队按并发 2 跑 3 条 lane，实测最大并发 = 2、三个独立 worktree、每 lane 自有文件 + 两条 lane 共享的 `SHARED.md` 被列为冲突、任务落 `review`、审计含 `parallel.executed`；一个 lane 失败时另一个仍成功且任务仍 `review`；未 provision 的任务报 `no worktree`；server 200/400。全仓 typecheck 0，58 文件 / 698 tests 绿。
 - [x] 本轮提交：`2411c85 feat(storage-core): add parallel team lanes`、`a63ef21 feat(server-core): expose parallel lanes`、`64033fb feat(cli): add the parallel lane tool`。
-- [ ] 未做：**没有自动合并或合成**——lane 产出的 commit 需要人工逐个接受或放弃（接受语义见下节）；`releaseTask` 不会清理 lane worktree；Studio 没有并行入口；真实模型的并行执行未跑（CLI 登录仍阻塞）。
+- [ ] 未做：**没有自动合并或合成**——lane 产出的 commit 需要人工逐个接受或放弃（接受语义见下节）；Studio 没有并行入口；真实模型的并行执行未跑（CLI 登录仍阻塞）。
 
 ## 并行任务接受语义 — 已完成（2026-11-20）
 
@@ -351,7 +351,13 @@
 - [x] `run.accepted` / `run.rejected` 审计新增 `laneId`；Studio Run 身份行显示 `Lane`（并行通道）。
 - [x] 测试：两条 lane 各自接受后任务才 `done`、主 worktree 未被污染、lane commit 在各自 worktree HEAD 且 pin ref 存在；驳回 lane 后任务仍 `review`、lane worktree 干净、文件被清掉。全仓 typecheck 0，58 文件 / 700 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
 - [x] 本轮提交：`5b32c6f feat(storage-core): accept parallel lanes`、`6bee0e6 feat(studio): label parallel lane runs`。
-- [ ] 未做：仍然**不自动合并**多 lane 结果，也没有“选哪条 lane 作为最终交付”的一等操作；`releaseTask` 不清理 lane worktree；并行任务没有专用 UI 入口（接受/驳回仍走普通 Run 操作）。
+- [ ] 未做：仍然**不自动合并**多 lane 结果，也没有“选哪条 lane 作为最终交付”的一等操作；并行任务没有专用 UI 入口（接受/驳回仍走普通 Run 操作）。
+
+## F5-07 收尾 — release 清理 lane worktree — 已完成（2026-11-20）
+
+- [x] `releaseTask` 现在会先收集所有 Run 记录的非主 worktree（并行 lane 与 DAG step 各一个），逐个 `git status` 检查后再统一删除；任一路径有未提交改动即拒绝释放，主 worktree 保持原样（不会半释放）。
+- [x] 测试：两条 lane 接受并 release 后，主 worktree 与两条 lane worktree 均不存在；存在失败 lane（留下 `DIRTY.md`）时 release 抛 `uncommitted changes` 且主 worktree 未被删除。全仓 typecheck 0，62 文件 / 730 tests 绿。
+- [ ] 未做：release 不清理 `refs/agent-ops/tasks/<id>/lanes/*` 的 pin（保留可审计的 commit）；Studio 的 release 按钮未在浏览器验证。
 
 ## F7-06 团队看板 — 已完成（2026-11-20）
 

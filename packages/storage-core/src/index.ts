@@ -904,7 +904,19 @@ export class KernelStore {
     const existing = this.getTask(id);
     if (!existing) throw new Error(`Task ${id} was not found.`);
     if (!existing.worktreePath) return existing;
+
+    // Parallel and DAG runs leave extra worktrees behind; releasing must not orphan them.
+    const laneWorktrees = [...new Set(this.listRuns(id)
+      .map(run => run.worktreePath)
+      .filter((path): path is string => Boolean(path) && path !== existing.worktreePath))];
+    // Check every worktree before removing any, so one dirty lane cannot half-release the task.
+    for (const lanePath of laneWorktrees) {
+      if (existsSync(lanePath)) await assertWorktreeClean(lanePath);
+    }
     await assertWorktreeClean(existing.worktreePath);
+    for (const lanePath of laneWorktrees) {
+      if (existsSync(lanePath)) await removeWorktree(existing.repo, lanePath).catch(() => undefined);
+    }
     await removeWorktree(existing.repo, existing.worktreePath);
     const now = new Date().toISOString();
     this.kernelOrm.update(tasks).set({ worktreePath: '', updatedAt: now }).where(eq(tasks.id, id)).run();

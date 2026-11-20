@@ -7,7 +7,7 @@
 - 内核 **5 个 package**：`agent-runtime` / `workflow` / `policy` / `storage-core` / `server-core`；内核 **2 个 app**：`cli` / `daemon`。
 - `daemon` **双模**：默认只挂载内核 Task/Run 控制面（`server-core`）；`AGENT_OPS_ENABLE_WEBAPP=1` 时懒加载 webapp-delivery 云链路（Project / Blueprint / Apply / Release）。
 - webapp-delivery 的 7 个 package 与 1 个 app（`studio`）隔离在 `plugins/webapp-delivery/`，内核不反向依赖插件。
-- 全仓 `npm run typecheck` 通过，`npm test` 62 文件 / 729 tests 全绿。
+- 全仓 `npm run typecheck` 通过，`npm test` 62 文件 / 730 tests 全绿。
 - **真实模型的 UI E2E 仍 blocked**：本机 CLI 未登录（Claude Code / Codex），当前验收使用确定性 runner，不代表真实模型任务已验收。
 
 ## 内核能力

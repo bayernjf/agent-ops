@@ -121,6 +121,13 @@ describe('KernelStore parallel lanes', () => {
       // The task's own worktree is untouched: lanes never merge into it.
       expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: provisioned.worktreePath })).stdout.trim()).toBe('');
       expect(await access(join(provisioned.worktreePath, `${left.id}.md`)).then(() => true).catch(() => false)).toBe(false);
+
+      const released = await store.releaseTask(task.id);
+      expect(released.worktreePath).toBe('');
+      for (const lane of result.lanes) {
+        expect(await access(lane.worktreePath ?? '').then(() => true).catch(() => false)).toBe(false);
+      }
+      expect(await access(provisioned.worktreePath).then(() => true).catch(() => false)).toBe(false);
       await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
@@ -150,6 +157,35 @@ describe('KernelStore parallel lanes', () => {
       expect(store.getRun(rightLane?.runId ?? '')?.status).toBe('queued');
       expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: rightLane?.worktreePath ?? '' })).stdout.trim()).toBe('');
       expect(await access(join(rightLane?.worktreePath ?? '', `${right.id}.md`)).then(() => true).catch(() => false)).toBe(false);
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('refuses to release while a lane still has uncommitted changes', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-parallel-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const left = await store.roles.createRole({ name: 'Left', baseAgentId: 'codex' });
+      const right = await store.roles.createRole({ name: 'Right', baseAgentId: 'codex' });
+      const team = await store.teams.createTeam({ name: 'Pair', roleIds: [left.id, right.id] });
+      const task = await store.createTask({ repo, baseRef: 'main', title: 'Pair', teamId: team.id });
+      const provisioned = await store.provisionTask(task.id);
+
+      const result = await store.executeParallelTeam(task.id, {
+        runner: async (_command, _arguments, options) => {
+          const roleId = basename(options.cwd);
+          await writeFile(join(options.cwd, roleId === right.id ? 'DIRTY.md' : 'OK.md'), 'x\n', 'utf8');
+          return roleId === right.id ? { ...success('boom'), exitCode: 1 } : success();
+        },
+      });
+      expect(result.lanes.map(lane => lane.status)).toEqual(['review', 'failed']);
+
+      await expect(store.releaseTask(task.id)).rejects.toThrow('uncommitted changes');
+      // Nothing was half-released: the main worktree is still there.
+      expect(await access(join(provisioned.worktreePath, 'README.md')).then(() => true).catch(() => false)).toBe(true);
       await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
