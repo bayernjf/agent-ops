@@ -258,3 +258,16 @@
 - [x] 本机 UI 实跑：临时 DB + 临时 git 仓库进入 review，展开证据后取消勾选 `drop.txt`，点“接受选中文件 (1/2)”；HEAD 只含 `keep.txt`，`drop.txt` 已删除，`git status --porcelain` 为空，Task 变 done。
 - [ ] 当前是“本次操作里接受选中、其余丢弃”的一次性语义；不支持保留未选文件留待下一轮。Pipeline 自动 accept 与不带 files 的旧调用仍走全量接受。
 - [ ] 本轮提交：`8bf226e feat(storage-core): accept selected run files`、`e1e6fd5 feat(server-core): accept selected run files`、`324cca1 feat(studio): pick files before accepting a run`、`5d24e70 test(storage-core): cover partial run acceptance`。
+
+## F8-02 审计事件 — 已完成（2026-11-20）
+
+- [x] migration `0018_audit_events` + `audit_events` 表：`seq` 全局单调，字段含 `task_id` / `team_id` / `actor` / `type` / `data` / `at`；重启时从 `MAX(seq)` 续号。
+- [x] 事件类型：`role.created/updated/deleted`、`team.created/updated/deleted`、`task.created`、`run.accepted/rejected`、`pipeline.step.approved/rejected`、`pipeline.retried`、`handoff.recorded`。
+- [x] `RoleStore`/`TeamStore` 新增可选 `onChange` 钩子，`KernelStore` 用它把模型改动写进审计；创建/更新/删除在落盘后触发，原有调用方式不变。
+- [x] `task.created` 记录 roleId / teamId / pipelineSteps；`run.accepted` 记录 runId / commitSha / roleId / 选中文件；`handoff.recorded` 记录上下游 step、run、commit 与随行文件数。
+- [x] `KernelStore.listAudit({ taskId, teamId, type, limit })`：按 `seq` 升序返回，`limit` 取最新 N（默认 200，上限 1000）。
+- [x] server：`GET /api/audit?taskId=&teamId=&type=&limit=`。
+- [x] MCP：新增 `agent_ops_list_audit`。
+- [x] 测试：角色/团队/派活的事件顺序与过滤、Pipeline 回放顺序 `task.created → run.accepted → handoff.recorded → run.accepted`、reject 记录、重启后事件仍在且新事件 seq 递增；server 三向过滤与 limit；MCP 返回 `role.created`。全仓 typecheck 0，51 文件 / 669 tests 绿。
+- [x] 本轮提交：`7a7d7af feat(storage-core): record kernel audit events`、`bfb4398 feat(server-core): serve the audit log`、`e746600 feat(cli): add the audit tool`。
+- [ ] 未做：Studio 暂无审计面板；`actor` 只区分 operator/system，没有具体操作人身份（本地单用户内核还没有身份模型）；F8-03 证据导出未做；审计表不自动截断。
