@@ -295,6 +295,66 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('retries a failed pipeline over the HTTP API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      let attempts = 0;
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        attempts++;
+        if (attempts === 1) {
+          await writeFile(join(options.cwd, 'failed.txt'), 'first attempt\n', 'utf8');
+          return {
+            exitCode: 1,
+            signal: null,
+            timedOut: false,
+            output: 'boom',
+            startedAt: new Date(Date.now() - 10).toISOString(),
+            completedAt: new Date().toISOString(),
+          };
+        }
+        await writeFile(join(options.cwd, 'retried.txt'), 'retry\n', 'utf8');
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'ok',
+          startedAt: new Date(Date.now() - 10).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+      const app = createKernelApp(store, { runner });
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Retry over HTTP',
+        pipeline: { steps: [{ id: 'deliver', name: 'Deliver', agentId: 'codex' }] },
+      });
+      const provisioned = await store.provisionTask(task.id);
+
+      const failed = await app.request(`/api/tasks/${task.id}/pipeline/execute`, { method: 'POST' });
+      expect(failed.status).toBe(200);
+      expect((await failed.json()) as object).toMatchObject({ status: 'failed' });
+
+      const retried = await app.request(`/api/tasks/${task.id}/pipeline/retry`, { method: 'POST' });
+      expect(retried.status).toBe(200);
+      expect((await retried.json()) as object).toMatchObject({
+        results: [{ stepId: 'deliver', status: 'completed' }],
+        status: 'completed',
+      });
+      expect(attempts).toBe(2);
+      expect(store.getTask(task.id)?.status).toBe('done');
+      expect((await execFileAsync('git', ['rev-list', '--count', 'HEAD'], { cwd: provisioned.worktreePath })).stdout.trim()).toBe('2');
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: provisioned.worktreePath })).stdout.trim()).toBe('');
+
+      const again = await app.request(`/api/tasks/${task.id}/pipeline/retry`, { method: 'POST' });
+      expect(again.status).toBe(409);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('creates, resolves, updates and deletes roles through the kernel API', async () => {
     const { store, directory } = await openStore();
     try {

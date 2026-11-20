@@ -155,6 +155,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_reject_run',
       'agent_ops_release_task',
       'agent_ops_request_release',
+      'agent_ops_retry_pipeline',
       'agent_ops_revise_blueprint',
       'agent_ops_submit_acceptance',
       'agent_ops_update_role',
