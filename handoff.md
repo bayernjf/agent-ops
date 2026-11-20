@@ -352,3 +352,16 @@
 - [x] 测试：两条 lane 各自接受后任务才 `done`、主 worktree 未被污染、lane commit 在各自 worktree HEAD 且 pin ref 存在；驳回 lane 后任务仍 `review`、lane worktree 干净、文件被清掉。全仓 typecheck 0，58 文件 / 700 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
 - [x] 本轮提交：`5b32c6f feat(storage-core): accept parallel lanes`、`6bee0e6 feat(studio): label parallel lane runs`。
 - [ ] 未做：仍然**不自动合并**多 lane 结果，也没有“选哪条 lane 作为最终交付”的一等操作；`releaseTask` 不清理 lane worktree；并行任务没有专用 UI 入口（接受/驳回仍走普通 Run 操作）。
+
+## F7-06 团队看板 — 已完成（2026-11-20）
+
+- [x] `getMetrics` 增加 `teamId` 过滤：只统计指派给该团队的任务及其 Run；返回值新增 `teamId: string | null` 标明范围。
+- [x] server `GET /api/metrics?teamId=`；MCP `agent_ops_get_metrics` 增加 `teamId` 参数。
+- [x] TeamsView 详情新增两块面板：
+  - **卡点**：该团队下 `failed` 任务，以及 pipeline 停在 `awaiting_approval` 的任务；
+  - **团队用量**：成功率、Run 数、成本、Token、平均耗时（来自 `/api/metrics?teamId=`，未上报仍显示 `—`）。
+- [x] 切换选中团队时按 `teamId` 重新拉取指标，并带取消标记避免旧请求写回。
+- [x] 格式化函数抽到 `src/lib/format.ts`，MetricsView 与 TeamsView 共用。
+- [x] 测试：两个团队时全量 metrics 统计 2、按 `teamId` 只统计 1 且 `teamId` 字段正确；server `?teamId=` 透传；全仓 typecheck 0，58 文件 / 701 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
+- [x] 本轮提交：`38ca138 feat(storage-core): scope metrics to a team`、`be6b3ed feat(server-core): accept a teamId on metrics`、`05639c5 feat(cli): filter metrics by team`、`ed285bb feat(studio): show team blockers and usage`。
+- [ ] 未做：看板仍是列表式，没有按状态分列的看板视图；成本只有上报 usage 时才有数字；卡点不含“被驳回的 lane 等待重跑”这类更细的状态；Studio 未在真实浏览器点击。
