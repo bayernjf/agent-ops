@@ -750,6 +750,59 @@ export class KernelStore {
     }
   }
 
+  private pipelineStepBaseCommit(task: TaskRecord, pipeline: TaskPipeline, index: number): string {
+    for (let cursor = index - 1; cursor >= 0; cursor--) {
+      const step = pipeline.steps[cursor];
+      const result = pipeline.results.find(candidate => candidate.stepId === step.id);
+      if (result?.status !== 'completed' || !result.commitSha) {
+        throw new Error(`Pipeline step ${pipeline.steps[index]?.id} cannot start until step ${step.id} is completed and committed.`);
+      }
+      return result.commitSha;
+    }
+    return task.baseCommit;
+  }
+
+  async retryTaskPipeline(id: string, runner?: CodexProcessRunner): Promise<TaskPipeline> {
+    if (this.activePipelines.has(id)) throw new Error(`Task ${id} already has a running pipeline.`);
+    this.activePipelines.add(id);
+    try {
+      const task = this.getTask(id);
+      if (!task) throw new Error(`Task ${id} was not found.`);
+      const pipeline = task.pipeline;
+      if (!pipeline || pipeline.steps.length === 0) throw new Error(`Task ${id} has no pipeline configured.`);
+      if (!task.worktreePath) throw new Error(`Task ${id} has no worktree. Provision it before retrying its pipeline.`);
+      if (pipeline.status !== 'failed') {
+        throw new Error(`Task ${id} pipeline is ${pipeline.status} and cannot be retried; only a failed pipeline can be retried.`);
+      }
+      const index = pipeline.steps.findIndex(step => (
+        pipeline.results.find(result => result.stepId === step.id)?.status === 'failed'
+      ));
+      if (index < 0) throw new Error(`Task ${id} pipeline cannot be retried because it has no failed step.`);
+      const baseCommit = this.pipelineStepBaseCommit(task, pipeline, index);
+      await resetWorktree(task.worktreePath, baseCommit || undefined);
+
+      const completed: TaskPipelineStepResult[] = [];
+      for (const step of pipeline.steps.slice(0, index)) {
+        const result = pipeline.results.find(candidate => candidate.stepId === step.id);
+        if (result?.status !== 'completed' || !result.commitSha) {
+          throw new Error(`Pipeline step ${step.id} has no committed result to preserve before retry.`);
+        }
+        completed.push(result);
+      }
+      const retried: TaskPipeline = {
+        ...pipeline,
+        results: completed,
+        status: 'running',
+        completedAt: undefined,
+      };
+      await this.saveTaskPipeline(id, retried);
+      await this.updateTaskStatus(id, 'running');
+      return await this.runPipelineSteps(id, retried, index, runner);
+    } finally {
+      this.activePipelines.delete(id);
+    }
+  }
+
   private async runPipelineSteps(id: string, initial: TaskPipeline, startIndex: number, runner?: CodexProcessRunner): Promise<TaskPipeline> {
     let pipeline = initial;
     for (let index = startIndex; index < pipeline.steps.length; index++) {
@@ -833,7 +886,7 @@ export class KernelStore {
     return pipeline;
   }
 
-  private async awaitingPipelineStep(id: string): Promise<{ pipeline: TaskPipeline; index: number; runId: string; stepId: string }> {
+  private async awaitingPipelineStep(id: string): Promise<{ task: TaskRecord; pipeline: TaskPipeline; index: number; runId: string; stepId: string }> {
     const task = this.getTask(id);
     if (!task) throw new Error(`Task ${id} was not found.`);
     const pipeline = task.pipeline;
@@ -845,7 +898,7 @@ export class KernelStore {
     if (!awaiting?.runId) throw new Error(`Task ${id} has no step awaiting approval.`);
     const index = pipeline.steps.findIndex(step => step.id === awaiting.stepId);
     if (index < 0) throw new Error(`Pipeline step ${awaiting.stepId} was not found.`);
-    return { pipeline, index, runId: awaiting.runId, stepId: awaiting.stepId };
+    return { task, pipeline, index, runId: awaiting.runId, stepId: awaiting.stepId };
   }
 
   async approvePipelineStep(id: string, runner?: CodexProcessRunner): Promise<TaskPipeline> {
@@ -872,8 +925,9 @@ export class KernelStore {
     if (this.activePipelines.has(id)) throw new Error(`Task ${id} already has a running pipeline.`);
     this.activePipelines.add(id);
     try {
-      const { pipeline, runId, stepId } = await this.awaitingPipelineStep(id);
-      await this.rejectRun(runId);
+      const { task, pipeline, index, runId, stepId } = await this.awaitingPipelineStep(id);
+      const baseCommit = this.pipelineStepBaseCommit(task, pipeline, index);
+      await this.rejectRun(runId, baseCommit);
       await this.updateTaskStatus(id, 'failed');
       const failed: TaskPipeline = {
         ...pipeline,
@@ -906,14 +960,14 @@ export class KernelStore {
     return this.updateRunStatus(id, 'done', run.diffStat, run.artifacts, commit.sha);
   }
 
-  async rejectRun(id: string): Promise<RunRecord> {
+  async rejectRun(id: string, resetTo?: string): Promise<RunRecord> {
     const run = this.getRun(id);
     if (!run) throw new Error(`Run ${id} was not found.`);
     if (run.status !== 'review') throw new Error(`Run ${id} cannot be rejected from status ${run.status}.`);
     const task = this.getTask(run.taskId);
     if (!task) throw new Error(`Task ${run.taskId} was not found.`);
     if (task.worktreePath) {
-      await resetWorktree(task.worktreePath, task.baseCommit || undefined);
+      await resetWorktree(task.worktreePath, resetTo || task.baseCommit || undefined);
     }
     await this.updateTaskStatus(run.taskId, 'queued');
     return this.updateRunStatus(id, 'queued');
