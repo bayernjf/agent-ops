@@ -44,6 +44,7 @@ describe('KernelStore coordinator', () => {
           { fromRoleId: architect.id, toRoleId: implementer.id },
           { fromRoleId: implementer.id, toRoleId: reviewer.id },
         ],
+        ownerRoleId: reviewer.id,
       });
       const task = await store.createTask({ repo, baseRef: 'main', title: 'Coordinated', teamId: team.id });
 
@@ -52,11 +53,16 @@ describe('KernelStore coordinator', () => {
       expect(plan?.steps.map(step => step.name)).toEqual(['Architect', 'Implementer', 'Reviewer']);
       expect(plan?.steps[0]?.prompt).toBe('Designs the change.');
       expect(plan?.warnings).toEqual([]);
+      expect(plan?.ownerRoleId).toBe(reviewer.id);
+      expect(plan?.steps[2]?.ownsDeliverable).toBe(true);
+      expect(plan?.steps[2]?.prompt).toContain('You own the final deliverable');
+      expect(plan?.steps.slice(0, 2).every(step => !step.ownsDeliverable)).toBe(true);
 
       const pipeline = await store.applyTeamPipeline(task.id);
       expect(pipeline?.status).toBe('idle');
       expect(pipeline?.steps).toHaveLength(3);
       expect(pipeline?.steps.map(step => step.roleId)).toEqual([architect.id, implementer.id, reviewer.id]);
+      expect(pipeline?.steps[2]?.ownsDeliverable).toBe(true);
       expect(store.listAudit({ taskId: task.id }).map(event => event.type)).toEqual(['task.created', 'pipeline.planned']);
 
       await store.provisionTask(task.id);
@@ -82,6 +88,7 @@ describe('KernelStore coordinator', () => {
       });
       expect(summary?.steps.map(step => step.roleId)).toEqual([architect.id, implementer.id, reviewer.id]);
       expect(summary?.steps.every(step => /^[0-9a-f]{40}$/.test(step.commitSha ?? ''))).toBe(true);
+      expect(summary?.owner).toEqual({ stepId: reviewer.id, status: 'completed' });
 
       await expect(store.applyTeamPipeline(task.id)).rejects.toThrow('can only be applied');
       expect(await store.coordinatorSummary('missing-task')).toBeNull();
@@ -98,6 +105,24 @@ describe('KernelStore coordinator', () => {
       const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Teamless' });
       await expect(store.planTeamPipeline(task.id)).rejects.toThrow('not assigned to a Team');
       expect(await store.planTeamPipeline('missing-task')).toBeNull();
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('warns when the team has no owner for the final write', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-coordinator-'));
+    try {
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const role = await store.roles.createRole({ name: 'Builder', baseAgentId: 'codex' });
+      const team = await store.teams.createTeam({ name: 'Unowned', roleIds: [role.id] });
+      const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Unowned', teamId: team.id });
+
+      const plan = await store.planTeamPipeline(task.id);
+      expect(plan?.ownerRoleId).toBeNull();
+      expect(plan?.steps.every(step => !step.ownsDeliverable)).toBe(true);
+      expect(plan?.warnings.join(' ')).toContain('no owner role');
       await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });

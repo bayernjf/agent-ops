@@ -55,6 +55,8 @@ export type TaskPipelineStepInput = {
   requiresApproval?: boolean;
   /** Steps this step depends on for a DAG run; defaults to the previous step in a serial run. */
   dependsOn?: string[];
+  /** Marks the step that owns the final write of the task's deliverable. */
+  ownsDeliverable?: boolean;
 };
 
 export type TaskPipelineStep = {
@@ -66,6 +68,8 @@ export type TaskPipelineStep = {
   prompt?: string;
   requiresApproval?: boolean;
   dependsOn?: string[];
+  /** Marks the step that owns the final write of the task's deliverable. */
+  ownsDeliverable?: boolean;
 };
 
 export type TaskPipelineStepResult = {
@@ -386,6 +390,8 @@ export type KernelAuditActor = 'operator' | 'system';
 export type TeamPipelinePlan = {
   taskId: string;
   teamId: string;
+  /** The role the plan expects to perform the final write, when the Team names one. */
+  ownerRoleId: string | null;
   order: string[];
   steps: TaskPipelineStep[];
   warnings: string[];
@@ -411,6 +417,8 @@ export type CoordinatorSummary = {
   awaiting: number;
   handoffs: number;
   blockers: Array<{ stepId: string; status: string }>;
+  /** The step that owns the final write, and its current status (both null when none is marked). */
+  owner: { stepId: string | null; status: string | null };
 };
 
 /** One step of a DAG run: it executed in its own worktree branched from its dependencies. */
@@ -784,6 +792,7 @@ export class KernelStore {
         ...(agentId ? { agentId } : {}),
         ...(raw.prompt?.trim() ? { prompt: raw.prompt.trim() } : {}),
         ...(raw.requiresApproval ? { requiresApproval: true } : {}),
+        ...(raw.ownsDeliverable ? { ownsDeliverable: true } : {}),
         // An explicit dependsOn (even an empty one) is authoritative: `[]` marks a DAG root.
         ...(raw.dependsOn ? { dependsOn: [...new Set(raw.dependsOn.map(dep => dep.trim()).filter(Boolean))] } : {}),
       });
@@ -1989,7 +1998,29 @@ export class KernelStore {
       });
     }
     if (steps.length === 0) throw new Error(`Team ${team.id} produced an empty plan.`);
-    return { taskId, teamId: team.id, order: steps.map(step => step.id), steps, warnings };
+
+    // The owner runs last and is told to write, not just describe. Without one, the plan says so
+    // instead of silently producing notes that nobody lands.
+    let ownerRoleId: string | null = null;
+    if (team.ownerRoleId) {
+      const ownerStep = steps.find(step => step.roleId === team.ownerRoleId);
+      if (!ownerStep) {
+        warnings.push(`Owner role ${team.ownerRoleId} was not found on the Team's roster; the plan has no owner step.`);
+      } else {
+        ownerRoleId = team.ownerRoleId;
+        ownerStep.ownsDeliverable = true;
+        ownerStep.prompt = [
+          ownerStep.prompt,
+          'You own the final deliverable: perform the write the upstream steps only planned. Do not finish without the change on disk, and state exactly what you wrote.',
+        ].filter(Boolean).join('\n\n');
+        steps.splice(steps.indexOf(ownerStep), 1);
+        steps.push(ownerStep);
+      }
+    } else {
+      warnings.push('Team has no owner role; no step is responsible for the final write.');
+    }
+
+    return { taskId, teamId: team.id, ownerRoleId, order: steps.map(step => step.id), steps, warnings };
   }
 
   /** Write a team plan onto the task as its serial pipeline. Applying it is the human gate. */
@@ -2006,6 +2037,7 @@ export class KernelStore {
         name: step.name,
         roleId: step.roleId,
         ...(step.prompt ? { prompt: step.prompt } : {}),
+        ...(step.ownsDeliverable ? { ownsDeliverable: true } : {}),
       })),
     });
     if (!normalized) throw new Error('The team plan produced no steps.');
@@ -2041,6 +2073,7 @@ export class KernelStore {
     const blockers = steps
       .filter(step => step.status === 'failed' || step.status === 'awaiting_approval')
       .map(step => ({ stepId: step.stepId, status: step.status }));
+    const ownerStep = pipeline?.steps.find(step => step.ownsDeliverable);
     return {
       taskId,
       teamId: task.teamId,
@@ -2051,6 +2084,10 @@ export class KernelStore {
       awaiting: steps.filter(step => step.status === 'awaiting_approval').length,
       handoffs: handoffs.length,
       blockers,
+      owner: {
+        stepId: ownerStep?.id ?? null,
+        status: ownerStep ? (steps.find(step => step.stepId === ownerStep.id)?.status ?? 'pending') : null,
+      },
     };
   }
 

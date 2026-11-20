@@ -114,4 +114,34 @@ describe('TeamStore', () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it('requires the owner role to be a last-step roster member', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-teams-'));
+    try {
+      const { roles, teams } = await openStores(directory);
+      const a = await roles.createRole({ name: 'A', baseAgentId: 'codex' });
+      const b = await roles.createRole({ name: 'B', baseAgentId: 'codex' });
+      const outsider = await roles.createRole({ name: 'Outsider', baseAgentId: 'codex' });
+
+      await expect(teams.createTeam({ name: 'Bad owner', roleIds: [a.id], ownerRoleId: outsider.id }))
+        .rejects.toThrow('Owner role outsider is not on this Team');
+      await expect(teams.createTeam({
+        name: 'Owner hands off',
+        roleIds: [a.id, b.id],
+        handoffs: [{ fromRoleId: a.id, toRoleId: b.id }],
+        ownerRoleId: a.id,
+      })).rejects.toThrow('the owner must be the last role');
+
+      const owned = await teams.createTeam({
+        name: 'Owned',
+        roleIds: [a.id, b.id],
+        handoffs: [{ fromRoleId: a.id, toRoleId: b.id }],
+        ownerRoleId: b.id,
+      });
+      expect(owned.ownerRoleId).toBe(b.id);
+      expect((await teams.getTeam(owned.id))?.ownerRoleId).toBe(b.id);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });

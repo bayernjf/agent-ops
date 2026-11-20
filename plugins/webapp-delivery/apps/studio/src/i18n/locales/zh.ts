@@ -957,6 +957,9 @@ export const zh = {
     blockers: '卡点',
     noBlockers: '暂无卡点。',
     usage: '团队用量',
+    owner: '落盘角色',
+    ownerNone: '未指定落盘角色',
+    ownerHint: '落盘角色排在最后，并被要求执行真正的写入。',
   },
   metrics: {
     eyebrow: '内核指标',

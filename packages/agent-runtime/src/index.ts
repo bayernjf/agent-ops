@@ -58,6 +58,7 @@ export {
   agentTeamCreateSchema,
   agentTeamUpdateSchema,
   validateTeamGraph,
+  validateTeamOwner,
   orderTeamRoles,
   slugifyTeamName,
   ensureUniqueTeamId,

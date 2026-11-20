@@ -975,6 +975,9 @@ export const en = {
     blockers: 'Blockers',
     noBlockers: 'No blockers.',
     usage: 'Team usage',
+    owner: 'Owner role',
+    ownerNone: 'No owner',
+    ownerHint: 'The owner runs last and is told to perform the final write.',
   },
   metrics: {
     eyebrow: 'Kernel metrics',

@@ -469,6 +469,7 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
       toRoleId: z.string().trim().min(1).max(100),
       note: z.string().trim().max(500).optional().describe('What the downstream role picks up.'),
     })).max(200).optional().describe('Handoff edges between roster roles; must stay acyclic.'),
+    ownerRoleId: z.string().trim().min(1).max(100).optional().describe('Role that owns the final write; it runs last and must not hand off.'),
     enabled: z.boolean().optional().describe('Whether the team may own new tasks.'),
   };
 
