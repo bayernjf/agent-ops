@@ -480,6 +480,26 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}/handoffs`).then(toResult));
 
+  server.registerTool('agent_ops_list_audit', {
+    title: 'List audit events',
+    description: 'Replay kernel audit events: role and team edits, task assignment, accepted or rejected runs, pipeline gates and handoffs. Newest-last, capped by limit.',
+    inputSchema: {
+      taskId: z.string().min(1).optional().describe('Only events recorded for this task.'),
+      teamId: z.string().min(1).optional().describe('Only events recorded for this team.'),
+      type: z.string().min(1).optional().describe('Only events of this type, e.g. "run.accepted" or "handoff.recorded".'),
+      limit: z.number().int().min(1).max(1000).optional().describe('Keep the newest N events; defaults to 200.'),
+    },
+    annotations: READ_ONLY,
+  }, args => {
+    const query = new URLSearchParams();
+    if (args.taskId) query.set('taskId', args.taskId);
+    if (args.teamId) query.set('teamId', args.teamId);
+    if (args.type) query.set('type', args.type);
+    if (args.limit) query.set('limit', String(args.limit));
+    const suffix = query.size > 0 ? `?${query.toString()}` : '';
+    return callDaemon('GET', `/api/audit${suffix}`).then(toResult);
+  });
+
   server.registerTool('agent_ops_create_task', {
     title: 'Create task',
     description: 'Create a kernel task against a local repo and base ref. Provision it before creating a run.',
