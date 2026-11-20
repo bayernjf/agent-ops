@@ -493,6 +493,28 @@ export type RoleTemplate = {
   runtimePolicy: RoleRuntimePolicy;
 };
 
+/** Mirrors `RoleTestPlan` in `@agent-ops/storage-core` for the browser. */
+export type RoleTestPlan = {
+  roleId: string;
+  name: string;
+  enabled: boolean;
+  executable: boolean;
+  baseAgentId: string | null;
+  adapterStatus: string;
+  profileId: string | null;
+  reason: string | null;
+  objective: string;
+  command: string[] | null;
+  toolPolicy: {
+    allowedTools: string[];
+    blockedTools: string[];
+    readOnly: boolean;
+    enforcement: 'exact' | 'coarse';
+    warnings: string[];
+  } | null;
+  warnings: string[];
+};
+
 /** Mirrors `TeamHandoff` in `@agent-ops/agent-runtime/teams` for the browser. */
 export type TeamHandoff = {
   fromRoleId: string;

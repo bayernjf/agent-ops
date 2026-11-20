@@ -2091,6 +2091,60 @@ select option {
 .role-template strong { font-size: 13px; }
 .role-template small { color: var(--text-3); font-size: 11px; line-height: 1.35; }
 
+.role-test {
+  margin-top: 18px;
+  padding: 16px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.role-test .section-heading { margin-bottom: 10px; }
+.role-test h3 { margin: 0; color: var(--text-1); font-size: 14px; }
+
+.role-test-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.role-test-ok { color: var(--status-ok); font-weight: 700; }
+.role-test-bad { color: var(--accent-3); font-weight: 700; }
+
+.role-test-command { margin-top: 12px; }
+
+.role-test-command span,
+.role-test-warnings span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.role-test-command code {
+  display: block;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.role-test-warnings { margin-top: 12px; }
+
+.role-test-warnings ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
 /* Kernel team registry: roster, handoff edges and the team's task queue. */
 .teams-view .error { margin: 16px 0 0; }
 
