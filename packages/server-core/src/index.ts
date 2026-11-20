@@ -34,6 +34,7 @@ const pipelineStepSchema = z.object({
   profileId: z.string().trim().min(1).max(100).optional(),
   agentId: z.string().trim().min(1).max(100).optional(),
   prompt: z.string().trim().max(10_000).optional(),
+  requiresApproval: z.boolean().optional(),
 }).refine(step => Boolean(step.roleId || step.profileId || step.agentId), 'A pipeline step needs a roleId, profileId, or agentId.');
 
 const pipelineSchema = z.object({
@@ -83,7 +84,7 @@ export type KernelAppOptions = {
 function errorResponse(context: Context, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes('was not found')) return context.json({ error: message }, 404);
-  if (message.includes('cannot be') || message.includes('no worktree')) {
+  if (message.includes('cannot be') || message.includes('no worktree') || message.includes('nothing is awaiting approval')) {
     return context.json({ error: message }, 409);
   }
   return context.json({ error: message }, 500);
@@ -309,6 +310,22 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
   app.post('/api/tasks/:id/pipeline/execute', async (c) => {
     try {
       return c.json(await store.executeTaskPipeline(c.req.param('id'), options.runner));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  app.post('/api/tasks/:id/pipeline/approve', async (c) => {
+    try {
+      return c.json(await store.approvePipelineStep(c.req.param('id'), options.runner));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  app.post('/api/tasks/:id/pipeline/reject', async (c) => {
+    try {
+      return c.json(await store.rejectPipelineStep(c.req.param('id')));
     } catch (error) {
       return errorResponse(c, error);
     }

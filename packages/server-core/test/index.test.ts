@@ -183,6 +183,102 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('serves approval gates over the pipeline API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      let calls = 0;
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        calls++;
+        await writeFile(join(options.cwd, `gated-${calls}.txt`), 'done\n', 'utf8');
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'ok',
+          startedAt: new Date(Date.now() - 10).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+      const app = createKernelApp(store, { runner });
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Gated pipeline over HTTP',
+        pipeline: {
+          steps: [
+            { id: 'gated', name: 'Gated', agentId: 'codex', requiresApproval: true },
+            { id: 'tail', name: 'Tail', agentId: 'codex' },
+          ],
+        },
+      });
+      await store.provisionTask(task.id);
+
+      const executed = await app.request(`/api/tasks/${task.id}/pipeline/execute`, { method: 'POST' });
+      expect(executed.status).toBe(200);
+      expect((await executed.json()) as object).toMatchObject({ status: 'awaiting_approval' });
+      expect(calls).toBe(1);
+
+      const approved = await app.request(`/api/tasks/${task.id}/pipeline/approve`, { method: 'POST' });
+      expect(approved.status).toBe(200);
+      expect((await approved.json()) as object).toMatchObject({
+        status: 'completed',
+        results: [
+          { stepId: 'gated', status: 'completed' },
+          { stepId: 'tail', status: 'completed' },
+        ],
+      });
+      expect(calls).toBe(2);
+
+      // A second approval has nothing left to gate.
+      const again = await app.request(`/api/tasks/${task.id}/pipeline/approve`, { method: 'POST' });
+      expect(again.status).toBe(409);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a gated pipeline step over the API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        await writeFile(join(options.cwd, 'rejected.txt'), 'done\n', 'utf8');
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'ok',
+          startedAt: new Date(Date.now() - 10).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+      const app = createKernelApp(store, { runner });
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Rejected gate over HTTP',
+        pipeline: { steps: [{ id: 'gated', name: 'Gated', agentId: 'codex', requiresApproval: true }] },
+      });
+      await store.provisionTask(task.id);
+
+      const executed = await app.request(`/api/tasks/${task.id}/pipeline/execute`, { method: 'POST' });
+      expect((await executed.json()) as object).toMatchObject({ status: 'awaiting_approval' });
+
+      const rejected = await app.request(`/api/tasks/${task.id}/pipeline/reject`, { method: 'POST' });
+      expect(rejected.status).toBe(200);
+      expect((await rejected.json()) as object).toMatchObject({
+        status: 'failed',
+        results: [{ stepId: 'gated', status: 'failed', error: 'Rejected by operator.' }],
+      });
+      expect(store.getTask(task.id)?.status).toBe('failed');
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('rejects a task payload missing required fields with a 400', async () => {
     const { store, directory } = await openStore();
     try {
