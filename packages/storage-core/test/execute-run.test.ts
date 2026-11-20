@@ -145,6 +145,63 @@ describe('KernelStore executeRun', () => {
     }
   });
 
+  it('resets a failed worktree before re-running, and can keep or re-create it', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await provisionedTask(store, repo);
+
+      const dirty = (file: string): CodexProcessRunner => async (_command, _arguments, options) => {
+        await writeFile(join(options.cwd, file), 'leftover\n', 'utf8');
+        return {
+          exitCode: 1,
+          signal: null,
+          timedOut: false,
+          output: 'boom',
+          startedAt: new Date(Date.now() - 5).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+      const inspect = (file: string, seen: { value: boolean }): CodexProcessRunner => async (_command, _arguments, options) => {
+        seen.value = await access(join(options.cwd, file)).then(() => true).catch(() => false);
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: 'ok',
+          startedAt: new Date(Date.now() - 5).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+
+      const first = await store.createRun(task.id, 'codex');
+      await store.executeRun(first.id, dirty('LEFTOVER.md'));
+      const seenReset = { value: true };
+      await store.executeRun(first.id, inspect('LEFTOVER.md', seenReset));
+      expect(seenReset.value).toBe(false);
+      expect(store.getRun(first.id)?.status).toBe('review');
+      expect(store.listAudit({ taskId: task.id }).some(event => event.type === 'run.rerun')).toBe(true);
+
+      const second = await store.createRun(task.id, 'codex');
+      await store.executeRun(second.id, dirty('KEEP.md'));
+      const seenKeep = { value: false };
+      await store.executeRun(second.id, inspect('KEEP.md', seenKeep), { worktree: 'keep' });
+      expect(seenKeep.value).toBe(true);
+
+      const third = await store.createRun(task.id, 'codex');
+      await store.executeRun(third.id, dirty('FRESH.md'));
+      const seenFresh = { value: true };
+      await store.executeRun(third.id, inspect('FRESH.md', seenFresh), { worktree: 'fresh' });
+      expect(seenFresh.value).toBe(false);
+      const head = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: task.worktreePath })).stdout.trim();
+      expect(head).toBe(task.baseCommit);
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   it('records reported tool calls and marks unknown when the runtime reports none', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-exec-'));
     try {

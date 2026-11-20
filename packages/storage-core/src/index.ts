@@ -373,6 +373,7 @@ export type KernelAuditEventType =
   | 'pipeline.planned'
   | 'parallel.executed'
   | 'budget.blocked'
+  | 'run.rerun'
   | 'handoff.recorded';
 
 export type KernelAuditActor = 'operator' | 'system';
@@ -1105,7 +1106,7 @@ export class KernelStore {
   async executeRun(
     id: string,
     runner?: CodexProcessRunner,
-    options: { worktreePath?: string; laneId?: string; taskStatus?: 'auto' | 'none' } = {},
+    options: { worktreePath?: string; laneId?: string; taskStatus?: 'auto' | 'none'; worktree?: 'auto' | 'keep' | 'fresh' } = {},
   ): Promise<RunRecord> {
     const run = this.getRun(id);
     if (!run) throw new Error(`Run ${id} was not found.`);
@@ -1119,6 +1120,28 @@ export class KernelStore {
     }
     if (run.status !== 'queued' && run.status !== 'failed') {
       throw new Error(`Run ${id} cannot be executed from status ${run.status}.`);
+    }
+
+    // Re-run hygiene: a failed run leaves its worktree dirty, so the default is to start over
+    // from the task's base commit. `keep` preserves the leftovers on purpose; `fresh` discards
+    // the worktree itself and re-checks it out from the same base.
+    const hygiene = options.worktree ?? 'auto';
+    const restart = hygiene === 'fresh' || (hygiene !== 'keep' && run.status === 'failed');
+    if (restart) {
+      const base = task.baseCommit || task.baseRef;
+      const targetPath = run.worktreePath ?? ((options.worktreePath && options.worktreePath !== task.worktreePath) ? options.worktreePath : null) ?? worktreePath;
+      if (hygiene === 'fresh') {
+        await removeWorktree(task.repo, targetPath).catch(() => undefined);
+        await addWorktree(task.repo, base, targetPath);
+      } else {
+        await resetWorktree(targetPath, base || undefined);
+      }
+      await this.recordAudit({
+        type: 'run.rerun',
+        taskId: task.id,
+        teamId: task.teamId,
+        data: { runId: id, worktree: hygiene === 'fresh' ? 'fresh' : 'reset', laneId: run.laneId },
+      });
     }
 
     const resolved = await resolveRuntimeExecutor(run.agentId, profileId => this.profiles.getProfile(profileId));
