@@ -397,3 +397,13 @@
 - [x] 测试：role 预算 $1 两笔 $0.6 后第三笔被阻断且审计含 `budget.blocked`；team 预算 100 input tokens 跨角色累计到 120 后，先建后执行的 queued Run 在 execute 时被阻断；未上报用量不阻断（spend null）；server 200/404；MCP 返回 null scope。全仓 typecheck 0，61 文件 / 723 tests 绿。
 - [x] 本轮提交：`4ac5021 feat(agent-runtime): add role and team budgets`、`81ca0a5 feat(storage-core): enforce role and team budgets`、`e4a7594 feat(server-core): serve task budget status`、`068a55b feat(cli): add the budget tool`。
 - [ ] 未做：预算是“任务内”口径（同一 Role/Team 在不同任务里各自计算，不跨任务累计）；只在 Run 启动前阻断，不中断正在跑的 Run；Studio 没有预算输入框或展示；真实 CLI 不报 usage 时预算实际不生效。
+
+## F4-05 重跑 hygiene — 已完成（2026-11-20）
+
+- [x] `executeRun` 新增 `worktree: 'auto' | 'keep' | 'fresh'`：`auto`（默认）重跑 `failed` Run 时先把 worktree reset 到任务 base commit；`keep` 保留上次残留；`fresh` 删除并重新 checkout（main 与 lane 路径都支持，lane 只动自己的 worktree）。
+- [x] 每次实际重跑写 `run.rerun` 审计（runId、worktree 策略、laneId）。
+- [x] server：`POST /api/runs/:id/execute` 接受可选 `worktree`，非法值 400；MCP：`agent_ops_execute_run` 增加同名参数。
+- [x] 语义保持：Pipeline 的 `retryTaskPipeline` 仍 reset 到失败 step 的前置 commit（不走这条 Run 级路径）；`rejectRun` 仍走自己的 reset。
+- [x] 测试：失败 Run 重跑默认看不到 `LEFTOVER.md`；`keep` 能看到 `KEEP.md`；`fresh` 看不到 `FRESH.md` 且 HEAD 回到 `baseCommit`；审计含 `run.rerun`；server 400 / 409。全仓 typecheck 0，61 文件 / 725 tests 绿。
+- [x] 本轮提交：`16ef3a8 feat(storage-core): reset failed worktrees on rerun`、`27a2f3a feat(server-core): accept a rerun worktree policy`、`9450273 feat(cli): expose the rerun worktree policy`。
+- [ ] 未做：Studio 的 Retry 按钮仍用默认 `auto`，没有让用户选 `keep` / `fresh`；`fresh` 依赖 Run 已记录 lane 路径（首次执行后的重跑才可用）；真实 CLI 上未验证。
