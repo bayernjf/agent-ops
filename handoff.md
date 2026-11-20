@@ -210,7 +210,7 @@
 - [x] MCP 新增 `agent_ops_list_teams/get_team/create_team/update_team/delete_team`，`agent_ops_create_task` 接受 `teamId`。
 - [x] 测试：TeamStore 唯一 id/持久化/重开、未知或停用 Role、重复成员/自交接/重复边/非成员边/环、更新导致交接悬空时报错；任务 `teamId` 持久化与成员校验；server CRUD 与环 400/未知角色 404；MCP 团队工具与 `teamId` 透传。全仓 typecheck 0，50 文件 / 664 tests 绿。
 - [x] 本轮提交：`18d127f feat(storage-core): add team roster store`、`fb0f187 feat(storage-core): assign tasks to teams`、`89d1854 feat(server-core): expose the team API`、`46f26e4 feat(cli): expose team tools over MCP`。
-- [ ] 未做：F5-04 Handoff（上游 commit/artifact 真正交给下游并落记录）、F8-02 审计导出、F5-06 Coordinator、F5-07 并行团队；F5-05/F7-03 见下节。
+- [ ] 未做：F8-02 审计导出、F5-06 Coordinator、F5-07 并行团队。（F5-04、F5-05/F7-03 见下方章节。）
 - [ ] Team 目前只是花名册 + 交接图；Pipeline 仍按 task 的 step 显式配置，不会从 Team 自动推导。
 
 ## F5-05/F7-03 Studio TeamsView — 已完成（2026-11-20）
@@ -223,6 +223,18 @@
 - [x] 验证：Studio `tsc` 与 `vite build` 通过（1655 modules），Studio 14 文件 / 257 tests 绿；全仓 typecheck 0，50 文件 / 664 tests 绿。
 - [x] 本轮提交：`b216d83 feat(studio): add the teams view`。
 - [ ] 未做：交接边只有文本列表，没有可视化图；花名册不校验角色是否绑定 runtime；TeamsView 未在真实浏览器里逐项点过（仅 tsc/build + 单元测试）。
+
+## F5-04 Handoff — 已完成（2026-11-20）
+
+- [x] migration `0017_run_handoffs` + `run_handoffs` 表：每遍历一条 Pipeline 边就写一条收据，字段包括 task/team、from/to step、from/to run、from/to role、上游已接受的 commit（`fromCommitSha`）与上游 changedFiles（`artifacts`）。
+- [x] `runPipelineSteps` 在创建下游 Run 后立刻落收据：只有上游 step 已 `completed` 且有 commit 才写；重试会为新 Run 再写一条，不覆盖旧记录。
+- [x] `KernelStore.listHandoffs(taskId)`（按创建时间倒序，重开 DB 仍在）与 `getHandoffForRun(runId)`。
+- [x] server：`GET /api/tasks/:id/handoffs`；`GET /api/tasks/:id/runs` 与 `GET /api/runs/:id` 给每个 Run 带上 `handoff`（无则 `null`）。
+- [x] MCP：新增 `agent_ops_list_handoffs`。
+- [x] Studio：Run 证据面板新增交接行（上游 step → 下游 step、上游 commit 前 10 位、随行变更文件数）。
+- [x] 测试：4 步 Pipeline 产生 3 条收据（plan→implement→review→verify），`fromCommitSha` 与对应 step 的 commit 一致、`toRunId` 与下游 Run 一致、`artifacts` 含上游写出的文件、重开 DB 仍是 3 条、首步 Run 无交接；server HTTP 收据与未知任务 404、Run 详情 `handoff`；全仓 typecheck 0，50 文件 / 665 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
+- [x] 本轮提交：`c94e8d6 feat(storage-core): record pipeline handoffs`、`b7a7cf3 feat(server-core): expose handoff receipts`、`0724ba8 feat(cli): add the handoff tool`、`a5906e8 feat(studio): show run handoff receipts`。
+- [ ] 未做：Team 配置的交接边与 Pipeline step 之间没有一致性校验（Pipeline 仍可任意串联 Role）；收据不记录 worktree 路径与审批人；TeamsView 尚未展示团队维度的交接历史。
 
 ## F7-05 Run 详情扩展 — 已完成（2026-11-20）
 
