@@ -663,6 +663,9 @@ describe('createKernelApp', () => {
       expect(windowed.status).toBe(200);
       expect(((await windowed.json()) as { window: { since: string } }).window.since).toBe('2026-01-01T00:00:00.000Z');
 
+      const scoped = await app.request('/api/metrics?teamId=team-a');
+      expect(((await scoped.json()) as { teamId: string }).teamId).toBe('team-a');
+
       expect((await app.request('/api/metrics?since=not-a-date')).status).toBe(400);
     } finally {
       await store.close();

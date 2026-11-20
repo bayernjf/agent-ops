@@ -29,9 +29,10 @@ export async function removeWorktree(repo: string, path: string): Promise<void> 
 
 /**
  * Keep an accepted detached-HEAD commit reachable after its worktree is removed. Without a
- * ref, the commit is only a loose object and can be pruned by `git gc`.
+ * ref, the commit is only a loose object and can be pruned by `git gc`. A parallel lane pins
+ * under its own ref so accepting a second lane cannot overwrite the first.
  */
-export async function pinWorktreeCommit(repo: string, taskId: string, sha: string): Promise<void> {
-  const ref = `refs/agent-ops/tasks/${taskId}`;
+export async function pinWorktreeCommit(repo: string, taskId: string, sha: string, laneId?: string): Promise<void> {
+  const ref = laneId ? `refs/agent-ops/tasks/${taskId}/lanes/${laneId}` : `refs/agent-ops/tasks/${taskId}`;
   await execFileAsync('git', ['update-ref', ref, sha], { cwd: repo });
 }

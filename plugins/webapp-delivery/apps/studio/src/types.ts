@@ -456,6 +456,10 @@ export type KernelRun = {
   costUsd?: number | null;
   /** The handoff that delivered work into this run, when a pipeline step preceded it. */
   handoff?: KernelRunHandoff | null;
+  /** Worktree the run executed in; a parallel lane's path differs from the task's. */
+  worktreePath?: string | null;
+  /** Lane this run belongs to in a parallel team run. */
+  laneId?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -498,6 +502,7 @@ export type RoleTemplate = {
 export type KernelMetrics = {
   generatedAt: string;
   window: { since: string | null; until: string | null };
+  teamId: string | null;
   tasks: { total: number; done: number; failed: number; cancelled: number; open: number };
   runs: { total: number; executed: number; succeeded: number; failed: number; cancelled: number; inFlight: number; successRate: number | null };
   rework: { retries: number; rejections: number; reworkRate: number | null };

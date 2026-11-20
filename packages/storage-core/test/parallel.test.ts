@@ -87,6 +87,75 @@ describe('KernelStore parallel lanes', () => {
     }
   });
 
+  it('accepts each lane in its own worktree and closes the task after the last lane', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-parallel-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const left = await store.roles.createRole({ name: 'Left', baseAgentId: 'codex' });
+      const right = await store.roles.createRole({ name: 'Right', baseAgentId: 'codex' });
+      const team = await store.teams.createTeam({ name: 'Pair', roleIds: [left.id, right.id] });
+      const task = await store.createTask({ repo, baseRef: 'main', title: 'Pair', teamId: team.id });
+      const provisioned = await store.provisionTask(task.id);
+
+      const result = await store.executeParallelTeam(task.id, {
+        runner: async (_command, _arguments, options) => {
+          const roleId = basename(options.cwd);
+          await writeFile(join(options.cwd, `${roleId}.md`), `${roleId}\n`, 'utf8');
+          return success();
+        },
+      });
+      const [leftLane, rightLane] = result.lanes;
+      expect(store.getRun(leftLane?.runId ?? '')?.worktreePath).toBe(leftLane?.worktreePath);
+      expect(store.getRun(leftLane?.runId ?? '')?.laneId).toBe(left.id);
+
+      const acceptedLeft = await store.acceptRun(leftLane?.runId ?? '');
+      expect(acceptedLeft.commitSha).toMatch(/^[0-9a-f]{40}$/);
+      expect(store.getTask(task.id)?.status).toBe('review');
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: leftLane?.worktreePath ?? '' })).stdout.trim()).toBe('');
+      expect((await execFileAsync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: leftLane?.worktreePath ?? '' })).stdout).toContain(`${left.id}.md`);
+      expect((await execFileAsync('git', ['show-ref', '--verify', `refs/agent-ops/tasks/${task.id}/lanes/${left.id}`], { cwd: repo })).stdout).toContain(acceptedLeft.commitSha);
+
+      await store.acceptRun(rightLane?.runId ?? '');
+      expect(store.getTask(task.id)?.status).toBe('done');
+      // The task's own worktree is untouched: lanes never merge into it.
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: provisioned.worktreePath })).stdout.trim()).toBe('');
+      expect(await access(join(provisioned.worktreePath, `${left.id}.md`)).then(() => true).catch(() => false)).toBe(false);
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('rejects a lane in place and leaves the parallel task open', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-parallel-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const left = await store.roles.createRole({ name: 'Left', baseAgentId: 'codex' });
+      const right = await store.roles.createRole({ name: 'Right', baseAgentId: 'codex' });
+      const team = await store.teams.createTeam({ name: 'Pair', roleIds: [left.id, right.id] });
+      const task = await store.createTask({ repo, baseRef: 'main', title: 'Pair', teamId: team.id });
+      await store.provisionTask(task.id);
+
+      const result = await store.executeParallelTeam(task.id, {
+        runner: async (_command, _arguments, options) => {
+          await writeFile(join(options.cwd, `${basename(options.cwd)}.md`), 'x\n', 'utf8');
+          return success();
+        },
+      });
+      const [, rightLane] = result.lanes;
+      await store.rejectRun(rightLane?.runId ?? '');
+      expect(store.getTask(task.id)?.status).toBe('review');
+      expect(store.getRun(rightLane?.runId ?? '')?.status).toBe('queued');
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: rightLane?.worktreePath ?? '' })).stdout.trim()).toBe('');
+      expect(await access(join(rightLane?.worktreePath ?? '', `${right.id}.md`)).then(() => true).catch(() => false)).toBe(false);
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   it('keeps a failed lane from stopping the others and refuses an unprovisioned task', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-parallel-'));
     try {

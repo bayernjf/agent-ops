@@ -423,9 +423,10 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
   app.get('/api/metrics', (c) => {
     const since = c.req.query('since')?.trim() || undefined;
     const until = c.req.query('until')?.trim() || undefined;
+    const teamId = c.req.query('teamId')?.trim() || undefined;
     if (since && Number.isNaN(Date.parse(since))) return c.json({ error: 'The since timestamp is not a valid date.' }, 400);
     if (until && Number.isNaN(Date.parse(until))) return c.json({ error: 'The until timestamp is not a valid date.' }, 400);
-    return c.json(store.getMetrics({ since, until }));
+    return c.json(store.getMetrics({ since, until, teamId }));
   });
 
   app.get('/api/tasks/:id/pipeline', (c) => {

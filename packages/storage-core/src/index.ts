@@ -292,6 +292,10 @@ export type RunRecord = {
   costUsd: number | null;
   /** Pipeline step or caller instruction appended to the task prompt; empty when none. */
   instruction: string;
+  /** Worktree the run actually executed in: the task's, or a parallel lane's. Null when unset. */
+  worktreePath: string | null;
+  /** Lane this run belongs to in a parallel team run; null for ordinary runs. */
+  laneId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -420,6 +424,8 @@ export type ParallelTeamResult = {
 export type KernelMetrics = {
   generatedAt: string;
   window: { since: string | null; until: string | null };
+  /** Set when the metrics were scoped to one team. */
+  teamId: string | null;
   tasks: { total: number; done: number; failed: number; cancelled: number; open: number };
   runs: {
     total: number;
@@ -504,7 +510,7 @@ export type TaskEvidenceExport = {
   };
 };
 
-type RunRow = Omit<RunRecord, 'artifacts' | 'roleId' | 'runtimeId' | 'runtimeVersion' | 'inputTokens' | 'outputTokens' | 'costUsd'> & {
+type RunRow = Omit<RunRecord, 'artifacts' | 'roleId' | 'runtimeId' | 'runtimeVersion' | 'inputTokens' | 'outputTokens' | 'costUsd' | 'worktreePath' | 'laneId'> & {
   artifacts: string;
   roleId: string;
   runtimeId: string;
@@ -512,6 +518,8 @@ type RunRow = Omit<RunRecord, 'artifacts' | 'roleId' | 'runtimeId' | 'runtimeVer
   inputTokens: number | null;
   outputTokens: number | null;
   costUsd: number | null;
+  worktreePath: string;
+  laneId: string;
 };
 
 function parseRunArtifacts(raw: string): RunArtifacts {
@@ -551,6 +559,8 @@ function toRunRecord(row: RunRow): RunRecord {
     inputTokens: typeof row.inputTokens === 'number' ? row.inputTokens : null,
     outputTokens: typeof row.outputTokens === 'number' ? row.outputTokens : null,
     costUsd: typeof row.costUsd === 'number' ? row.costUsd : null,
+    worktreePath: row.worktreePath || null,
+    laneId: row.laneId || null,
     artifacts: parseRunArtifacts(row.artifacts),
   };
 }
@@ -853,6 +863,8 @@ export class KernelStore {
       outputTokens: null,
       costUsd: null,
       instruction: instruction?.trim() ?? '',
+      worktreePath: null,
+      laneId: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -872,11 +884,19 @@ export class KernelStore {
       outputTokens: null,
       costUsd: null,
       instruction: record.instruction,
+      worktreePath: '',
+      laneId: '',
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
     }).run();
     await this.persist();
     return record;
+  }
+
+  private async updateRunWorktree(id: string, worktreePath: string, laneId: string | null): Promise<void> {
+    const now = new Date().toISOString();
+    this.kernelOrm.update(runs).set({ worktreePath, laneId: laneId ?? '', updatedAt: now }).where(eq(runs.id, id)).run();
+    await this.persist();
   }
 
   getRun(id: string): RunRecord | undefined {
@@ -1037,7 +1057,7 @@ export class KernelStore {
   async executeRun(
     id: string,
     runner?: CodexProcessRunner,
-    options: { worktreePath?: string; taskStatus?: 'auto' | 'none' } = {},
+    options: { worktreePath?: string; laneId?: string; taskStatus?: 'auto' | 'none' } = {},
   ): Promise<RunRecord> {
     const run = this.getRun(id);
     if (!run) throw new Error(`Run ${id} was not found.`);
@@ -1046,6 +1066,9 @@ export class KernelStore {
     const worktreePath = options.worktreePath ?? task.worktreePath;
     if (!worktreePath) throw new Error(`Task ${run.taskId} has no worktree. Provision it before executing a run.`);
     const trackTask = options.taskStatus !== 'none';
+    if (options.worktreePath && (run.worktreePath !== options.worktreePath || run.laneId !== (options.laneId ?? null))) {
+      await this.updateRunWorktree(id, options.worktreePath, options.laneId ?? null);
+    }
     if (run.status !== 'queued' && run.status !== 'failed') {
       throw new Error(`Run ${id} cannot be executed from status ${run.status}.`);
     }
@@ -1436,7 +1459,9 @@ export class KernelStore {
     if (run.status !== 'review') throw new Error(`Run ${id} cannot be accepted from status ${run.status}.`);
     const task = this.getTask(run.taskId);
     if (!task) throw new Error(`Task ${run.taskId} was not found.`);
-    if (!task.worktreePath) throw new Error(`Task ${run.taskId} has no worktree.`);
+    // A parallel lane commits in its own worktree; an ordinary run commits in the task's.
+    const worktreePath = run.worktreePath || task.worktreePath;
+    if (!worktreePath) throw new Error(`Task ${run.taskId} has no worktree.`);
 
     let selected: string[] | undefined;
     if (files !== undefined) {
@@ -1449,18 +1474,30 @@ export class KernelStore {
       }
     }
 
-    const commit = await commitWorktreeChanges(task.worktreePath, `task: accept ${task.title}`, selected);
-    await pinWorktreeCommit(task.repo, task.id, commit.sha);
+    const commit = await commitWorktreeChanges(worktreePath, `task: accept ${task.title}`, selected);
+    // Lane commits pin to their own ref, so accepting a second lane keeps the first reachable.
+    await pinWorktreeCommit(task.repo, task.id, commit.sha, run.laneId ?? undefined);
     // A partial accept commits the selected paths and discards the rest, so an accepted run
     // always leaves the worktree clean for release. Full accept keeps the existing behavior.
-    if (selected) await resetWorktree(task.worktreePath);
-    await this.updateTaskStatus(run.taskId, 'done');
+    if (selected) await resetWorktree(worktreePath);
+    if (run.laneId) {
+      // A parallel task is done only once every lane has been decided; an accepted lane alone
+      // must not close a task that still has lanes in review, running or queued.
+      const lanes = this.listRuns(task.id).filter(candidate => candidate.laneId);
+      const undecided = lanes.filter(candidate => (
+        candidate.id !== id
+        && (candidate.status === 'queued' || candidate.status === 'running' || candidate.status === 'review')
+      ));
+      await this.updateTaskStatus(task.id, undecided.length === 0 ? 'done' : 'review');
+    } else {
+      await this.updateTaskStatus(run.taskId, 'done');
+    }
     const accepted = await this.updateRunStatus(id, 'done', run.diffStat, run.artifacts, commit.sha);
     await this.recordAudit({
       type: 'run.accepted',
       taskId: run.taskId,
       teamId: task.teamId,
-      data: { runId: id, commitSha: commit.sha, roleId: run.roleId, files: selected ?? null },
+      data: { runId: id, commitSha: commit.sha, roleId: run.roleId, laneId: run.laneId, files: selected ?? null },
     });
     return accepted;
   }
@@ -1471,16 +1508,19 @@ export class KernelStore {
     if (run.status !== 'review') throw new Error(`Run ${id} cannot be rejected from status ${run.status}.`);
     const task = this.getTask(run.taskId);
     if (!task) throw new Error(`Task ${run.taskId} was not found.`);
-    if (task.worktreePath) {
-      await resetWorktree(task.worktreePath, resetTo || task.baseCommit || undefined);
+    const worktreePath = run.worktreePath || task.worktreePath;
+    if (worktreePath) {
+      await resetWorktree(worktreePath, resetTo || task.baseCommit || undefined);
     }
-    await this.updateTaskStatus(run.taskId, 'queued');
+    // A rejected lane leaves the parallel task open for the other lanes; an ordinary reject puts
+    // the task back in the queue awaiting a re-run.
+    await this.updateTaskStatus(run.taskId, run.laneId ? 'review' : 'queued');
     const rejected = await this.updateRunStatus(id, 'queued');
     await this.recordAudit({
       type: 'run.rejected',
       taskId: run.taskId,
       teamId: task.teamId,
-      data: { runId: id, roleId: run.roleId, resetTo: resetTo ?? null },
+      data: { runId: id, roleId: run.roleId, laneId: run.laneId, resetTo: resetTo ?? null },
     });
     return rejected;
   }
@@ -1578,7 +1618,7 @@ export class KernelStore {
   }
 
   /** Aggregate success, rework, usage and timing over tasks and runs, optionally windowed. */
-  getMetrics(filter: { since?: string; until?: string } = {}): KernelMetrics {
+  getMetrics(filter: { since?: string; until?: string; teamId?: string } = {}): KernelMetrics {
     const since = filter.since ? Date.parse(filter.since) : null;
     const until = filter.until ? Date.parse(filter.until) : null;
     const inWindow = (iso: string) => {
@@ -1588,10 +1628,11 @@ export class KernelStore {
       if (until !== null && !Number.isNaN(until) && at > until) return false;
       return true;
     };
+    const inScope = (task: TaskRecord) => !filter.teamId || task.teamId === filter.teamId;
 
     const taskTotals = { total: 0, done: 0, failed: 0, cancelled: 0, open: 0 };
     for (const task of this.listTasks()) {
-      if (!inWindow(task.createdAt)) continue;
+      if (!inScope(task) || !inWindow(task.createdAt)) continue;
       taskTotals.total++;
       if (task.status === 'done') taskTotals.done++;
       else if (task.status === 'failed') taskTotals.failed++;
@@ -1619,6 +1660,7 @@ export class KernelStore {
     let costUsd = 0;
 
     for (const task of this.listTasks()) {
+      if (!inScope(task)) continue;
       for (const run of this.listRuns(task.id)) {
         if (!inWindow(run.createdAt)) continue;
         runsTotals.total++;
@@ -1694,6 +1736,7 @@ export class KernelStore {
     return {
       generatedAt: new Date().toISOString(),
       window: { since: filter.since ?? null, until: filter.until ?? null },
+      teamId: filter.teamId ?? null,
       tasks: taskTotals,
       runs: { ...runsTotals, successRate: runsTotals.executed > 0 ? runsTotals.succeeded / runsTotals.executed : null },
       rework: { retries, rejections, reworkRate: runsTotals.executed > 0 ? (retries + rejections) / runsTotals.executed : null },
@@ -1898,6 +1941,7 @@ export class KernelStore {
         try {
           const executed = await this.executeRun(lane.runId as string, options.runner, {
             worktreePath: lane.lanePath as string,
+            laneId: lane.roleId,
             taskStatus: 'none',
           });
           lane.status = executed.status;

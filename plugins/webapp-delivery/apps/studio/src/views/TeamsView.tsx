@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, Pencil, Plus, RefreshCw, Trash2, Users, X } from 'lucide-react';
 import { useI18n, type KeyPath } from '../i18n/i18n';
 import { apiFetch } from '../lib/api';
-import type { AgentRole, AgentTeam, KernelTask, TeamHandoff, TeamPipelinePlan } from '../types';
+import { formatCost, formatDuration, formatPercent } from '../lib/format';
+import type { AgentRole, AgentTeam, KernelMetrics, KernelTask, TeamHandoff, TeamPipelinePlan } from '../types';
 
 type HandoffDraft = {
   fromRoleId: string;
@@ -55,6 +56,7 @@ export function TeamsView() {
   const [planResult, setPlanResult] = useState<TeamPipelinePlan | null>(null);
   const [planningTaskId, setPlanningTaskId] = useState<string | null>(null);
   const [applyingPlan, setApplyingPlan] = useState(false);
+  const [teamMetrics, setTeamMetrics] = useState<KernelMetrics | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -92,6 +94,22 @@ export function TeamsView() {
     () => teams.find(team => team.id === selectedId) ?? (teams.length > 0 ? teams[0] : null),
     [teams, selectedId],
   );
+
+  useEffect(() => {
+    const teamId = selected?.id;
+    if (!teamId) { setTeamMetrics(null); return; }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await apiFetch(`/api/metrics?teamId=${encodeURIComponent(teamId)}`);
+        const body = (await response.json().catch(() => null)) as KernelMetrics | null;
+        if (!cancelled && response.ok) setTeamMetrics(body);
+      } catch {
+        if (!cancelled) setTeamMetrics(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selected?.id]);
 
   const startCreate = () => { setEditingId('new'); setForm(emptyForm); setError(''); };
   const startEdit = (team: AgentTeam) => { setEditingId(team.id); setForm(toForm(team)); setError(''); };
@@ -199,6 +217,7 @@ export function TeamsView() {
   };
 
   const teamTasks = selected ? tasks.filter(task => task.teamId === selected.id) : [];
+  const blockers = teamTasks.filter(task => task.status === 'failed' || task.pipeline?.status === 'awaiting_approval');
 
   const planTask = async (task: KernelTask) => {
     setPlanningTaskId(task.id);
@@ -410,6 +429,37 @@ export function TeamsView() {
                         </li>
                       ))}
                     </ul>
+                  )}
+                </div>
+
+                <div className="team-panel">
+                  <h3>{t('teams.blockers')}</h3>
+                  {blockers.length === 0 ? (
+                    <p className="empty-state">{t('teams.noBlockers')}</p>
+                  ) : (
+                    <ul className="team-task-list">
+                      {blockers.map(task => (
+                        <li key={task.id}>
+                          <span>{task.title}</span>
+                          <span className={`state ${task.status}`}>{t(`tasks.state.${task.status}` as KeyPath)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="team-panel">
+                  <h3>{t('teams.usage')}</h3>
+                  {teamMetrics ? (
+                    <ul className="team-metric-list">
+                      <li><span>{t('metrics.successRate')}</span><strong>{formatPercent(teamMetrics.runs.successRate)}</strong></li>
+                      <li><span>{t('metrics.runs')}</span><strong>{teamMetrics.runs.total}</strong></li>
+                      <li><span>{t('metrics.cost')}</span><strong>{formatCost(teamMetrics.usage.costUsd)}</strong></li>
+                      <li><span>{t('metrics.tokens')}</span><strong>{teamMetrics.usage.inputTokens ?? '—'} / {teamMetrics.usage.outputTokens ?? '—'}</strong></li>
+                      <li><span>{t('metrics.avgDuration')}</span><strong>{teamMetrics.timing.averageDurationMs === null ? '—' : formatDuration(teamMetrics.timing.averageDurationMs)}</strong></li>
+                    </ul>
+                  ) : (
+                    <p className="empty-state">{t('metrics.loading')}</p>
                   )}
                 </div>
               </div>

@@ -161,12 +161,14 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     inputSchema: {
       since: z.string().optional().describe('Only count items created at or after this ISO timestamp.'),
       until: z.string().optional().describe('Only count items created at or before this ISO timestamp.'),
+      teamId: z.string().optional().describe('Only count tasks assigned to this team.'),
     },
     annotations: READ_ONLY,
   }, args => {
     const query = new URLSearchParams();
     if (args.since) query.set('since', args.since);
     if (args.until) query.set('until', args.until);
+    if (args.teamId) query.set('teamId', args.teamId);
     const suffix = query.size > 0 ? `?${query.toString()}` : '';
     return callDaemon('GET', `/api/metrics${suffix}`).then(toResult);
   });

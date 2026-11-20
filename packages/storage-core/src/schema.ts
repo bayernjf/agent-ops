@@ -33,6 +33,8 @@ export const runs = sqliteTable('runs', {
   roleId: text('role_id').notNull().default(''),
   runtimeId: text('runtime_id').notNull().default(''),
   instruction: text('instruction').notNull().default(''),
+  worktreePath: text('worktree_path').notNull().default(''),
+  laneId: text('lane_id').notNull().default(''),
   runtimeVersion: text('runtime_version').notNull().default(''),
   command: text('command').notNull().default(''),
   inputTokens: integer('input_tokens'),

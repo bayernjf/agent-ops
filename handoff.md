@@ -340,4 +340,28 @@
 - [x] server：`POST /api/tasks/:id/parallel/execute`（`maxConcurrency` 1–8，越界 400）；MCP：新增 `agent_ops_execute_parallel`。
 - [x] 测试：3 角色团队按并发 2 跑 3 条 lane，实测最大并发 = 2、三个独立 worktree、每 lane 自有文件 + 两条 lane 共享的 `SHARED.md` 被列为冲突、任务落 `review`、审计含 `parallel.executed`；一个 lane 失败时另一个仍成功且任务仍 `review`；未 provision 的任务报 `no worktree`；server 200/400。全仓 typecheck 0，58 文件 / 698 tests 绿。
 - [x] 本轮提交：`2411c85 feat(storage-core): add parallel team lanes`、`a63ef21 feat(server-core): expose parallel lanes`、`64033fb feat(cli): add the parallel lane tool`。
-- [ ] 未做：**没有自动合并或合成**——lane 产出的 commit 需要人工逐个接受或放弃；现有 `acceptRun` 会把任务直接置 `done`，并行任务的接受语义尚未定义；`releaseTask` 不会清理 lane worktree；Studio 没有并行入口；真实模型的并行执行未跑（CLI 登录仍阻塞）。
+- [ ] 未做：**没有自动合并或合成**——lane 产出的 commit 需要人工逐个接受或放弃（接受语义见下节）；`releaseTask` 不会清理 lane worktree；Studio 没有并行入口；真实模型的并行执行未跑（CLI 登录仍阻塞）。
+
+## 并行任务接受语义 — 已完成（2026-11-20）
+
+- [x] migration `0019_run_lane`：`runs.worktree_path` / `runs.lane_id`；`RunRecord.worktreePath` / `laneId` 随 API 返回，普通 Run 为 null。
+- [x] `executeRun` 接受 `laneId` 并把实际 worktree 与 lane 落到 Run 上；并行 lane 走各自 worktree，普通 Run 仍用任务 worktree。
+- [x] `acceptRun` 在 Run 自己的 worktree 里提交；lane commit pin 到 `refs/agent-ops/tasks/<taskId>/lanes/<laneId>`，多条 lane 接受互不覆盖。
+- [x] 并行任务状态：接受一条 lane 后，若仍有 `queued`/`running`/`review` 的 lane，任务保持 `review`；全部决定后才置 `done`。驳回一条 lane 只 reset 该 lane 的 worktree，任务保持 `review`，该 Run 回到 `queued` 可重跑。
+- [x] `run.accepted` / `run.rejected` 审计新增 `laneId`；Studio Run 身份行显示 `Lane`（并行通道）。
+- [x] 测试：两条 lane 各自接受后任务才 `done`、主 worktree 未被污染、lane commit 在各自 worktree HEAD 且 pin ref 存在；驳回 lane 后任务仍 `review`、lane worktree 干净、文件被清掉。全仓 typecheck 0，58 文件 / 700 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
+- [x] 本轮提交：`5b32c6f feat(storage-core): accept parallel lanes`、`6bee0e6 feat(studio): label parallel lane runs`。
+- [ ] 未做：仍然**不自动合并**多 lane 结果，也没有“选哪条 lane 作为最终交付”的一等操作；`releaseTask` 不清理 lane worktree；并行任务没有专用 UI 入口（接受/驳回仍走普通 Run 操作）。
+
+## F7-06 团队看板 — 已完成（2026-11-20）
+
+- [x] `getMetrics` 增加 `teamId` 过滤：只统计指派给该团队的任务及其 Run；返回值新增 `teamId: string | null` 标明范围。
+- [x] server `GET /api/metrics?teamId=`；MCP `agent_ops_get_metrics` 增加 `teamId` 参数。
+- [x] TeamsView 详情新增两块面板：
+  - **卡点**：该团队下 `failed` 任务，以及 pipeline 停在 `awaiting_approval` 的任务；
+  - **团队用量**：成功率、Run 数、成本、Token、平均耗时（来自 `/api/metrics?teamId=`，未上报仍显示 `—`）。
+- [x] 切换选中团队时按 `teamId` 重新拉取指标，并带取消标记避免旧请求写回。
+- [x] 格式化函数抽到 `src/lib/format.ts`，MetricsView 与 TeamsView 共用。
+- [x] 测试：两个团队时全量 metrics 统计 2、按 `teamId` 只统计 1 且 `teamId` 字段正确；server `?teamId=` 透传；全仓 typecheck 0，58 文件 / 701 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
+- [x] 本轮提交：`38ca138 feat(storage-core): scope metrics to a team`、`be6b3ed feat(server-core): accept a teamId on metrics`、`05639c5 feat(cli): filter metrics by team`、`ed285bb feat(studio): show team blockers and usage`。
+- [ ] 未做：看板仍是列表式，没有按状态分列的看板视图；成本只有上报 usage 时才有数字；卡点不含“被驳回的 lane 等待重跑”这类更细的状态；Studio 未在真实浏览器点击。
