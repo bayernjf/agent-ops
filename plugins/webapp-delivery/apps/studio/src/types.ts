@@ -387,11 +387,12 @@ export type TaskPipelineStep = {
   profileId?: string;
   agentId?: string;
   prompt?: string;
+  requiresApproval?: boolean;
 };
 
 export type TaskPipelineStepResult = {
   stepId: string;
-  status: 'pending' | 'running' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'awaiting_approval' | 'completed' | 'failed';
   runId?: string;
   commitSha?: string;
   output?: string;
@@ -403,7 +404,7 @@ export type TaskPipelineStepResult = {
 export type TaskPipeline = {
   steps: TaskPipelineStep[];
   results: TaskPipelineStepResult[];
-  status: 'idle' | 'running' | 'completed' | 'failed';
+  status: 'idle' | 'running' | 'awaiting_approval' | 'completed' | 'failed';
   startedAt?: string;
   completedAt?: string;
 };

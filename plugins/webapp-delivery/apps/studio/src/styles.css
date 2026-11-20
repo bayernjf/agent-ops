@@ -1930,6 +1930,7 @@ select option {
 .state.done { color: var(--status-ok) !important; background: color-mix(in srgb, var(--status-ok) 14%, var(--surface)); }
 .state.failed { color: var(--status-fail) !important; background: color-mix(in srgb, var(--status-fail) 14%, var(--surface)); }
 .state.cancelled { color: var(--status-pending) !important; background: color-mix(in srgb, var(--status-pending) 14%, var(--surface)); }
+.state.awaiting_approval { color: var(--accent-3) !important; background: color-mix(in srgb, var(--accent-3) 14%, var(--surface)); }
 
 /* Kernel role registry: role list + inline create/edit form. It reuses the task board chrome. */
 .roles-view .error { margin: 16px 0 0; }
@@ -2147,3 +2148,6 @@ select option {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 11px;
 }
+
+.pipeline-step-approval { display: flex !important; align-items: center; gap: 8px; margin-top: 8px; }
+.pipeline-step-approval input { width: auto !important; margin-top: 0 !important; }

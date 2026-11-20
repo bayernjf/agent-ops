@@ -12,6 +12,7 @@ type PipelineStepForm = {
   profileId: string;
   agentId: string;
   prompt: string;
+  requiresApproval: boolean;
 };
 
 type TaskForm = {
@@ -26,7 +27,7 @@ type TaskForm = {
   steps: PipelineStepForm[];
 };
 
-const emptyStep: PipelineStepForm = { name: '', roleId: '', profileId: '', agentId: '', prompt: '' };
+const emptyStep: PipelineStepForm = { name: '', roleId: '', profileId: '', agentId: '', prompt: '', requiresApproval: false };
 
 const emptyTaskForm: TaskForm = {
   repo: '',
@@ -154,6 +155,7 @@ export function TasksView() {
           profileId: step.profileId || undefined,
           agentId: step.agentId || undefined,
           prompt: step.prompt.trim() || undefined,
+          requiresApproval: step.requiresApproval || undefined,
         }))
         .filter(step => step.name && (step.roleId || step.profileId || step.agentId))
       : [];
@@ -210,6 +212,38 @@ export function TasksView() {
       await loadTasks();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('tasks.pipelineExecute'));
+    } finally {
+      setPipelineBusyId(null);
+    }
+  };
+
+  const approvePipeline = async (task: KernelTask) => {
+    setPipelineBusyId(task.id);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/approve`, { method: 'POST' });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineApprove'));
+      await loadTasks();
+      if (expandedId === task.id) await loadRuns(task.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.pipelineApprove'));
+    } finally {
+      setPipelineBusyId(null);
+    }
+  };
+
+  const rejectPipeline = async (task: KernelTask) => {
+    setPipelineBusyId(task.id);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/reject`, { method: 'POST' });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineReject'));
+      await loadTasks();
+      if (expandedId === task.id) await loadRuns(task.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.pipelineReject'));
     } finally {
       setPipelineBusyId(null);
     }
@@ -420,6 +454,10 @@ export function TasksView() {
                       </label>
                     </div>
                     <label>{t('tasks.stepPrompt')}<textarea rows={2} value={step.prompt} onChange={e => updateStep(index, 'prompt', e.target.value)} /></label>
+                    <label className="pipeline-step-approval">
+                      <input type="checkbox" checked={step.requiresApproval} onChange={e => updateStep(index, 'requiresApproval', e.target.checked)} />
+                      {t('tasks.stepRequiresApproval')}
+                    </label>
                   </div>
                 ))}
                 <button className="quiet-button" type="button" onClick={addStep}><Plus size={14} aria-hidden="true" /> {t('tasks.addStep')}</button>
@@ -475,6 +513,16 @@ export function TasksView() {
                               <button className="secondary-button" type="button" onClick={() => void executePipeline(task)} disabled={pipelineBusyId === task.id}>
                                 <Play size={14} aria-hidden="true" /> {pipelineBusyId === task.id ? t('tasks.pipelineRunning') : t('tasks.pipelineExecute')}
                               </button>
+                            )}
+                            {pipeline.status === 'awaiting_approval' && (
+                              <>
+                                <button className="secondary-button" type="button" onClick={() => void approvePipeline(task)} disabled={pipelineBusyId === task.id}>
+                                  <Check size={14} aria-hidden="true" /> {t('tasks.pipelineApprove')}
+                                </button>
+                                <button className="secondary-button" type="button" onClick={() => void rejectPipeline(task)} disabled={pipelineBusyId === task.id}>
+                                  <X size={14} aria-hidden="true" /> {t('tasks.pipelineReject')}
+                                </button>
+                              </>
                             )}
                           </div>
                           <div className="pipeline-steps">
