@@ -41,6 +41,7 @@ const pipelineStepSchema = z.object({
   agentId: z.string().trim().min(1).max(100).optional(),
   prompt: z.string().trim().max(10_000).optional(),
   requiresApproval: z.boolean().optional(),
+  dependsOn: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
 }).refine(step => Boolean(step.roleId || step.profileId || step.agentId), 'A pipeline step needs a roleId, profileId, or agentId.');
 
 const pipelineSchema = z.object({
@@ -530,6 +531,19 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
   app.post('/api/tasks/:id/pipeline/retry', async (c) => {
     try {
       return c.json(await store.retryTaskPipeline(c.req.param('id'), options.runner));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  app.post('/api/tasks/:id/pipeline/dag', async (c) => {
+    const parsed = executeParallelSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: 'Invalid DAG input.', details: parsed.error.flatten() }, 400);
+    try {
+      return c.json(await store.executeDagPipeline(c.req.param('id'), {
+        runner: options.runner,
+        maxConcurrency: parsed.data.maxConcurrency,
+      }));
     } catch (error) {
       return errorResponse(c, error);
     }
