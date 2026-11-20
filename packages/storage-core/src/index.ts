@@ -1024,7 +1024,7 @@ export class KernelStore {
     }
   }
 
-  async acceptRun(id: string): Promise<RunRecord> {
+  async acceptRun(id: string, files?: readonly string[]): Promise<RunRecord> {
     const run = this.getRun(id);
     if (!run) throw new Error(`Run ${id} was not found.`);
     if (run.status !== 'review') throw new Error(`Run ${id} cannot be accepted from status ${run.status}.`);
@@ -1032,8 +1032,22 @@ export class KernelStore {
     if (!task) throw new Error(`Task ${run.taskId} was not found.`);
     if (!task.worktreePath) throw new Error(`Task ${run.taskId} has no worktree.`);
 
-    const commit = await commitWorktreeChanges(task.worktreePath, `task: accept ${task.title}`);
+    let selected: string[] | undefined;
+    if (files !== undefined) {
+      const changed = new Set(run.artifacts.changedFiles);
+      selected = [...new Set(files.map(file => file.trim()).filter(Boolean))];
+      if (selected.length === 0) throw new Error('Select at least one changed file to accept.');
+      const unknown = selected.filter(file => !changed.has(file));
+      if (unknown.length > 0) {
+        throw new Error(`These files are not part of run ${id}: ${unknown.join(', ')}`);
+      }
+    }
+
+    const commit = await commitWorktreeChanges(task.worktreePath, `task: accept ${task.title}`, selected);
     await pinWorktreeCommit(task.repo, task.id, commit.sha);
+    // A partial accept commits the selected paths and discards the rest, so an accepted run
+    // always leaves the worktree clean for release. Full accept keeps the existing behavior.
+    if (selected) await resetWorktree(task.worktreePath);
     await this.updateTaskStatus(run.taskId, 'done');
     return this.updateRunStatus(id, 'done', run.diffStat, run.artifacts, commit.sha);
   }
