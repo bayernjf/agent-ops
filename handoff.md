@@ -155,4 +155,15 @@
 - [x] `styles.css` 新增 role-table / role-form 样式，复用 task board chrome。
 - [x] 测试：studio smoke 新增 RolesView 渲染断言（标题 + 列头 + loading）；全仓 49 文件 / 644 tests 绿，typecheck 0。
 - [x] 本轮提交：`23ec2bf feat(studio): add the kernel roles view`、`06ad65c test(studio): cover the roles view render`。
-- [ ] F7-02 只覆盖角色管理 UI；F7-01 建任务 + Pipeline 编辑、F6-04 每步审批、F6-05 失败重跑仍未做。
+- [ ] F7-02 只覆盖角色管理 UI；F6-04 每步审批、F6-05 失败重跑仍未做。
+
+## F7-01 Studio 建任务 + Pipeline 编辑 — 已完成（2026-11-20）
+
+- [x] TasksView 从只读列表升级：新增 "New task" 表单（repo / baseRef / title / objective / priority / roleId / acceptanceCriteria），roleId 下拉从 `/api/roles` 拉取，提交走 `POST /api/tasks`；勾选 "Add a serial pipeline" 后可配置 1–20 个 step（名称 + Role/Profile/Agent 身份 + prompt），提交时组装 `pipeline: { steps }`。
+- [x] 任务展开面板：有 pipeline 的任务展示 step 列表（名称、执行身份、状态、commit SHA），"Run pipeline" 调用 `POST /api/tasks/:id/pipeline/execute`，运行中显示 running 状态并逐 step 刷新。
+- [x] `types.ts` 新增 browser 侧 `TaskPipeline` / `TaskPipelineStep` / `TaskPipelineStepResult`，`KernelTask` 增加 `pipeline?: TaskPipeline | null`。
+- [x] `en.ts` / `zh.ts` 新增 tasks 区块的建任务与 pipeline 全套 key；placeholder 全部走 i18n，owned-copy 与 cross-locale 测试通过。
+- [x] `styles.css` 新增 task-form / tasks-actions / pipeline-toggle / pipeline-editor / pipeline-step / pipeline-panel / pipeline-step-row / pipeline-step-identity / pipeline-step-commit 样式。
+- [x] 门禁：全仓 typecheck 0，49 文件 / 644 tests 绿（studio 16 例含 owned-copy / cross-locale / smoke）。
+- [x] 本轮提交：`ab59175 feat(studio): add task creation and pipeline editing`。
+- [ ] F7-01 只覆盖串行 Pipeline 的建任务与执行 UI；F6-04 每步审批、F6-05 失败重跑、F7-05 Run 详情扩展仍未做。
