@@ -353,6 +353,7 @@ export type View =
   | { kind: 'agents' }
   | { kind: 'activity' }
   | { kind: 'tasks' }
+  | { kind: 'teams' }
   | { kind: 'roles' };
 
 export type ProjectTab =
@@ -375,6 +376,8 @@ export type KernelTask = {
   title: string;
   objective: string;
   status: KernelTaskState;
+  roleId?: string | null;
+  teamId?: string | null;
   pipeline?: TaskPipeline | null;
   createdAt: string;
   updatedAt: string;
@@ -461,6 +464,25 @@ export type AgentRole = {
   systemPrompt?: string;
   acceptanceCriteria: string[];
   runtimePolicy: RoleRuntimePolicy;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** Mirrors `TeamHandoff` in `@agent-ops/agent-runtime/teams` for the browser. */
+export type TeamHandoff = {
+  fromRoleId: string;
+  toRoleId: string;
+  note?: string;
+};
+
+/** Mirrors `AgentTeam` in `@agent-ops/agent-runtime/teams` for the browser. */
+export type AgentTeam = {
+  id: string;
+  name: string;
+  description?: string;
+  roleIds: string[];
+  handoffs: TeamHandoff[];
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
