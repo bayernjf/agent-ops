@@ -23,6 +23,7 @@ import { tasks, runs, runEvents } from './schema.js';
 import { kernelMigrations, type Migration } from './migrations.js';
 import { ProfileStore } from './profiles-store.js';
 import { RoleStore } from './roles-store.js';
+import { TeamStore } from './teams-store.js';
 import { addWorktree, pinWorktreeCommit, removeWorktree } from './worktree.js';
 import { assertWorktreeClean, commitWorktreeChanges, resetWorktree } from './commit.js';
 
@@ -333,6 +334,7 @@ export class KernelStore {
   private readonly kernelOrm: ReturnType<typeof createKernelOrm>;
   readonly profiles: ProfileStore;
   readonly roles: RoleStore;
+  readonly teams: TeamStore;
   protected readonly sqlite: Database;
   protected readonly databasePath: string;
   protected migrations: readonly Migration[] = kernelMigrations;
@@ -349,6 +351,7 @@ export class KernelStore {
     this.kernelOrm = createKernelOrm(sqlite);
     this.profiles = new ProfileStore(dirname(databasePath));
     this.roles = new RoleStore(dirname(databasePath));
+    this.teams = new TeamStore(dirname(databasePath), id => this.roles.getRole(id));
   }
 
   /** Where the platform keeps its own state and the workspaces it creates. */
@@ -1249,8 +1252,9 @@ export class KernelStore {
   }
 }
 
-export { ProfileStore, RoleStore, addWorktree, removeWorktree, kernelMigrations, type Migration };
+export { ProfileStore, RoleStore, TeamStore, addWorktree, removeWorktree, kernelMigrations, type Migration };
 export type { CreateRoleInput, UpdateRoleInput } from './roles-store.js';
+export type { CreateTeamInput, UpdateTeamInput, TeamRoleLookup } from './teams-store.js';
 export { assertWorktreeClean, commitWorktreeChanges, resetWorktree, UnsafeCommitError } from './commit.js';
 export type { CommitWorktreeResult } from './commit.js';
 export type { CreateProfileInput, UpdateProfileInput, ProfileValidationResult } from './profiles-store.js';

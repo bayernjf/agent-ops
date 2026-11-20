@@ -39,6 +39,18 @@ export {
   resolveRoleRuntime,
 } from './roles.js';
 export {
+  type AgentTeam,
+  type TeamHandoff,
+  type TeamGraphIssue,
+  teamHandoffSchema,
+  agentTeamSchema,
+  agentTeamCreateSchema,
+  agentTeamUpdateSchema,
+  validateTeamGraph,
+  slugifyTeamName,
+  ensureUniqueTeamId,
+} from './teams.js';
+export {
   type AgentProfile,
   type AgentProfileOverrides,
   type ResolvedAgentConfig,
