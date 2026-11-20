@@ -11,12 +11,15 @@ import {
   buildAgentExecutionPlan,
   describeRuntimeExecutorRejection,
   executeCodexPlan,
+  resolveRoleRuntime,
   resolveRuntimeExecutor,
   runtimeProviderAgentId,
+  type AgentAdapterStatus,
   type AgentRole,
   type ApprovedTask,
   type CodexExecutionResult,
   type CodexProcessRunner,
+  type ResolvedToolPolicy,
 } from '@agent-ops/agent-runtime';
 import type { TaskRunState } from '@agent-ops/workflow';
 import { tasks, runs, runEvents, runHandoffs, auditEvents } from './schema.js';
@@ -316,6 +319,26 @@ export type RunHandoff = {
   fromCommitSha: string;
   artifacts: string[];
   createdAt: string;
+};
+
+/**
+ * The execution plan a Role would use, built without a Task and without spawning a process.
+ * It answers "would this Role run, on what runtime, with which prompt and tool policy" so a
+ * misconfiguration surfaces before a real task is created.
+ */
+export type RoleTestPlan = {
+  roleId: string;
+  name: string;
+  enabled: boolean;
+  executable: boolean;
+  baseAgentId: string | null;
+  adapterStatus: AgentAdapterStatus;
+  profileId: string | null;
+  reason: string | null;
+  objective: string;
+  command: string[] | null;
+  toolPolicy: ResolvedToolPolicy | null;
+  warnings: string[];
 };
 
 export type KernelAuditEventType =
@@ -1439,9 +1462,52 @@ export class KernelStore {
     return events.length > limit ? events.slice(events.length - limit) : events;
   }
 
+  /** Build the Role's dry-run execution plan. Returns null when the Role does not exist. */
+  async testRolePlan(roleId: string, input: { objective?: string } = {}): Promise<RoleTestPlan | null> {
+    const role = await this.roles.getRole(roleId);
+    if (!role) return null;
+    const resolution = await resolveRoleRuntime(role, { getProfile: id => this.profiles.getProfile(id) });
+    const warnings: string[] = [];
+    if (!role.enabled) warnings.push('The Role is disabled, so no task can use it.');
+    if (!resolution.executable) warnings.push(`The Role is not executable: ${resolution.reason ?? 'unknown reason'}.`);
+    const objective = input.objective?.trim() || `Test the role ${role.name} without changing anything.`;
+    let command: string[] | null = null;
+    let toolPolicy: ResolvedToolPolicy | null = null;
+    try {
+      const plan = buildAgentExecutionPlan(
+        {
+          id: `role-test:${role.id}`,
+          title: `Role test: ${role.name}`,
+          objective,
+          acceptanceCriteria: role.acceptanceCriteria.length > 0 ? role.acceptanceCriteria : ['Report what you would do.'],
+        },
+        '<role-test-workspace>',
+        resolution.baseAgentId ?? role.baseAgentId ?? '',
+        { execute: false, profile: resolution.profile, role, roleId: role.id },
+      );
+      command = plan.command;
+      toolPolicy = plan.toolPolicy ?? null;
+    } catch (error) {
+      warnings.push(`The plan could not be built: ${error instanceof Error ? error.message : String(error)}.`);
+    }
+    return {
+      roleId: role.id,
+      name: role.name,
+      enabled: role.enabled,
+      executable: resolution.executable,
+      baseAgentId: resolution.baseAgentId ?? null,
+      adapterStatus: resolution.adapterStatus,
+      profileId: resolution.profile?.id ?? null,
+      reason: resolution.reason ?? null,
+      objective,
+      command,
+      toolPolicy,
+      warnings,
+    };
+  }
+
   /** Bundle one task's evidence for export. Returns null when the task does not exist. */
-  exportTask(id: string): TaskEvidenceExport | null {
-    const task = this.getTask(id);
+  exportTask(id: string): TaskEvidenceExport | null {    const task = this.getTask(id);
     if (!task) return null;
     const runs = this.listRuns(id).map(run => ({ ...run, handoff: this.getHandoffForRun(run.id) }));
     const handoffs = this.listHandoffs(id);
