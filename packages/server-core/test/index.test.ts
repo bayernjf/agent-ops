@@ -670,6 +670,42 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('plans, applies and summarizes a team pipeline over the API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const architect = await store.roles.createRole({ name: 'Architect', baseAgentId: 'codex' });
+      const implementer = await store.roles.createRole({ name: 'Implementer', baseAgentId: 'codex' });
+      const team = await store.teams.createTeam({
+        name: 'Delivery',
+        roleIds: [implementer.id, architect.id],
+        handoffs: [{ fromRoleId: architect.id, toRoleId: implementer.id }],
+      });
+      const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Coordinated', teamId: team.id });
+
+      const planned = await app.request(`/api/tasks/${task.id}/coordinator/plan`, { method: 'POST' });
+      expect(planned.status).toBe(200);
+      const { plan } = (await planned.json()) as { plan: { order: string[]; steps: unknown[] } };
+      expect(plan.order).toEqual([architect.id, implementer.id]);
+      expect(plan.steps).toHaveLength(2);
+
+      const applied = await app.request(`/api/tasks/${task.id}/coordinator/apply`, { method: 'POST' });
+      expect(applied.status).toBe(200);
+      expect(((await applied.json()) as { pipeline: { status: string; steps: unknown[] } }).pipeline).toMatchObject({ status: 'idle' });
+
+      const summary = await app.request(`/api/tasks/${task.id}/coordinator`);
+      expect(summary.status).toBe(200);
+      expect(((await summary.json()) as { summary: object }).summary).toMatchObject({ pipelineStatus: 'idle', completed: 0 });
+
+      const teamless = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Teamless' });
+      expect((await app.request(`/api/tasks/${teamless.id}/coordinator/plan`, { method: 'POST' })).status).toBe(400);
+      expect((await app.request('/api/tasks/missing/coordinator')).status).toBe(404);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a role whose runtime is not verified or whose profile is missing', async () => {
     const { store, directory } = await openStore();
     try {

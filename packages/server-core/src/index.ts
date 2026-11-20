@@ -108,7 +108,10 @@ function errorResponse(context: Context, error: unknown) {
     return context.json({ error: message }, 400);
   }
   if (message.includes('is disabled')) return context.json({ error: message }, 400);
-  if (message.includes('cannot be') || message.includes('no worktree') || message.includes('nothing is awaiting approval')) {
+  if (message.includes('is not assigned to a Team') || message.includes('produced an empty plan')) {
+    return context.json({ error: message }, 400);
+  }
+  if (message.includes('cannot be') || message.includes('no worktree') || message.includes('nothing is awaiting approval') || message.includes('can only be applied')) {
     return context.json({ error: message }, 409);
   }
   return context.json({ error: message }, 500);
@@ -432,6 +435,32 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     const task = store.getTask(taskId);
     if (!task) return c.json({ error: `Task ${taskId} was not found.` }, 404);
     return c.json({ handoffs: store.listHandoffs(taskId) });
+  });
+
+  app.post('/api/tasks/:id/coordinator/plan', async (c) => {
+    const taskId = c.req.param('id');
+    try {
+      const plan = await store.planTeamPipeline(taskId);
+      return plan ? c.json({ plan }) : c.json({ error: `Task ${taskId} was not found.` }, 404);
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  app.post('/api/tasks/:id/coordinator/apply', async (c) => {
+    const taskId = c.req.param('id');
+    try {
+      const pipeline = await store.applyTeamPipeline(taskId);
+      return pipeline ? c.json({ pipeline }) : c.json({ error: `Task ${taskId} was not found.` }, 404);
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
+  app.get('/api/tasks/:id/coordinator', (c) => {
+    const taskId = c.req.param('id');
+    const summary = store.coordinatorSummary(taskId);
+    return summary ? c.json({ summary }) : c.json({ error: `Task ${taskId} was not found.` }, 404);
   });
 
   app.get('/api/tasks/:id/export', (c) => {
