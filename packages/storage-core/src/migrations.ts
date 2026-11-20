@@ -154,4 +154,11 @@ export const kernelMigrations: readonly Migration[] = [
         ON audit_events(seq);
     `,
   },
+  {
+    id: '0019_run_lane',
+    sql: `
+      ALTER TABLE runs ADD COLUMN worktree_path TEXT NOT NULL DEFAULT '';
+      ALTER TABLE runs ADD COLUMN lane_id TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];
