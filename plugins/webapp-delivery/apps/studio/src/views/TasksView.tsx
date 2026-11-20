@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, ChevronRight, ListTodo, Play, Plus, RefreshCw, RotateCcw, Square, Trash2, X } from 'lucide-react';
 import { useI18n, type KeyPath } from '../i18n/i18n';
-import type { AgentRole, KernelRun, KernelTask, KernelTaskState, TaskPipeline, TaskPipelineStep, TaskPipelineStepResult } from '../types';
+import type { AgentRole, BudgetStatus, KernelRun, KernelTask, KernelTaskState, TaskBudgetStatus, TaskPipeline, TaskPipelineStep, TaskPipelineStepResult } from '../types';
 import { apiFetch, apiStreamFetch } from '../lib/api';
 
 type RunAction = 'execute' | 'accept' | 'reject';
@@ -75,6 +75,7 @@ export function TasksView() {
   const [error, setError] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [runsByTask, setRunsByTask] = useState<Record<string, KernelRun[]>>({});
+  const [budgetByTask, setBudgetByTask] = useState<Record<string, TaskBudgetStatus>>({});
   const [selectedFilesByRun, setSelectedFilesByRun] = useState<Record<string, string[]>>({});
   const [busyRunId, setBusyRunId] = useState<string | null>(null);
   const [executingRunId, setExecutingRunId] = useState<string | null>(null);
@@ -140,6 +141,17 @@ export function TasksView() {
   }, [t]);
 
   useEffect(() => { void loadTasks(); }, [loadTasks]);
+
+  const loadBudget = useCallback(async (taskId: string) => {
+    try {
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/budget`);
+      const payload = (await response.json().catch(() => null)) as unknown;
+      if (!response.ok) return;
+      setBudgetByTask(prev => ({ ...prev, [taskId]: payload as TaskBudgetStatus }));
+    } catch {
+      // Budget is an optional read; a failed fetch leaves the panel hidden.
+    }
+  }, []);
 
   const loadRoles = useCallback(async () => {
     try {
@@ -305,8 +317,11 @@ export function TasksView() {
   // Run status forever, so the expanded Run list has to be refreshed too.
   const refreshTasks = useCallback(async () => {
     await loadTasks();
-    if (expandedId) await loadRuns(expandedId);
-  }, [expandedId, loadRuns, loadTasks]);
+    if (expandedId) {
+      await loadRuns(expandedId);
+      await loadBudget(expandedId);
+    }
+  }, [expandedId, loadBudget, loadRuns, loadTasks]);
 
   useEffect(() => () => {
     liveAbortRef.current?.abort();
@@ -380,6 +395,7 @@ export function TasksView() {
     }
     setExpandedId(taskId);
     if (!runsByTask[taskId]) void loadRuns(taskId);
+    if (!(taskId in budgetByTask)) void loadBudget(taskId);
   };
 
   const changedFilesFor = (run: KernelRun) => run.artifacts?.changedFiles ?? [];
@@ -457,6 +473,20 @@ export function TasksView() {
   };
 
   const taskRuns = (taskId: string) => runsByTask[taskId] ?? [];
+
+  const configuredBudgetScopes = (status: TaskBudgetStatus): BudgetStatus[] =>
+    [status.role, status.team].filter((scope): scope is BudgetStatus => Boolean(scope?.configured));
+
+  const formatBudgetCost = (value: number | null | undefined, limit = false) =>
+    value == null ? '—' : (limit ? `$${value}` : `$${value.toFixed(4)}`);
+  const formatBudgetTokens = (value: number | null | undefined) =>
+    value == null ? '—' : value.toLocaleString();
+
+  const budgetRows = (scope: BudgetStatus) => [
+    { label: t('tasks.budgetCost'), spend: formatBudgetCost(scope.spend.costUsd), limit: formatBudgetCost(scope.limits.maxCostUsd, true) },
+    { label: t('tasks.budgetInputTokens'), spend: formatBudgetTokens(scope.spend.inputTokens), limit: formatBudgetTokens(scope.limits.maxInputTokens) },
+    { label: t('tasks.budgetOutputTokens'), spend: formatBudgetTokens(scope.spend.outputTokens), limit: formatBudgetTokens(scope.limits.maxOutputTokens) },
+  ];
 
   return (
     <section className="tasks-view" aria-label={t('tasks.title')}>
@@ -612,6 +642,46 @@ export function TasksView() {
                               );
                             })}
                           </div>
+                        </div>
+                      );
+                    })()}
+                    {budgetByTask[task.id] && (() => {
+                      const status = budgetByTask[task.id];
+                      const scopes = configuredBudgetScopes(status);
+                      return (
+                        <div className="budget-panel">
+                          <div className="budget-head">
+                            <strong>{t('tasks.budgetTitle')}</strong>
+                          </div>
+                          {scopes.length === 0 ? (
+                            <p className="budget-empty">{t('tasks.budgetNone')}</p>
+                          ) : (
+                            <div className="budget-scopes">
+                              {scopes.map(scope => (
+                                <div className={`budget-scope${scope.exceeded ? ' exceeded' : ''}`} key={scope.scope}>
+                                  <div className="budget-scope-head">
+                                    <strong>{scope.scope === 'role' ? t('tasks.role') : t('tasks.team')}</strong>
+                                    <span className="budget-scope-id">{scope.scopeId}</span>
+                                    {scope.exceeded && <span className="budget-exceeded">{t('tasks.budgetExceeded')}</span>}
+                                  </div>
+                                  <div className="budget-table">
+                                    <div className="budget-row budget-row-head">
+                                      <span aria-hidden="true" />
+                                      <span>{t('tasks.budgetSpend')}</span>
+                                      <span>{t('tasks.budgetLimit')}</span>
+                                    </div>
+                                    {budgetRows(scope).map(row => (
+                                      <div className="budget-row" key={row.label}>
+                                        <span>{row.label}</span>
+                                        <span>{row.spend}</span>
+                                        <span>{row.limit}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       );
                     })()}

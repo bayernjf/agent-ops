@@ -467,6 +467,37 @@ export type KernelRun = {
   updatedAt: string;
 };
 
+/** Mirrors `CostBudget` in `@agent-ops/agent-runtime/roles` for the browser. */
+export type CostBudget = {
+  maxCostUsd?: number;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
+};
+
+/** Mirrors `BudgetStatus` in `@agent-ops/storage-core` for the browser. */
+export type BudgetStatus = {
+  scope: 'role' | 'team';
+  scopeId: string;
+  configured: boolean;
+  exceeded: boolean;
+  reasons: string[];
+  limits: CostBudget;
+  spend: {
+    costUsd: number | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    reportingRuns: number;
+    totalRuns: number;
+  };
+};
+
+/** Mirrors `TaskBudgetStatus` in `@agent-ops/storage-core` for the browser. */
+export type TaskBudgetStatus = {
+  taskId: string;
+  role: BudgetStatus | null;
+  team: BudgetStatus | null;
+};
+
 export type RoleApprovalMode = 'auto' | 'human' | 'strict';
 
 export type RoleRuntimePolicy = {
