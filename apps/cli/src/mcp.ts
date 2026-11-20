@@ -473,6 +473,13 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}`).then(toResult));
 
+  server.registerTool('agent_ops_list_handoffs', {
+    title: 'List handoffs',
+    description: 'List a task\'s handoff receipts: which step committed which sha and which downstream run received it.',
+    inputSchema: taskIdSchema,
+    annotations: READ_ONLY,
+  }, args => callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}/handoffs`).then(toResult));
+
   server.registerTool('agent_ops_create_task', {
     title: 'Create task',
     description: 'Create a kernel task against a local repo and base ref. Provision it before creating a run.',

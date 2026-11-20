@@ -150,6 +150,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_get_runtime',
       'agent_ops_get_task',
       'agent_ops_get_team',
+      'agent_ops_list_handoffs',
       'agent_ops_list_projects',
       'agent_ops_list_roles',
       'agent_ops_list_runs',
