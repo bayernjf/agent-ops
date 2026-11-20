@@ -155,6 +155,22 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: READ_ONLY,
   }, () => callDaemon('GET', '/api/projects').then(toResult));
 
+  server.registerTool('agent_ops_get_metrics', {
+    title: 'Get metrics',
+    description: 'Aggregate task/run success, rework, usage and timing, optionally windowed by ISO timestamps. Rates are null when nothing executed in the window.',
+    inputSchema: {
+      since: z.string().optional().describe('Only count items created at or after this ISO timestamp.'),
+      until: z.string().optional().describe('Only count items created at or before this ISO timestamp.'),
+    },
+    annotations: READ_ONLY,
+  }, args => {
+    const query = new URLSearchParams();
+    if (args.since) query.set('since', args.since);
+    if (args.until) query.set('until', args.until);
+    const suffix = query.size > 0 ? `?${query.toString()}` : '';
+    return callDaemon('GET', `/api/metrics${suffix}`).then(toResult);
+  });
+
   server.registerTool('agent_ops_get_project', {
     title: 'Get project',
     description: 'Get one project: delivery state and current Blueprint.',

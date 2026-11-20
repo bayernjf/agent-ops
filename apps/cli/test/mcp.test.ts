@@ -143,6 +143,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_get_credentials_meta',
       'agent_ops_get_delivery_report',
       'agent_ops_get_feature_task',
+      'agent_ops_get_metrics',
       'agent_ops_get_project',
       'agent_ops_get_quality_gate',
       'agent_ops_get_release',
@@ -276,6 +277,15 @@ describe('agent-ops MCP bridge', () => {
     const deleted = await client.callTool({ name: 'agent_ops_delete_team', arguments: { teamId: team.id } });
     expect(deleted.isError).toBeFalsy();
     expect(JSON.parse(textOf(deleted))).toMatchObject({ deleted: true });
+  });
+
+  it('reads kernel metrics through the daemon', async () => {
+    const client = await startBridge();
+    const metrics = await client.callTool({ name: 'agent_ops_get_metrics', arguments: {} });
+    expect(metrics.isError).toBeFalsy();
+    const body = JSON.parse(textOf(metrics)) as { runs: { successRate: number | null }; usage: { costUsd: number | null } };
+    expect(body.runs.successRate).toBeNull();
+    expect(body.usage.costUsd).toBeNull();
   });
 
   it('builds a role test plan through the daemon', async () => {
