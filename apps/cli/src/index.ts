@@ -24,6 +24,46 @@ function checkCommand(command: (typeof commands)[number]): Check {
   };
 }
 
+type ExportTotals = {
+  runs?: number;
+  acceptedCommits?: number;
+  changedFiles?: number;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  costUsd?: number | null;
+  durationMs?: number;
+};
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${(seconds % 60).toFixed(1)}s`;
+}
+
+function formatSummary(doc: {
+  task?: { title?: string; status?: string };
+  totals?: ExportTotals;
+  audit?: unknown[];
+}): string {
+  const totals = doc.totals ?? {};
+  const usage = (value: number | null | undefined): string =>
+    value === null || value === undefined ? 'not reported' : String(value);
+  return [
+    `Title: ${doc.task?.title ?? 'unknown'}`,
+    `Status: ${doc.task?.status ?? 'unknown'}`,
+    `Runs: ${totals.runs ?? 0}`,
+    `Accepted commits: ${totals.acceptedCommits ?? 0}`,
+    `Changed files: ${totals.changedFiles ?? 0}`,
+    `Duration: ${formatDuration(totals.durationMs ?? 0)}`,
+    `Cost (USD): ${usage(totals.costUsd)}`,
+    `Input tokens: ${usage(totals.inputTokens)}`,
+    `Output tokens: ${usage(totals.outputTokens)}`,
+    `Audit events: ${doc.audit?.length ?? 0}`,
+  ].join('\n');
+}
+
 async function main() {
   const command = process.argv[2];
   if (command === 'doctor') {
@@ -52,7 +92,7 @@ async function main() {
   if (command === 'export') {
     const taskId = process.argv[3];
     if (!taskId || taskId.startsWith('--')) {
-      console.error('Usage: agent-ops export <taskId> [--out <file>]');
+      console.error('Usage: agent-ops export <taskId> [--summary] [--out <file>]');
       process.exitCode = 1;
       return;
     }
@@ -68,14 +108,16 @@ async function main() {
       process.exitCode = 1;
       return;
     }
+    const summary = process.argv.includes('--summary');
     const outIndex = process.argv.indexOf('--out');
     const outPath = outIndex >= 0 ? process.argv[outIndex + 1] : undefined;
+    const output = summary ? formatSummary(JSON.parse(body)) : body;
     if (outPath) {
-      await writeFile(outPath, body.endsWith('\n') ? body : `${body}\n`, 'utf8');
-      console.log(JSON.stringify({ written: outPath, bytes: Buffer.byteLength(body, 'utf8') }, null, 2));
+      await writeFile(outPath, output.endsWith('\n') ? output : `${output}\n`, 'utf8');
+      console.log(JSON.stringify({ written: outPath, bytes: Buffer.byteLength(output, 'utf8') }, null, 2));
       return;
     }
-    console.log(body);
+    console.log(output);
     return;
   }
 
