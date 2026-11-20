@@ -17,9 +17,11 @@ import {
   agentRoleUpdateSchema,
   agentTeamCreateSchema,
   agentTeamUpdateSchema,
+  evaluateToolPolicy,
   roleTemplates,
   getRoleTemplate,
   resolveRoleRuntime,
+  runtimeRegistry,
   type AgentRole,
 } from '@agent-ops/agent-runtime';
 import { createTokenAuthMiddleware } from './auth.js';
@@ -82,6 +84,12 @@ const roleTestSchema = z.object({
 
 const executeParallelSchema = z.object({
   maxConcurrency: z.number().int().min(1).max(8).optional(),
+});
+
+const policyEvaluateSchema = z.object({
+  allowedTools: z.array(z.string().trim().min(1).max(100)).max(100).default([]),
+  blockedTools: z.array(z.string().trim().min(1).max(100)).max(100).default([]),
+  approvalMode: z.enum(['auto', 'human', 'strict']).default('human'),
 });
 
 const customAgentSchema = z.object({
@@ -385,6 +393,17 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
         limit,
       }),
     });
+  });
+
+  app.post('/api/policy/evaluate', async (c) => {
+    const parsed = policyEvaluateSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: 'Invalid policy input.', details: parsed.error.flatten() }, 400);
+    const verdicts = runtimeRegistry.list().map(adapter => ({
+      runtimeId: adapter.id,
+      capability: adapter.capabilities.toolPolicy,
+      ...evaluateToolPolicy(parsed.data, adapter.capabilities.toolPolicy),
+    }));
+    return c.json({ policy: parsed.data, verdicts });
   });
 
   app.post('/api/tasks', async (c) => {
