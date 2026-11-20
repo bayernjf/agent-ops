@@ -76,6 +76,10 @@ const roleTemplateInstantiateSchema = z.object({
   profileId: z.string().trim().min(1).max(100).regex(/^[a-z0-9][a-z0-9-]*$/).optional(),
 });
 
+const roleTestSchema = z.object({
+  objective: z.string().trim().max(2_000).optional(),
+});
+
 const customAgentSchema = z.object({
   name: z.string().trim().min(1),
   launchCommand: z.string().trim().min(1),
@@ -246,6 +250,13 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
   app.get('/api/roles/:roleId', async (c) => {
     const role = await store.roles.getRole(c.req.param('roleId'));
     return role ? c.json({ role }) : c.json({ error: 'Role not found.' }, 404);
+  });
+
+  app.post('/api/roles/:roleId/test', async (c) => {
+    const parsed = roleTestSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: 'Invalid role test input.', details: parsed.error.flatten() }, 400);
+    const plan = await store.testRolePlan(c.req.param('roleId'), parsed.data);
+    return plan ? c.json({ plan }) : c.json({ error: 'Role not found.' }, 404);
   });
 
   app.post('/api/roles', async (c) => {

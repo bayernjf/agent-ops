@@ -621,6 +621,29 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('serves a role test plan over the API', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const role = await store.roles.createRole({ name: 'Probe', baseAgentId: 'codex' });
+
+      const response = await app.request(`/api/roles/${role.id}/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ objective: 'Check the plan.' }),
+      });
+      expect(response.status).toBe(200);
+      const { plan } = (await response.json()) as { plan: { roleId: string; executable: boolean; objective: string; command: string[] } };
+      expect(plan).toMatchObject({ roleId: role.id, executable: true, objective: 'Check the plan.' });
+      expect(plan.command[0]).toBe('codex');
+
+      expect((await app.request('/api/roles/missing/test', { method: 'POST', body: '{}' })).status).toBe(404);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a role whose runtime is not verified or whose profile is missing', async () => {
     const { store, directory } = await openStore();
     try {
