@@ -201,6 +201,18 @@
 - [x] 本轮提交：`63fe913 test(storage-core): cover a four-step pipeline`。
 - [ ] 本条验收是确定性 runner 下的内核级验收，不是真实模型 UI 验收；真实模型 UI E2E 仍 blocked（见上方待办登记）。
 
+## F5-01/F5-02/F5-03 Team + Assignment — 已完成（2026-11-20）
+
+- [x] `agent-runtime` 新增 `teams.ts`：`AgentTeam` 只存 `roleIds` 花名册与 `handoffs` 交接边；`validateTeamGraph` 校验空花名册、重复成员、自交接、重复边、非成员边与环；stored/create/update schema 共用同一套规则。
+- [x] `storage-core` 新增 `TeamStore`（`agent-teams.json`，与 Role/Profile 相同的原子写、损坏保护和重开读取），挂在 `KernelStore.teams`；创建/更新时校验 Role 存在且启用。
+- [x] Task 增加 `team_id`（migration `0016_task_team`）：`createTask` 校验 Team 存在且启用；同时给 `roleId` 时校验该 Role 在该 Team 花名册内；`TaskRecord.teamId` 随 API 返回。
+- [x] `server-core` 新增 `GET/POST /api/teams` 与 `GET/PUT/DELETE /api/teams/:teamId`；`createTaskSchema` 接受 `teamId`；Store 抛出的 “is disabled” 映射 400，未知 Team 404。
+- [x] MCP 新增 `agent_ops_list_teams/get_team/create_team/update_team/delete_team`，`agent_ops_create_task` 接受 `teamId`。
+- [x] 测试：TeamStore 唯一 id/持久化/重开、未知或停用 Role、重复成员/自交接/重复边/非成员边/环、更新导致交接悬空时报错；任务 `teamId` 持久化与成员校验；server CRUD 与环 400/未知角色 404；MCP 团队工具与 `teamId` 透传。全仓 typecheck 0，50 文件 / 664 tests 绿。
+- [x] 本轮提交：`18d127f feat(storage-core): add team roster store`、`fb0f187 feat(storage-core): assign tasks to teams`、`89d1854 feat(server-core): expose the team API`、`46f26e4 feat(cli): expose team tools over MCP`。
+- [ ] 未做：F5-04 Handoff（上游 commit/artifact 真正交给下游并落记录）、F5-05/F7-03 TeamsView、F8-02 审计导出、F5-06 Coordinator、F5-07 并行团队。
+- [ ] Team 目前只是花名册 + 交接图；Pipeline 仍按 task 的 step 显式配置，不会从 Team 自动推导。
+
 ## F7-05 Run 详情扩展 — 已完成（2026-11-20）
 
 - [x] migration `0015_run_execution_evidence` 给 `runs` 增加 `runtime_version`（默认空字符串）、`command`（默认空字符串）、`input_tokens` / `output_tokens`（INTEGER，可空）、`cost_usd`（REAL，可空）；旧 Run 读取为 `runtimeVersion=null`、`command=''`、usage 为 `null`。
