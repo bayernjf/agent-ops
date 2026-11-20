@@ -305,3 +305,14 @@
 - [x] 测试：codex 角色计划 `executable=true`、命令首项 `codex`、含 Role prompt 与只读策略；自定义 objective 进命令；missing role 返回 null；candidate 角色 `executable=false` 且 warning 含 “not executable” 但仍给命令；停用角色有 warning；server 200/404；MCP 返回 plan。全仓 typecheck 0，54 文件 / 682 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
 - [x] 本轮提交：`9f89b91 feat(storage-core): build role test plans`、`d5234fd feat(server-core): serve role test plans`、`ad20b98 feat(cli): add the role test tool`、`ee2c1dd feat(studio): preview a role test plan`。
 - [ ] 未做：dry-run 不会真的起模型进程验证输出质量（真实小任务验证仍受 CLI 登录阻塞）；试跑不写审计事件；Studio 试跑面板未在真实浏览器逐项点击。
+
+## F8-04 指标聚合 — 已完成（2026-11-20）
+
+- [x] `KernelStore.getMetrics({ since?, until? })`：任务与运行的成功/失败/取消/在途、成功率、返工（`pipeline.retried` + `run.rejected` 除以已执行运行）、用量合计、耗时（总/平均），以及按 runtime 与按 role 的分解。
+- [x] 口径：`executed = review/done/failed/cancelled`；成功率为 `succeeded/executed`，返工率为 `(retries + rejections)/executed`，窗口内无已执行运行时两者为 `null`；用量在无人上报时保持 `null`。
+- [x] server：`GET /api/metrics?since=&until=`，非法时间戳返回 400。
+- [x] MCP：新增 `agent_ops_get_metrics`。
+- [x] Studio：新增 Metrics 页面（KPI 卡片 + 按运行时/按角色表格），侧边栏入口 `nav.metrics`，中英文文案齐。
+- [x] 测试：空库全零且比率为 null；两步 Pipeline + 失败 Run + 驳回 Run 得到 tasks 3/1/1/1、runs 4/3/2/1/1、成功率 2/3、返工率 1/3、usage null、平均耗时 > 0、codex 桶 4 条、role 桶 builder/unassigned；未来窗口归零；server 200/400；MCP 空库比率为 null。全仓 typecheck 0，55 文件 / 687 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
+- [x] 本轮提交：`169b837 feat(storage-core): aggregate kernel metrics`、`7362bbc feat(server-core): serve kernel metrics`、`5481167 feat(cli): add the metrics tool`、`37f7611 feat(studio): add the metrics view`。
+- [ ] 未做：指标按创建时间窗口过滤，不按完成时间；返工率是全局启发式，不是逐任务口径；不接外部 observability（Prometheus/OTel）；Studio 指标页未在真实浏览器点击。
