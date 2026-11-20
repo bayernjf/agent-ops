@@ -316,3 +316,16 @@
 - [x] 测试：空库全零且比率为 null；两步 Pipeline + 失败 Run + 驳回 Run 得到 tasks 3/1/1/1、runs 4/3/2/1/1、成功率 2/3、返工率 1/3、usage null、平均耗时 > 0、codex 桶 4 条、role 桶 builder/unassigned；未来窗口归零；server 200/400；MCP 空库比率为 null。全仓 typecheck 0，55 文件 / 687 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
 - [x] 本轮提交：`169b837 feat(storage-core): aggregate kernel metrics`、`7362bbc feat(server-core): serve kernel metrics`、`5481167 feat(cli): add the metrics tool`、`37f7611 feat(studio): add the metrics view`。
 - [ ] 未做：指标按创建时间窗口过滤，不按完成时间；返工率是全局启发式，不是逐任务口径；不接外部 observability（Prometheus/OTel）；Studio 指标页未在真实浏览器点击。
+
+## F5-06 Coordinator — 已完成（串行版，2026-11-20）
+
+- [x] `orderTeamRoles(roleIds, handoffs)`：按交接边做确定性拓扑排序，同层以花名册顺序兜底；环由 Team schema 拦截，残留节点按花名册顺序追加。
+- [x] `KernelStore.planTeamPipeline(taskId)`：用任务的 Team 推导串行 pipeline（每步 = 一个 Role，prompt 取角色 description），返回 order / steps / warnings；任务没有 Team 时报错。
+- [x] `KernelStore.applyTeamPipeline(taskId)`：只在 `queued` 且 pipeline 为 `idle` 时写入，写入这个动作就是人工审批门；写后记 `pipeline.planned` 审计事件。
+- [x] `KernelStore.coordinatorSummary(taskId)`：确定性汇总每步状态、commit、变更文件数，以及完成/失败/等待数、交接数和卡点（不调用模型）。
+- [x] server：`POST /api/tasks/:id/coordinator/plan`、`POST /api/tasks/:id/coordinator/apply`、`GET /api/tasks/:id/coordinator`；无 Team 400、非 queued 409、未知任务 404。
+- [x] MCP：`agent_ops_plan_team_pipeline`、`agent_ops_apply_team_plan`、`agent_ops_coordinator_summary`。
+- [x] Studio：TeamsView 任务队列里 `queued` 任务显示“生成计划”，预览步骤后点“应用计划”才落库。
+- [x] 测试：拓扑排序（链/并列/菱形/越界边）；协调器 plan→apply→execute→summary（3 步全部 completed、2 条交接、卡点为空、重复 apply 被拒）；无 Team 报错；server 200/400/404；MCP 端到端 plan/apply。全仓 typecheck 0，57 文件 / 695 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
+- [x] 本轮提交：`4190eb9 feat(agent-runtime): order team roles by handoff`、`cdfe346 feat(storage-core): add a team coordinator`、`dea6f98 feat(server-core): serve coordinator plans`、`c0b5e8e feat(cli): add coordinator tools`、`b124e4a feat(studio): plan a pipeline from a team`。
+- [ ] 未做：这是**串行**协调器；并行派活、独立 worktree、有界并发与自动冲突检查仍属 F5-07；“拆任务”只按花名册拆到角色，不按内容再拆子任务；汇总不调模型、不做语义总结；Studio 未在真实浏览器点击。
