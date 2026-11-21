@@ -18,7 +18,7 @@
 | Task / Run | 每任务一个 worktree（自动链接仓库 `node_modules`，`AGENT_OPS_LINK_NODE_MODULES=0` 关闭）；Run 持久化 stdout/stderr、完整 diff（含未跟踪 patch）、exit code、耗时、usage；SSE 实时输出与取消 |
 | Roles | 角色绑定 Profile / base agent、系统提示、验收标准、工具策略与成本预算；内置 architect / implementer / reviewer / tester / researcher 模板 |
 | 策略预览 | 角色表单保存前调用 `POST /api/policy/evaluate`，逐 Runtime 展示只读、执行精度、人工门、allow/deny 判定与不支持原因；策略一改，旧结果立即清空 |
-| Teams + Handoff | 团队 = 花名册 + 交接边 + 可选 owner（落盘角色，必须最后一步且不再交接）；Pipeline 每跨一条边写一条交接收据（上游 commit + changedFiles） |
+| Teams + Handoff | 团队 = 花名册 + 交接边 + 可选 owner（落盘角色，必须最后一步且不再交接）；Pipeline 每跨一条边写一条交接收据（上游 commit + changedFiles）；Studio 任务队列按选中团队调用 `GET /api/teams/:teamId/tasks`，不拉全量任务 |
 | 串行 Pipeline | 每步独立 Run，成功后自动提交并交接；支持每步审批门、失败重跑、从失败 step 重试、completed 后从第一步重跑；后续 step 的 prompt 可模板引用上游 output / commit |
 | 并行 DAG | 步骤可写 `dependsOn`（`[]` 为根）；ready steps 在各自 worktree 内有界并发，失败依赖跳过下游，文件冲突只报告、不合并；Studio 任务面板可触发并展示每步结果 |
 | Coordinator | 按团队花名册与交接边推导 Pipeline（确定性拓扑序），预览后由人点击应用；owner 置末并标记 `ownsDeliverable`，完成后若没改动任何文件会在 summary 里告警 |

@@ -14,6 +14,7 @@
 - [x] **并行 lane 决策入口** — 已完成（2026-11-21）。并行结果面板直接提供 Accept lane / Reject lane；已接受的 lane 可 Set as final，持久化 `finalRunId` / `finalCommitSha` 并写 `task.final_lane.selected` 审计。真实 CodeBuddy 两条 lane 已在浏览器走通接受、驳回和最终选择；选择只是指向已 pin 的 lane commit，不合并到任务 worktree。提交 `2ed1adb` / `6b51497` / `9750a83` / `88cd6bd`。
 - [x] **Studio 审计面板与导出** — 已完成（2026-11-21）。新增独立 Audit 导航，`GET /api/audit` 支持任务 / 团队 / 类型 / 条数筛选；事件可展开查看 actor、task/team 与 data；`Export audit JSON` 导出当前筛选切片，`Export task evidence` 调用 `GET /api/tasks/:id/export` 下载单任务证据包。真实浏览器已验证 6 条事件、两层过滤、详情展开和两种下载；全仓 65 文件 / 752 tests 绿，Studio build 1659 modules 成功。
 - [x] **Studio 策略预览面板** — 已完成（2026-11-21）。角色创建 / 编辑表单接入 `POST /api/policy/evaluate`，保存前逐 Runtime 展示 capability、enforcement、只读、人工门与 allow/deny 判定；策略字段变更立即清空旧结果，空策略显示默认工具集提示。真实浏览器已验证 7 个 Runtime、20 条判定、unsupported 原因与中英文文案；全仓 66 文件 / 753 tests 绿，Studio build 1660 modules 成功。
+- [x] **Teams 任务队列服务端过滤** — 已完成（2026-11-21）。`TeamsView` 不再拉取全量 `/api/tasks` 后按 `teamId` 过滤，改为对选中团队调用 `GET /api/teams/:teamId/tasks`；切换团队立即清空旧队列并带取消标记，队列与卡点面板分别有加载态和错误态，计划预览对团队切换做了响应隔离。真实浏览器已验证 Alpha 2 条 / Beta 1 条、未归属任务不出现，切换与刷新只请求当前团队队列；全仓 66 文件 / 753 tests 绿，Studio build 1660 modules 成功。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -222,7 +223,7 @@
 - [x] 浏览器验证：用隔离数据库 `/tmp/agent-ops-browser-verify/agent-ops.sqlite` + 临时 git 仓，不污染本机真实任务库。DAG 先验 `aider` candidate 的失败面板；再用真实 CodeBuddy 2.142.0 跑通成功路径（pipeline `completed`、commit `b976ee0`、输出 `PROBE_OK`）。并行 lane 先验失败面板；再用同一个角色跑通 `review` lane（0 文件、`PROBE_OK`）。Teams 计划预演在带 Team 的 queued 任务上打开并取消，不写回 Pipeline；`Delete probe` 从 Studio 删除后，后端任务列表确认消失。
 - [x] 真实模型登录补充：首次并行尝试因 daemon 启动时 `PATH` 未包含 `~/.local/bin`，报 `spawn codebuddy ENOENT`；用 `PATH="$HOME/.local/bin:$PATH"` 重启 daemon 后成功。这不是 Studio 代码缺陷，但本机 daemon 启动环境应显式带上 CLI 路径。
 - [x] 发现并修复：DAG / 并行 / 串行 / retry / rerun / approve 都是同步长请求，但 Studio 原来复用 `apiFetch` 的 15 秒默认超时，真实模型超过 15 秒会被前端 abort，daemon 仍在后台执行。新增 `PIPELINE_REQUEST_TIMEOUT_MS = 10 分钟` 并用于这些请求（commit `d7dd834`）。
-- [ ] 未做：并行 lane 的接受/驳回仍走普通 Run 操作；Studio 团队任务队列仍用客户端过滤，未改用 `GET /api/teams/:teamId/tasks`；task 级 cancel 仍未做，目前只有“无 Run 的 task 可删除”。
+- [ ] 未做：并行 lane 的接受/驳回仍走普通 Run 操作；task 级 cancel 仍未做，目前只有“无 Run 的 task 可删除”。（团队任务队列已于 2026-11-21 改为 `GET /api/teams/:teamId/tasks`。）
 - [x] 本轮提交：`2efd97a feat(storage-core): delete tasks without runs`、`0eb7917 feat(server-core): expose task deletion`、`24d8891 feat(cli): add the delete task tool`、`3592b06 feat(studio): run DAG and parallel teams`、`69bfffc docs(handoff): record branch runs and task deletion`、`d7dd834 fix(studio): keep long pipeline requests alive`。
 
 ## M1 退出验收 — 4 步串行完整组合 — 已完成（2026-11-20）
@@ -251,7 +252,7 @@
 
 - [x] 新增 `TeamsView`：团队列表（花名册人数、交接边数、启用切换、编辑/删除），选中团队后在下方展示花名册、交接边与任务队列。
 - [x] 建/编辑表单：名称、描述、角色花名册多选（角色来自 `/api/roles`）、交接边编辑器（上游/下游/备注，下拉取花名册角色）、启用开关；保存/取消/错误提示沿用 RolesView 的处理方式。
-- [x] 任务队列：按 `task.teamId` 过滤 `/api/tasks`，显示任务状态；`pipeline.status === 'awaiting_approval'` 的任务额外标记“审批卡点”。
+- [x] 任务队列：初版按 `task.teamId` 过滤 `/api/tasks`；2026-11-21 已改为对选中团队调用 `GET /api/teams/:teamId/tasks`，显示任务状态，`pipeline.status === 'awaiting_approval'` 的任务额外标记“审批卡点”。
 - [x] 接入 Studio 导航（`nav.teams`）与 `View` 联合类型；浏览器侧补 `AgentTeam`/`TeamHandoff` 类型与 `KernelTask.teamId`。
 - [x] 文案全部走 i18n：`en`/`zh` 同步新增 `teams` 与 `nav.teams`；`owned-copy` 扫描通过。
 - [x] 验证：Studio `tsc` 与 `vite build` 通过（1655 modules），Studio 14 文件 / 257 tests 绿；全仓 typecheck 0，50 文件 / 664 tests 绿。
@@ -427,6 +428,18 @@
 - [x] 浏览器验收：隔离 DB `/tmp/agent-ops-policy-verify/agent-ops.sqlite`，在 Roles → New role 填 `Read, Grep` + `Bash`，点预览得到 7 个 Runtime；`codex` / `claude-code` 为 native + exact，其余 5 个为 unsupported；每个 Runtime 20 条判定，`Read` / `Grep` allow、`Bash` 按黑名单 deny、其他已知工具按 allowlist deny；展开 aider 看到 warning 与 unsupportedReason。改动白名单后结果立即清空；空策略显示 7 个 Runtime、0 decisions 和默认工具集提示；中英文文案均正常。daemon 停止后再预览显示 `Unable to evaluate the policy.`，旧结果不保留。
 - [x] 本轮提交：`babbb80 feat(studio): preview role policy across runtimes`。
 - [ ] 未做：预览结果只用于人工查看，不会自动写入角色；没有“把判定导出 JSON”按钮；不支持原因与 warnings 仍显示服务端英文原文；没有独立于角色表单的全局策略沙盒页。
+
+## Studio Teams 任务队列服务端过滤 — 已完成（2026-11-21）
+
+- [x] `TeamsView` 不再在 `loadData` 里拉取全量 `/api/tasks` 后按 `teamId` 过滤；选中团队后单独调用 `GET /api/teams/:teamId/tasks`，团队列表只加载 `/api/teams` 与 `/api/roles`。
+- [x] 切换团队立即清空旧队列，并用取消标记忽略上一团队的迟到响应；队列与卡点面板分别显示加载态和错误态，避免把“尚未加载”误报成“没有任务 / 没有卡点”。
+- [x] 刷新按钮同时重载团队列表与当前团队队列；应用 Coordinator 计划后额外刷新当前队列，使 Pipeline 状态及时更新。
+- [x] 计划预览增加团队切换保护：响应回来时若选中团队已变，不写入 `planResult`；旧请求的失败也不会污染新团队的全局错误；`planningTaskId` 只清除自己那条任务的 loading。
+- [x] 中英文新增 `teams.tasksLoading` / `teams.tasksLoad`。
+- [x] 真实浏览器验收：隔离 DB + 临时 git 仓，Alpha 团队 2 个任务、Beta 团队 1 个、未归属 1 个。进入 Teams 默认显示 Alpha 的两条队列，切到 Beta 只显示 `Beta queue only`，未归属任务不出现；网络记录只有 `/api/teams/alpha-team/tasks` 与 `/api/teams/beta-team/tasks`，刷新只重载当前团队队列。停止 daemon 后刷新，页面显示 `Unable to load teams.`，队列与卡点面板分别显示 `Unable to load the team task queue.`。
+- [x] 门禁：全仓 typecheck 0；66 文件 / 753 tests 全部通过；Studio build 1660 modules 成功，主 chunk 295.45 kB，CSS 65.24 kB。
+- [x] 本轮提交：`1636843 feat(studio): load team tasks from the team queue`。
+- [ ] 未做：团队队列接口没有分页或状态过滤；任务数量大时仍会一次返回该团队全部任务。
 
 ## F7-06 团队看板 — 已完成（2026-11-20）
 
