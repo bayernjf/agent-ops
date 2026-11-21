@@ -35,7 +35,7 @@ import { RoleStore } from './roles-store.js';
 import { TeamStore } from './teams-store.js';
 import { addWorktree, linkNodeModules, mergeDependencyCommits, pinPipelineCommit, pinWorktreeCommit, removeWorktree } from './worktree.js';
 import { assertWorktreeClean, commitWorktreeChanges, resetWorktree } from './commit.js';
-import { expandPipelineTemplate, type PipelineTemplateSnapshot } from './pipeline-template.js';
+import { expandPipelineTemplate, validatePipelineTemplates, type PipelineTemplateSnapshot } from './pipeline-template.js';
 
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
@@ -835,6 +835,10 @@ export class KernelStore {
       visited.add(id);
     };
     for (const step of steps) visit(step.id);
+    const templateIssues = validatePipelineTemplates(steps);
+    if (templateIssues.length > 0) {
+      throw new Error(templateIssues.map(issue => issue.message).join(' '));
+    }
     return { steps, results: [], status: 'idle' };
   }
 
