@@ -507,7 +507,8 @@
 - 交付：`packages/storage-core/src/index.ts` +5（复用 `eq` / `TaskRow` / `toTaskRecord`）；`task-run.test.ts` 新增用例覆盖两个 Team、未分配任务、未知 teamId。tester 在链接依赖的 worktree 实跑 `Tests 9 passed (9)`。
 - **真实链路价值**：reviewer 发现 implementer 的断言 `not.toContain('B1')` 恒真（拿标题字符串对比 UUID 列表），owner 在最终步把断言改成 `not.toContain(b1.id)` 并补充未分配任务断言——这是多角色链路里“审查 → 修正”第一次真实发生。
 - 验收：diff 应用进 `dev` 后 typecheck 0、全仓 **62 文件 / 737 tests 绿**；提交 `14125ef feat(storage-core): list tasks by team`、`0e5bb4a docs(dogfood): record the five-role code run`。
-- [ ] 未做：`listTasksByTeam` 尚未由 server-core 路由或 MCP 消费（纯内核查询）；未加显式排序（与 `listTasks` 一致，测试不依赖顺序）。
+- [x] 已暴露：`GET /api/teams/:teamId/tasks`（未知 Team 404）与 MCP `agent_ops_list_team_tasks`；测试覆盖两条任务的过滤与 404。
+- [ ] 未做：未加显式排序（与 `listTasks` 一致，测试不依赖顺序）；Studio 团队详情仍用客户端过滤，尚未改用该接口。
 
 ## Coordinator 落盘 owner — 已完成（2026-11-21）
 

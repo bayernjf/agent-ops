@@ -616,3 +616,4 @@ npm --workspace @agent-ops/studio run build
 | 2026-11-21 | owner 事后校验：pipeline step 记录自身变更集，summary 对“无 owner / 未运行 / 完成但 0 改动”告警 |
 | 2026-11-21 | worktree 依赖策略：provision/lane/DAG 自动链接 `node_modules`，`info/exclude` 防止计为改动；CodeBuddy 在 worktree 实跑 5 个测试通过 |
 | 2026-11-21 | Dogfood 8：五角色真实代码交付（`listTasksByTeam` + 单测，reviewer 发现恒真断言、owner 修正）；应用后 737 tests 绿 |
+| 2026-11-21 | `listTasksByTeam` 暴露为 `GET /api/teams/:teamId/tasks` 与 MCP `agent_ops_list_team_tasks` |

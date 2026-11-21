@@ -90,7 +90,7 @@ Role / Team 可设成本与 token 上限（`maxCostUsd` / `maxInputTokens` / `ma
 - `packages/policy`：运行时无关的工具策略求值（allow / deny / approval）、账号发现、连接器、确认策略。
 - `packages/workflow`：Task/Run 状态机引擎（xstate）。
 - `packages/storage-core`：内核数据层（SQLite + JSON store）：Task/Run 证据、Role/Team、Pipeline、交接、审计、指标、预算、worktree 生命周期。
-- `packages/server-core`：内核 HTTP 控制面（`/api/tasks`、`/api/runs`、`/api/roles`、`/api/teams`、`/api/audit`、`/api/metrics`、`/api/policy/evaluate` 等）。
+- `packages/server-core`：内核 HTTP 控制面（`/api/tasks`、`/api/runs`、`/api/roles`、`/api/teams`、`/api/teams/:teamId/tasks`、`/api/audit`、`/api/metrics`、`/api/policy/evaluate` 等）。
 
 ### webapp-delivery 插件
 
