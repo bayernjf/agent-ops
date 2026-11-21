@@ -8,7 +8,7 @@
 > 产品规划（非活跃待办，不计入上方待办）：多 Agent 角色与团队 v0.2/v0.3，PRD 见 `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md`，实施拆解见 `docs/prd/Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md`；PD-1～PD-9 已于 2026-11-19 拍板；后续方向备忘（Tier 0 能力包 / 现有 Harness / Personal Agent）见 PRD §12.1–12.2。
 
 - [x] **真实模型 UI E2E** — 已完成（2026-11-20）。UI 里新建 CodeBuddy 角色与一步 Pipeline 任务，点 `Run pipeline` 由真实 CodeBuddy 2.185.0 执行，任务 done、Run 可见（commit `ea4553f7d2`）。Claude Code / Codex 仍受 CC Switch `base_url` 阻塞，但不影响 CodeBuddy 路径；真实模型 API 路径与 UI 路径均已有证据。
-- [x] **3–5 个本仓 dogfood** — 已完成 3 条真实任务 + 2 次团队运行（2026-11-21）：单任务接受率 3/3、检查通过率 3/3、返工 1 次人工小修；五角色串行 5 步全部完成（发现“落盘 owner 未指派”缺口）；owner 机制随后补齐并用 2 步团队实测落盘。详见下方 “F10-01/F10-02 Dogfood” 章节。
+- [x] **3–5 个本仓 dogfood** — 已完成 3 条真实任务 + 4 次团队运行（2026-11-21）：单任务接受率 3/3、检查通过率 3/3、返工 1 次人工小修；五角色串行 5 步完成（首轮暴露落盘 owner 缺口）；owner 机制补齐并实测落盘；带 owner 的五角色交付重跑成功；依赖链接后五角色完成**真实代码交付**（`listTasksByTeam` + 单测，含 reviewer→owner 修正）。详见下方 “F10-01/F10-02 Dogfood” 章节。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -451,7 +451,7 @@
 - [x] UI 验收过程中发现并修复两个真实缺陷：① 新建任务表单不 provision worktree，`Run pipeline` 直接 409 “no worktree”；② 执行后不刷新已展开任务的 Run 列表（显示 “No runs yet”）。提交 `902d864 fix(studio): provision and refresh pipeline runs`。
 - [ ] 剩余：Claude Code / Codex 仍受 CC Switch `base_url` 阻塞；CodeBuddy 不上报 usage 与工具调用（记录为 null / unknown）；M1 的“4 步串行完整组合”此前由确定性 runner 验收。
 
-## F10-01/F10-02 Dogfood（3 个真实任务 + 2 次团队运行）— 已完成（2026-11-21）
+## F10-01/F10-02 Dogfood（3 个真实任务 + 3 次团队运行）— 已完成（2026-11-21）
 
 > 方法：在本仓为每个任务建一条一步 Pipeline（角色 `ui-codebuddy` → CodeBuddy 2.185.0）；执行后审阅 agent 的 commit，把 diff 应用到 `dev`，再用本仓自己的检查验收。Pipeline 步骤由系统自动 accept，人对最终 diff 负责。
 
@@ -484,13 +484,49 @@
 - 产出：writer 写出的 `02-final.md` 内容精确为 `owner wrote this.`，并按指令向 `01-plan.md` 追加写入说明；整体应用为 `9ff5aa5`。这是 owner 机制“真的会写”的实测证据，而不只是计划标记。
 - 运维提示：daemon 是长驻进程，**改完内核代码必须重启 daemon**；本轮第一次 apply 跑在旧代码上，旧 schema 静默丢弃了 `ownerRoleId`，重启并 PUT owner 后才正确标记。写进这里避免复现。
 
+### Dogfood 6：带 owner 的五角色交付（2026-11-21）
+
+- 团队 `CB Delivery`（5 角色，`ownerRoleId = summarizer`）；任务 “Dogfood 6: owned five-role delivery”，Coordinator 推导的 5 步中 owner 步骤置末并标记 `ownsDeliverable`。
+- 结果：5 步全部 `completed`（agent commit `d6148fb` → `f0f8565` → `92187be` → `2130471` → `e38c83b`）、4 条 handoff、总耗时 430 s；`coordinatorSummary.owner = { stepId: 'cb-summarizer', status: 'completed' }`。
+- 落盘：owner 真的写出 `05-final.md`（5.5 KB，按 reviewer 修订后的 README-ready「报告指标」小节）并附 `05-summary.md`；6 个文件共 440 行，应用为 `4065cca`。
+- 对比 Dogfood 4（未配 owner、只产笔记）：本轮满足 M2 退出标准「5 角色团队完成一个真实仓库任务（架构→实现→审查→测试→汇总）」——交付物是真实仓库文档而非代码；owner 也自己列出贴入 README 前仍需处理的缺口（`--summary` 未进 README 命令节、Team 预算证据映射缺一项、SSE 仅源码引用无运行时验证）。
+- [x] `05-final.md` 已贴入 README「报告指标」小节（运行证据 / 工具审计 / 成本预算三张表），并按 owner 列出的缺口做了三处修正：命令节补 `--summary`；预算来源指向 `roles.ts` / `teams.ts`；SSE 措辞改为 stdout/stderr 以事件落库（每 Run 最近 500 条）可回放，并在 README「已知限制」补上未做压测的说明。
+- [ ] 未做：交付物是文档；worktree 依赖已可链接（见 Dogfood 7），但“五角色产出真实代码”本身仍未试。
+
+### Dogfood 7：worktree 依赖与测试执行（2026-11-21）
+
+- 任务 `d71b8b62`（角色 `cb-test-runner` → CodeBuddy），objective 只要求“在 workspace 里跑 `npx vitest run packages/storage-core/test/worktree.test.ts` 并报告结果，不改文件”。
+- 结果：11.4 s、exit 0、**`Tests 5 passed (5)`**、`changedFiles = []`；accept 后 commitSha 回写为当前 HEAD（无改动不伪造提交）。
+- 意义：worktree 里真的有依赖可用，agent 能在隔离环境跑项目检查——这是把 dogfood 从“文档任务”升级成“代码任务”的前提。
+- 首轮（`2162cc26` / `0418b424`）暴露缺陷：`node_modules` 符号链接不被目录式 `.gitignore` 匹配，被计成 changedFiles；已修复并 reject 该轮，复跑得到干净证据。
+
+### Dogfood 8：五角色真实代码交付（2026-11-21）
+
+- 团队 `CB Code Team`（architect → implementer → reviewer → tester → owner，owner 置末）；任务 “Dogfood 8: five-role code delivery”，目标为新增 `KernelStore.listTasksByTeam(teamId)` 与一条单测。
+- 结果：5 步全部 `completed`（`ae0bc9e` → `018ea48` → `1490bd5` → `3aa7738` → `d2c4f80`），320 s；`owner.changedFiles = 2`、`warnings = []`。
+- 交付：`packages/storage-core/src/index.ts` +5（复用 `eq` / `TaskRow` / `toTaskRecord`）；`task-run.test.ts` 新增用例覆盖两个 Team、未分配任务、未知 teamId。tester 在链接依赖的 worktree 实跑 `Tests 9 passed (9)`。
+- **真实链路价值**：reviewer 发现 implementer 的断言 `not.toContain('B1')` 恒真（拿标题字符串对比 UUID 列表），owner 在最终步把断言改成 `not.toContain(b1.id)` 并补充未分配任务断言——这是多角色链路里“审查 → 修正”第一次真实发生。
+- 验收：diff 应用进 `dev` 后 typecheck 0、全仓 **62 文件 / 737 tests 绿**；提交 `14125ef feat(storage-core): list tasks by team`、`0e5bb4a docs(dogfood): record the five-role code run`。
+- [x] 已暴露：`GET /api/teams/:teamId/tasks`（未知 Team 404）与 MCP `agent_ops_list_team_tasks`；测试覆盖两条任务的过滤与 404。
+- [ ] 未做：未加显式排序（与 `listTasks` 一致，测试不依赖顺序）；Studio 团队详情仍用客户端过滤，尚未改用该接口。
+
 ## Coordinator 落盘 owner — 已完成（2026-11-21）
 
 - [x] Team 增加 `ownerRoleId`：必须是花名册成员，且不得再交接给其它角色（否则 owner 不可能是最后一步）；create/update schema 与 JSON store 同步。
 - [x] `planTeamPipeline`：owner 步骤被移到末尾、标记 `ownsDeliverable: true`，prompt 追加 “You own the final deliverable…”；未配置 owner 时计划给出 warning `Team has no owner role`；owner 不在花名册时也给出 warning。
-- [x] `applyTeamPipeline` 保留 `ownsDeliverable`；`coordinatorSummary` 新增 `owner: { stepId, status }`，可判断落盘 step 是否完成。
+- [x] `applyTeamPipeline` 保留 `ownsDeliverable`；`coordinatorSummary` 新增 `owner: { stepId, status, changedFiles }` 与 `warnings`。
+- [x] 事后校验：`TaskPipelineStepResult` 记录每步**自己的**变更集（该步 base commit → 该步 commit，而不是任务全量 diff）；summary 对 owner 的四种情形分别告警：没有 owner、owner 尚未运行、owner 完成但 0 改动（“the final write may be missing”）、owner 非 completed 结束。Dogfood 4 那种“只产笔记”的场景现在会被自动抓到。
 - [x] server team schema 自动接受 owner（越界 400）；MCP 团队工具新增 `ownerRoleId`；Studio 团队表单新增「落盘角色」选择（角色离开花名册会自动清空），详情面板展示 owner。
-- [x] 测试：owner 越界 / owner 仍有 outgoing handoff 被拒；合法 owner 持久化；plan owner 置末 + `ownsDeliverable` + prompt 后缀；无 owner 时 warning；summary owner 状态；server 往返 + 400 + plan 暴露。全仓 typecheck 0，62 文件 / 732 tests 绿；Studio 257 tests 与 `vite build` 通过。
-- [x] 本轮提交：`f3aea53 feat(teams): name a team owner role`、`e0b115b feat(storage-core): mark the owner step in a team plan`、`c1b0f93 test(server-core): cover team owners over HTTP`、`6038f0d feat(cli): accept a team owner field`、`640faa1 feat(studio): set a team owner`。
-- [ ] 未做：owner 是“计划期约束”，不会事后检查 owner step 是否真的写了文件（Dogfood 5 已人工验证写过）；历史那次五角色运行没有 owner，要重跑才能产出可验收的落盘。
+- [x] 测试：owner 越界 / owner 仍有 outgoing handoff 被拒；合法 owner 持久化；plan owner 置末 + `ownsDeliverable` + prompt 后缀；无 owner 时 warning；summary owner 状态；owner 完成后 0 改动触发 warning；无 owner 的 pipeline summary 告警；owner 真的写了文件时 `changedFiles = 1`；server 往返 + 400 + plan 暴露。全仓 typecheck 0，62 文件 / 733 tests 绿；Studio 257 tests 与 `vite build` 通过。
+- [x] 本轮提交：`f3aea53 feat(teams): name a team owner role`、`e0b115b feat(storage-core): mark the owner step in a team plan`、`c1b0f93 test(server-core): cover team owners over HTTP`、`6038f0d feat(cli): accept a team owner field`、`640faa1 feat(studio): set a team owner`、`80c1f33 feat(storage-core): verify the owner wrote something`。
+- [ ] 未做：校验是启发式的（只看该步改动文件数，不校验内容与路径）；历史五角色运行（Dogfood 4）没有 owner，要重跑才能产出可验收的落盘。
 - [x] Studio 表单已在真实浏览器验证：`CB Owner Team` 的 owner 下拉只列花名册角色，并正确显示 `cb-writer`，提示文案也在。
+
+## Worktree 依赖策略 — 已完成（2026-11-21）
+
+- [x] `linkNodeModules(repo, worktreePath)`：把主仓 `node_modules` 以符号链接放进新 worktree；接入 `provisionTask`、并行 lane、DAG step 与 fresh 重跑的重建路径。`AGENT_OPS_LINK_NODE_MODULES=0` 关闭；仓库无依赖或 worktree 已有 `node_modules` 时 no-op。
+- [x] 防止污染证据：符号链接不会被目录式 `node_modules/` 匹配，所以同时向仓库共享 `info/exclude` 写一条无斜杠的 `node_modules` 规则（用 `git rev-parse --path-format=absolute --git-common-dir` 定位）。
+- [x] 真实模型验收见 Dogfood 7：CodeBuddy 在链接后的 worktree 实跑 5 个测试通过，`changedFiles = []`。
+- [x] 测试：链接一次生效、二次 no-op；无依赖与 opt-out 均不链接；链接后 `git status --porcelain` 为空；`provisionTask` 自动链接。全仓 typecheck 0，62 文件 / 736 tests 绿。
+- [x] 本轮提交：`6321055 feat(storage-core): link dependencies into worktrees`。
+- [ ] 未做：只链接根 `node_modules`（npm workspaces 的 `@agent-ops/*` 由 worktree 自己的 vitest alias 解析，tsc 跨包类型仍可能指回主仓源码）；仓库本身没装依赖时仍需先 `npm ci`；策略生效前创建的旧 worktree 不会自动补链。

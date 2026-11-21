@@ -479,6 +479,13 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: READ_ONLY,
   }, () => callDaemon('GET', '/api/teams').then(toResult));
 
+  server.registerTool('agent_ops_list_team_tasks', {
+    title: 'List team tasks',
+    description: 'List the tasks currently assigned to a team.',
+    inputSchema: teamIdSchema,
+    annotations: READ_ONLY,
+  }, args => callDaemon('GET', `/api/teams/${encodeURIComponent(args.teamId)}/tasks`).then(toResult));
+
   server.registerTool('agent_ops_get_team', {
     title: 'Get team',
     description: 'Get one team with its roster and handoff edges.',

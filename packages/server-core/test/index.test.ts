@@ -493,6 +493,13 @@ describe('createKernelApp', () => {
       expect(team.handoffs).toHaveLength(1);
       expect(team.ownerRoleId).toBe(implementer.id);
 
+      const teamTask = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Team task', teamId: team.id });
+      await store.createTask({ repo: '/r', baseRef: 'main', title: 'Other task' });
+      const teamTasks = await app.request(`/api/teams/${team.id}/tasks`);
+      expect(teamTasks.status).toBe(200);
+      expect(((await teamTasks.json()) as { tasks: Array<{ id: string }> }).tasks.map(task => task.id)).toEqual([teamTask.id]);
+      expect((await app.request('/api/teams/missing/tasks')).status).toBe(404);
+
       const badOwner = await app.request('/api/teams', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

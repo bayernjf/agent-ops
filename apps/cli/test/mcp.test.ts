@@ -166,6 +166,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_list_roles',
       'agent_ops_list_runs',
       'agent_ops_list_tasks',
+      'agent_ops_list_team_tasks',
       'agent_ops_list_teams',
       'agent_ops_plan_team_pipeline',
       'agent_ops_provision_task',
@@ -276,6 +277,16 @@ describe('agent-ops MCP bridge', () => {
     const single = await client.callTool({ name: 'agent_ops_get_team', arguments: { teamId: team.id } });
     expect(single.isError).toBeFalsy();
     expect(JSON.parse(textOf(single))).toMatchObject({ team: { handoffs: [{ fromRoleId: architect.id, toRoleId: implementer.id }] } });
+
+    const taskRes = await client.callTool({
+      name: 'agent_ops_create_task',
+      arguments: { repo: '/r', baseRef: 'main', title: 'Team task', teamId: team.id },
+    });
+    expect(taskRes.isError).toBeFalsy();
+    const { id: teamTaskId } = JSON.parse(textOf(taskRes)) as { id: string };
+    const teamTasks = await client.callTool({ name: 'agent_ops_list_team_tasks', arguments: { teamId: team.id } });
+    expect(teamTasks.isError).toBeFalsy();
+    expect(textOf(teamTasks)).toContain(teamTaskId);
 
     const updated = await client.callTool({ name: 'agent_ops_update_team', arguments: { teamId: team.id, enabled: false } });
     expect(updated.isError).toBeFalsy();

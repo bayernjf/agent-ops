@@ -384,6 +384,13 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     return deleted ? c.json({ deleted: true }) : c.json({ error: 'Team not found.' }, 404);
   });
 
+  app.get('/api/teams/:teamId/tasks', async (c) => {
+    const teamId = c.req.param('teamId');
+    const team = await store.teams.getTeam(teamId);
+    if (!team) return c.json({ error: 'Team not found.' }, 404);
+    return c.json({ tasks: store.listTasksByTeam(teamId) });
+  });
+
   app.get('/api/audit', (c) => {
     const taskId = c.req.query('taskId')?.trim() || undefined;
     const teamId = c.req.query('teamId')?.trim() || undefined;

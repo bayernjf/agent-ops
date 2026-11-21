@@ -88,7 +88,8 @@ describe('KernelStore coordinator', () => {
       });
       expect(summary?.steps.map(step => step.roleId)).toEqual([architect.id, implementer.id, reviewer.id]);
       expect(summary?.steps.every(step => /^[0-9a-f]{40}$/.test(step.commitSha ?? ''))).toBe(true);
-      expect(summary?.owner).toEqual({ stepId: reviewer.id, status: 'completed' });
+      expect(summary?.owner).toEqual({ stepId: reviewer.id, status: 'completed', changedFiles: 1 });
+      expect(summary?.warnings).toEqual([]);
 
       await expect(store.applyTeamPipeline(task.id)).rejects.toThrow('can only be applied');
       expect(await store.coordinatorSummary('missing-task')).toBeNull();
@@ -123,6 +124,48 @@ describe('KernelStore coordinator', () => {
       expect(plan?.ownerRoleId).toBeNull();
       expect(plan?.steps.every(step => !step.ownsDeliverable)).toBe(true);
       expect(plan?.warnings.join(' ')).toContain('no owner role');
+      const pipeline = await store.applyTeamPipeline(task.id);
+      expect(pipeline?.steps.every(step => !step.ownsDeliverable)).toBe(true);
+      const summary = store.coordinatorSummary(task.id);
+      expect(summary?.owner).toEqual({ stepId: null, status: null, changedFiles: null });
+      expect(summary?.warnings.join(' ')).toContain('No step owns the final write');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('warns when the owner completes without changing any file', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-coordinator-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const planner = await store.roles.createRole({ name: 'Planner', baseAgentId: 'codex' });
+      const owner = await store.roles.createRole({ name: 'Owner', baseAgentId: 'codex' });
+      const team = await store.teams.createTeam({
+        name: 'Quiet owner',
+        roleIds: [planner.id, owner.id],
+        handoffs: [{ fromRoleId: planner.id, toRoleId: owner.id }],
+        ownerRoleId: owner.id,
+      });
+      const task = await store.createTask({ repo, baseRef: 'main', title: 'Quiet owner', teamId: team.id });
+      await store.provisionTask(task.id);
+      await store.applyTeamPipeline(task.id);
+
+      // Only the planner writes; the owner finishes without touching a file.
+      const runner: CodexProcessRunner = async (_command, arguments_, options) => {
+        const prompt = arguments_[arguments_.length - 1] ?? '';
+        if (prompt.includes('Pipeline step 1/2')) {
+          await writeFile(join(options.cwd, 'PLAN.md'), 'plan\n', 'utf8');
+        }
+        return success();
+      };
+      const executed = await store.executeTaskPipeline(task.id, runner);
+      expect(executed.status).toBe('completed');
+
+      const summary = store.coordinatorSummary(task.id);
+      expect(summary?.owner).toEqual({ stepId: owner.id, status: 'completed', changedFiles: 0 });
+      expect(summary?.warnings.join(' ')).toContain('without changing any file');
       await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });

@@ -173,6 +173,31 @@ describe('KernelStore task/run', () => {
     }
   });
 
+  it('lists tasks by team and excludes other teams', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-task-'));
+    try {
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const role = await store.roles.createRole({ name: 'Builder', baseAgentId: 'codex' });
+      const teamA = await store.teams.createTeam({ name: 'Alpha', roleIds: [role.id] });
+      const teamB = await store.teams.createTeam({ name: 'Beta', roleIds: [role.id] });
+
+      const a1 = await store.createTask({ repo: '/r', baseRef: 'main', title: 'A1', teamId: teamA.id });
+      const a2 = await store.createTask({ repo: '/r', baseRef: 'main', title: 'A2', teamId: teamA.id });
+      const b1 = await store.createTask({ repo: '/r', baseRef: 'main', title: 'B1', teamId: teamB.id });
+      const unassigned = await store.createTask({ repo: '/r', baseRef: 'main', title: 'U' }); // unassigned
+
+      const ids = store.listTasksByTeam(teamA.id).map(task => task.id);
+      expect(ids).toHaveLength(2);
+      expect(ids).toEqual(expect.arrayContaining([a1.id, a2.id]));
+      expect(ids).not.toContain(b1.id);
+      expect(ids).not.toContain(unassigned.id);
+      expect(store.listTasksByTeam('missing-team')).toEqual([]);
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   it('throws when updating a missing task or run', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-task-'));
     try {
