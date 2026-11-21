@@ -787,6 +787,8 @@ export const en = {
     addStep: 'Add step',
     pipelineExecute: 'Run pipeline',
     pipelineRetry: 'Retry failed step',
+    pipelineRerun: 'Rerun pipeline',
+    pipelineRerunConfirm: 'Rerun this completed pipeline from the first step? The worktree resets to the task base commit and prior step results are cleared.',
     pipelineRunning: 'Running…',
     pipelineApprove: 'Approve step',
     pipelineReject: 'Reject step',

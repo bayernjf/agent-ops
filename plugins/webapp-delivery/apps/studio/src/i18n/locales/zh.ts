@@ -769,6 +769,8 @@ export const zh = {
     addStep: '添加步骤',
     pipelineExecute: '运行 Pipeline',
     pipelineRetry: '重试失败步骤',
+    pipelineRerun: '重新运行 Pipeline',
+    pipelineRerunConfirm: '从第一步重新运行这个已完成的 Pipeline？worktree 会重置到任务基础 commit，之前的步骤结果会被清空。',
     pipelineRunning: '运行中…',
     pipelineApprove: '通过该步',
     pipelineReject: '驳回该步',
