@@ -141,6 +141,47 @@ describe('KernelStore pipeline', () => {
     }
   });
 
+  it('marks truncated step output and tells the next step', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-pipeline-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Long output',
+        pipeline: {
+          steps: [
+            { id: 'first', name: 'First', agentId: 'codex', prompt: 'Write a long report.' },
+            { id: 'second', name: 'Second', agentId: 'codex', prompt: 'Use {{previous.output}}.' },
+          ],
+        },
+      });
+      await store.provisionTask(task.id);
+
+      const prompts: string[] = [];
+      const runner: CodexProcessRunner = async (_command, arguments_, options) => {
+        const prompt = arguments_[arguments_.length - 1] ?? '';
+        prompts.push(prompt);
+        if (prompt.includes('Pipeline step 1/2')) {
+          await writeFile(join(options.cwd, 'FIRST.md'), 'first\n', 'utf8');
+          return success('A'.repeat(2500));
+        }
+        await writeFile(join(options.cwd, 'SECOND.md'), 'second\n', 'utf8');
+        return success();
+      };
+
+      const pipeline = await store.executeTaskPipeline(task.id, runner);
+      expect(pipeline.results[0]?.output).toHaveLength(2000);
+      expect(pipeline.results[0]?.outputTruncated).toBe(true);
+      expect(pipeline.results[1]?.outputTruncated).toBeFalsy();
+      expect(prompts[1]).toContain('[The output above was truncated to 2000 characters.]');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   it('retries a failed step from the previous commit without rerunning completed steps', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-pipeline-'));
     try {

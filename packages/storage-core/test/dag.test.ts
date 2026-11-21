@@ -47,7 +47,7 @@ describe('KernelStore DAG pipeline', () => {
           steps: [
             { id: 'left', name: 'Left', roleId: left.id, dependsOn: [] },
             { id: 'right', name: 'Right', roleId: right.id, dependsOn: [] },
-            { id: 'join', name: 'Join', roleId: joinRole.id, dependsOn: ['left', 'right'] },
+            { id: 'join', name: 'Join', roleId: joinRole.id, dependsOn: ['left', 'right'], prompt: 'Use {{step:left.output}}.' },
           ],
         },
       });
@@ -55,8 +55,8 @@ describe('KernelStore DAG pipeline', () => {
 
       let active = 0;
       let maxActive = 0;
-      const observed: Record<string, { right: boolean; left: boolean }> = {};
-      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+      const observed: Record<string, { right: boolean; left: boolean; prompt: string }> = {};
+      const runner: CodexProcessRunner = async (_command, arguments_, options) => {
         active++;
         maxActive = Math.max(maxActive, active);
         await new Promise(resolve => setTimeout(resolve, 10));
@@ -71,17 +71,21 @@ describe('KernelStore DAG pipeline', () => {
           observed[stepId] = {
             right: await exists(join(options.cwd, 'RIGHT.md')),
             left: await exists(join(options.cwd, 'LEFT.md')),
+            prompt: arguments_[arguments_.length - 1] ?? '',
           };
           await writeFile(join(options.cwd, 'JOIN.md'), 'join\n', 'utf8');
         }
-        return success();
+        return stepId === 'left' ? success('L'.repeat(2500)) : success();
       };
 
       const result = await store.executeDagPipeline(task.id, { runner, maxConcurrency: 2 });
       expect(result.steps.map(step => step.status)).toEqual(['completed', 'completed', 'completed']);
       expect(maxActive).toBe(2);
       // The join merges both dependency commits, so files from both sides are present.
-      expect(observed.join).toEqual({ right: true, left: true });
+      expect(observed.join).toMatchObject({ right: true, left: true });
+      expect(result.steps[0]?.output).toHaveLength(2000);
+      expect(result.steps[0]?.outputTruncated).toBe(true);
+      expect(observed.join?.prompt).toContain('[The output above was truncated to 2000 characters.]');
       expect(result.warnings.join(' ')).not.toContain('not merged');
       expect(result.conflicts).toEqual([]);
       expect(result.taskStatus).toBe('review');

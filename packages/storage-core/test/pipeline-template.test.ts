@@ -89,6 +89,15 @@ describe('expandPipelineTemplate', () => {
     expect(expanded).toBe(`Use Use a queue. from ${'a'.repeat(40)}.`);
   });
 
+  it('marks a truncated output when substituted', () => {
+    const expanded = expandPipelineTemplate('{{step:architecture.output}} commit {{step:architecture.commit}}', {
+      steps: new Map([['architecture', { output: 'A'.repeat(10), outputTruncated: true, commitSha: 'a'.repeat(40) }]]),
+    });
+    expect(expanded).toContain('A'.repeat(10));
+    expect(expanded).toContain('[The output above was truncated to 2000 characters.]');
+    expect(expanded).toContain(`commit ${'a'.repeat(40)}`);
+  });
+
   it('returns templates without placeholders unchanged', () => {
     expect(expandPipelineTemplate('Plain prompt.', { steps })).toBe('Plain prompt.');
   });
