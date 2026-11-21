@@ -83,6 +83,8 @@ export type TaskPipelineStepResult = {
   output?: string;
   /** True when the model output exceeded the pipeline handoff limit and `output` is capped. */
   outputTruncated?: boolean;
+  /** DAG-only: merge commit created by joining multiple dependency commits, when one was needed. */
+  mergeCommitSha?: string;
   error?: string;
   startedAt?: string;
   completedAt?: string;
@@ -457,6 +459,8 @@ export type DagStepResult = {
   changedFiles: string[];
   output?: string;
   outputTruncated?: boolean;
+  /** Merge commit produced by joining multiple dependencies; absent for roots and single-dependency steps. */
+  mergeCommitSha?: string;
   error: string | null;
 };
 
@@ -2719,6 +2723,7 @@ export class KernelStore {
         changedFiles: stored.changedFiles ?? [],
         ...(stored.output !== undefined ? { output: stored.output } : {}),
         ...(stored.outputTruncated ? { outputTruncated: true } : {}),
+        ...(stored.mergeCommitSha ? { mergeCommitSha: stored.mergeCommitSha } : {}),
         error: stored.error ?? null,
       });
     }
@@ -2771,6 +2776,7 @@ export class KernelStore {
 
       const lanePath = join(this.dataDirectory, 'tasks', taskId, 'dag', step.id);
       let runId: string | null = null;
+      let mergeCommitSha: string | undefined;
       try {
         if (existsSync(lanePath)) await removeWorktree(task.repo, lanePath).catch(() => undefined);
         await addWorktree(task.repo, branchFrom ?? base, lanePath);
@@ -2780,6 +2786,7 @@ export class KernelStore {
         const mergeBase = dependencyCommits.length > 1
           ? await mergeDependencyCommits(lanePath, dependencyCommits.slice(0, -1) as string[])
           : branchFrom ?? base;
+        if (dependencyCommits.length > 1 && mergeBase !== branchFrom) mergeCommitSha = mergeBase;
         await linkNodeModules(task.repo, lanePath);
         const agentId = await this.resolvePipelineStepAgent(step);
         const snapshots = new Map<string, PipelineTemplateSnapshot>();
@@ -2797,11 +2804,11 @@ export class KernelStore {
         runId = run.id;
         const executed = await this.executeRun(run.id, options.runner, { worktreePath: lanePath, laneId: `dag-${step.id}`, taskStatus: 'none', evidenceBase: mergeBase });
         if (executed.status === 'cancelled' || taskCancelled()) {
-          results.set(step.id, { stepId: step.id, name: step.name, status: 'cancelled', runId, commitSha: null, worktreePath: lanePath, changedFiles: executed.artifacts.changedFiles, error: 'Task was cancelled.' });
+          results.set(step.id, { stepId: step.id, name: step.name, status: 'cancelled', runId, commitSha: null, worktreePath: lanePath, changedFiles: executed.artifacts.changedFiles, ...(mergeCommitSha ? { mergeCommitSha } : {}), error: 'Task was cancelled.' });
           return;
         }
         if (executed.status !== 'review') {
-          results.set(step.id, { stepId: step.id, name: step.name, status: 'failed', runId, commitSha: null, worktreePath: lanePath, changedFiles: executed.artifacts.changedFiles, error: `Run ended in ${executed.status}.` });
+          results.set(step.id, { stepId: step.id, name: step.name, status: 'failed', runId, commitSha: null, worktreePath: lanePath, changedFiles: executed.artifacts.changedFiles, ...(mergeCommitSha ? { mergeCommitSha } : {}), error: `Run ended in ${executed.status}.` });
           return;
         }
         const captured = capturePipelineStepOutput(executed.artifacts.output, executed.artifacts.outputTruncated);
@@ -2814,6 +2821,7 @@ export class KernelStore {
             commitSha: null,
             worktreePath: lanePath,
             changedFiles: executed.artifacts.changedFiles,
+            ...(mergeCommitSha ? { mergeCommitSha } : {}),
             ...captured,
             error: null,
           });
@@ -2828,6 +2836,7 @@ export class KernelStore {
           commitSha: accepted.commitSha,
           worktreePath: lanePath,
           changedFiles: accepted.artifacts.changedFiles,
+          ...(mergeCommitSha ? { mergeCommitSha } : {}),
           ...captured,
           error: null,
         });
@@ -2840,6 +2849,7 @@ export class KernelStore {
           commitSha: null,
           worktreePath: existsSync(lanePath) ? lanePath : null,
           changedFiles: [],
+          ...(mergeCommitSha ? { mergeCommitSha } : {}),
           error: taskCancelled() ? 'Task was cancelled.' : error instanceof Error ? error.message : String(error),
         });
       }
@@ -2934,6 +2944,7 @@ export class KernelStore {
         ...(step.changedFiles.length > 0 ? { changedFiles: step.changedFiles } : {}),
         ...(step.output ? { output: step.output } : {}),
         ...(step.outputTruncated ? { outputTruncated: true } : {}),
+        ...(step.mergeCommitSha ? { mergeCommitSha: step.mergeCommitSha } : {}),
         ...(step.error ? { error: step.error } : {}),
         startedAt,
         ...(completedAt ? { completedAt } : {}),
@@ -2946,6 +2957,9 @@ export class KernelStore {
     };
     await this.saveTaskPipeline(taskId, saved);
     await this.updateTaskStatus(taskId, taskStatus);
+    const mergeCommits = steps.flatMap(step => (
+      step.mergeCommitSha ? [{ stepId: step.stepId, commitSha: step.mergeCommitSha }] : []
+    ));
 
     if (paused) {
       const awaiting = steps.find(step => step.status === 'awaiting_approval');
@@ -2959,6 +2973,7 @@ export class KernelStore {
           completed,
           pending: pipeline.steps.filter(step => !results.has(step.id)).length,
           maxConcurrency,
+          mergeCommits,
         },
       });
     } else {
@@ -2966,7 +2981,7 @@ export class KernelStore {
         type: 'pipeline.dag.executed',
         taskId,
         teamId: task.teamId,
-        data: { maxConcurrency, steps: pipeline.steps.length, completed, failed, skipped, cancelled: steps.filter(step => step.status === 'cancelled').length, conflicts: conflicts.length },
+        data: { maxConcurrency, steps: pipeline.steps.length, completed, failed, skipped, cancelled: steps.filter(step => step.status === 'cancelled').length, conflicts: conflicts.length, mergeCommits },
       });
     }
 
