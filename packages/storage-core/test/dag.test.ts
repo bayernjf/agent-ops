@@ -179,3 +179,47 @@ describe('KernelStore DAG pipeline', () => {
     }
   });
 });
+
+describe('KernelStore DAG step templates', () => {
+  it('expands the last dependency output when a join step runs', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-dag-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'DAG template',
+        pipeline: {
+          steps: [
+            { id: 'left', name: 'Left', agentId: 'codex', dependsOn: [], prompt: 'Do the left side.' },
+            { id: 'join', name: 'Join', agentId: 'codex', dependsOn: ['left'], prompt: 'Join after {{previous.output}} at {{step:left.commit}}' },
+          ],
+        },
+      });
+      await store.provisionTask(task.id);
+
+      const prompts: string[] = [];
+      const runner: CodexProcessRunner = async (_command, arguments_, options) => {
+        const prompt = arguments_[arguments_.length - 1] ?? '';
+        prompts.push(prompt);
+        if (basename(options.cwd) === 'left') {
+          await writeFile(join(options.cwd, 'LEFT.md'), 'left\n', 'utf8');
+          return success('Left finished.');
+        }
+        await writeFile(join(options.cwd, 'JOIN.md'), 'join\n', 'utf8');
+        return success('joined');
+      };
+
+      const result = await store.executeDagPipeline(task.id, { runner });
+      const left = result.steps.find(step => step.stepId === 'left');
+      expect(result.steps.map(step => step.status)).toEqual(['completed', 'completed']);
+      expect(prompts[1]).toContain('Join after Left finished.');
+      expect(prompts[1]).not.toContain('{{previous.output}}');
+      expect(prompts[1]).toContain(`at ${left?.commitSha}`);
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+});

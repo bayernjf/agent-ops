@@ -543,6 +543,14 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     }
   });
 
+  app.post('/api/tasks/:id/pipeline/rerun', async (c) => {
+    try {
+      return c.json(await store.rerunTaskPipeline(c.req.param('id'), options.runner));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
   app.post('/api/tasks/:id/pipeline/dag', async (c) => {
     const parsed = executeParallelSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: 'Invalid DAG input.', details: parsed.error.flatten() }, 400);

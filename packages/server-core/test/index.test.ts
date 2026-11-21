@@ -1145,6 +1145,58 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('reruns a completed pipeline over HTTP and rejects an idle one', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      let attempts = 0;
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        attempts++;
+        await writeFile(join(options.cwd, 'DELIVER.md'), `attempt ${attempts}\n`, 'utf8');
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          output: `attempt ${attempts}`,
+          startedAt: new Date(Date.now() - 10).toISOString(),
+          completedAt: new Date().toISOString(),
+        };
+      };
+      const app = createKernelApp(store, { runner });
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Rerun over HTTP',
+        pipeline: { steps: [{ id: 'deliver', name: 'Deliver', agentId: 'codex' }] },
+      });
+      await store.provisionTask(task.id);
+
+      const first = await app.request(`/api/tasks/${task.id}/pipeline/execute`, { method: 'POST' });
+      expect(first.status).toBe(200);
+      const firstPipeline = (await first.json()) as { results: Array<{ commitSha: string }> };
+
+      const rerun = await app.request(`/api/tasks/${task.id}/pipeline/rerun`, { method: 'POST' });
+      expect(rerun.status).toBe(200);
+      const rerunPipeline = (await rerun.json()) as { status: string; results: Array<{ status: string; commitSha: string }> };
+      expect(rerunPipeline).toMatchObject({ status: 'completed', results: [{ stepId: 'deliver', status: 'completed' }] });
+      expect(attempts).toBe(2);
+      expect(rerunPipeline.results[0]?.commitSha).not.toBe(firstPipeline.results[0]?.commitSha);
+
+      const idle = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Idle pipeline',
+        pipeline: { steps: [{ id: 'only', name: 'Only', agentId: 'codex' }] },
+      });
+      await store.provisionTask(idle.id);
+      const rejected = await app.request(`/api/tasks/${idle.id}/pipeline/rerun`, { method: 'POST' });
+      expect(rejected.status).toBe(409);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('rejects accepting a run that is not in review', async () => {
     const { store, directory } = await openStore();
     try {

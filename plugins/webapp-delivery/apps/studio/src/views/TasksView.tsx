@@ -275,6 +275,23 @@ export function TasksView() {
     }
   };
 
+  const rerunPipeline = async (task: KernelTask) => {
+    if (!window.confirm(t('tasks.pipelineRerunConfirm'))) return;
+    setPipelineBusyId(task.id);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/rerun`, { method: 'POST' });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineRerun'));
+      await loadTasks();
+      if (expandedId === task.id) await loadRuns(task.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.pipelineRerun'));
+    } finally {
+      setPipelineBusyId(null);
+    }
+  };
+
   const approvePipeline = async (task: KernelTask) => {
     setPipelineBusyId(task.id);
     setError('');
@@ -616,6 +633,11 @@ export function TasksView() {
                             {pipeline.status === 'failed' && (
                               <button className="secondary-button" type="button" onClick={() => void retryPipeline(task)} disabled={pipelineBusyId === task.id}>
                                 <RotateCcw size={14} aria-hidden="true" /> {pipelineBusyId === task.id ? t('tasks.pipelineRunning') : t('tasks.pipelineRetry')}
+                              </button>
+                            )}
+                            {pipeline.status === 'completed' && (
+                              <button className="secondary-button" type="button" onClick={() => void rerunPipeline(task)} disabled={pipelineBusyId === task.id}>
+                                <RefreshCw size={14} aria-hidden="true" /> {pipelineBusyId === task.id ? t('tasks.pipelineRunning') : t('tasks.pipelineRerun')}
                               </button>
                             )}
                             {pipeline.status === 'awaiting_approval' && (

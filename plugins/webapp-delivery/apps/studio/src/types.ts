@@ -516,6 +516,8 @@ export type AgentRole = {
   systemPrompt?: string;
   acceptanceCriteria: string[];
   runtimePolicy: RoleRuntimePolicy;
+  /** Optional per-task spending ceiling enforced before a run starts. */
+  budget?: CostBudget;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
@@ -593,6 +595,8 @@ export type AgentTeam = {
   handoffs: TeamHandoff[];
   /** The role that owns the final write; it runs last and must not hand off. */
   ownerRoleId?: string;
+  /** Optional per-task spending ceiling for the whole team. */
+  budget?: CostBudget;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;

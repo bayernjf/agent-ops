@@ -501,3 +501,154 @@ describe('KernelStore pipeline', () => {
     }
   });
 });
+
+describe('KernelStore pipeline step templates', () => {
+  it('expands previous output and commit into the next step prompt', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-pipeline-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Template task',
+        pipeline: {
+          steps: [
+            { id: 'architecture', name: 'Architect', agentId: 'codex', prompt: 'Write the architecture.' },
+            { id: 'implementation', name: 'Implement', agentId: 'codex', prompt: 'Implement it.\nPlan: {{previous.output}}\nBase: {{previous.commit}}\nAgain: {{step:architecture.commit}}' },
+          ],
+        },
+      });
+      await store.provisionTask(task.id);
+
+      const prompts: string[] = [];
+      const runner: CodexProcessRunner = async (_command, arguments_) => {
+        const prompt = arguments_[arguments_.length - 1] ?? '';
+        prompts.push(prompt);
+        return success(prompt.includes('Pipeline step 1/2') ? 'Use a queue.' : 'done');
+      };
+
+      const pipeline = await store.executeTaskPipeline(task.id, runner);
+      expect(pipeline.status).toBe('completed');
+      expect(prompts[1]).toContain('Plan: Use a queue.');
+      expect(prompts[1]).not.toContain('{{previous.output}}');
+      expect(prompts[1]).not.toContain('{{previous.commit}}');
+      expect(prompts[1]).not.toContain('{{step:architecture.commit}}');
+      expect(prompts[1]).toContain(`Base: ${pipeline.results[0]?.commitSha}`);
+      expect(prompts[1]).toContain(`Again: ${pipeline.results[0]?.commitSha}`);
+      expect(store.listRuns(task.id)[1]?.instruction).toContain('Plan: Use a queue.');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+});
+
+describe('KernelStore pipeline rerun', () => {
+  it('reruns a completed pipeline from the task base commit', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-pipeline-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Rerun task',
+        pipeline: {
+          steps: [
+            { id: 'first', name: 'First', agentId: 'codex', prompt: 'First step.' },
+            { id: 'second', name: 'Second', agentId: 'codex', prompt: 'Second step.' },
+          ],
+        },
+      });
+      const provisioned = await store.provisionTask(task.id);
+
+      let calls = 0;
+      const runner: CodexProcessRunner = async (_command, arguments_, options) => {
+        calls++;
+        const prompt = arguments_[arguments_.length - 1] ?? '';
+        if (prompt.includes('Pipeline step 1/2')) {
+          await writeFile(join(options.cwd, 'FIRST.md'), `first ${calls}\n`, 'utf8');
+        } else {
+          await writeFile(join(options.cwd, 'SECOND.md'), `second ${calls}\n`, 'utf8');
+        }
+        return success(`run ${calls}`);
+      };
+
+      const first = await store.executeTaskPipeline(task.id, runner);
+      expect(first.status).toBe('completed');
+      const firstCommits = first.results.map(result => result.commitSha);
+
+      const rerun = await store.rerunTaskPipeline(task.id, runner);
+      expect(rerun.status).toBe('completed');
+      expect(rerun.results.map(result => result.status)).toEqual(['completed', 'completed']);
+      expect(rerun.results[0]?.commitSha).not.toBe(firstCommits[0]);
+      expect(rerun.results[1]?.commitSha).not.toBe(firstCommits[1]);
+      expect(calls).toBe(4);
+      expect(store.listRuns(task.id)).toHaveLength(4);
+      expect(store.getTask(task.id)?.status).toBe('done');
+      const count = (await execFileAsync('git', ['rev-list', '--count', 'HEAD'], { cwd: provisioned.worktreePath })).stdout.trim();
+      expect(count).toBe('3');
+      expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: provisioned.worktreePath })).stdout.trim()).toBe('');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('refuses to rerun a pipeline that has not completed', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-pipeline-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Idle task',
+        pipeline: { steps: [{ id: 'only', name: 'Only', agentId: 'codex' }] },
+      });
+      await store.provisionTask(task.id);
+      await expect(store.rerunTaskPipeline(task.id)).rejects.toThrow(/only a completed pipeline can be rerun/i);
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+});
+
+describe('KernelStore pipeline retry dependencies', () => {
+  it('restores the linked node_modules after resetting the worktree for a retry', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-pipeline-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      await mkdir(join(repo, 'node_modules'), { recursive: true });
+      await writeFile(join(repo, 'node_modules', 'marker.txt'), 'deps\n', 'utf8');
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Retry deps',
+        pipeline: { steps: [{ id: 'deliver', name: 'Deliver', agentId: 'codex' }] },
+      });
+      const provisioned = await store.provisionTask(task.id);
+      await access(join(provisioned.worktreePath, 'node_modules'));
+
+      let attempts = 0;
+      const runner: CodexProcessRunner = async () => {
+        attempts++;
+        if (attempts === 1) {
+          return { ...success('boom'), exitCode: 1 };
+        }
+        return success();
+      };
+      const failed = await store.executeTaskPipeline(task.id, runner);
+      expect(failed.status).toBe('failed');
+      const retried = await store.retryTaskPipeline(task.id, runner);
+      expect(retried.status).toBe('completed');
+      await access(join(provisioned.worktreePath, 'node_modules'));
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+});

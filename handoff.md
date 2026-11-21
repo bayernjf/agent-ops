@@ -3,12 +3,13 @@
 ## 待办登记（标准）
 
 > 本段是本产品唯一活跃待办入口；详细背景见下方原有章节。完成一项改 `[x]`，并在“最近变更 / Recently shipped”留证据。
-> 最近同步：2026-11-20
+> 最近同步：2026-11-21
 >
 > 产品规划（非活跃待办，不计入上方待办）：多 Agent 角色与团队 v0.2/v0.3，PRD 见 `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md`，实施拆解见 `docs/prd/Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md`；PD-1～PD-9 已于 2026-11-19 拍板；后续方向备忘（Tier 0 能力包 / 现有 Harness / Personal Agent）见 PRD §12.1–12.2。
 
 - [x] **真实模型 UI E2E** — 已完成（2026-11-20）。UI 里新建 CodeBuddy 角色与一步 Pipeline 任务，点 `Run pipeline` 由真实 CodeBuddy 2.185.0 执行，任务 done、Run 可见（commit `ea4553f7d2`）。Claude Code / Codex 仍受 CC Switch `base_url` 阻塞，但不影响 CodeBuddy 路径；真实模型 API 路径与 UI 路径均已有证据。
 - [x] **3–5 个本仓 dogfood** — 已完成 3 条真实任务 + 4 次团队运行（2026-11-21）：单任务接受率 3/3、检查通过率 3/3、返工 1 次人工小修；五角色串行 5 步完成（首轮暴露落盘 owner 缺口）；owner 机制补齐并实测落盘；带 owner 的五角色交付重跑成功；依赖链接后五角色完成**真实代码交付**（`listTasksByTeam` + 单测，含 reviewer→owner 修正）。详见下方 “F10-01/F10-02 Dogfood” 章节。
+- [x] **Studio 浏览器复查** — 2026-11-21：Role/Team 表单预算输入（创建 / 编辑回填与探针清理）、completed pipeline 的 Rerun 按钮、Metrics 页（23 runs / 11 tasks 聚合）与 Teams 详情（花名册 / 交接边 / 队列 / 用量）均在真实浏览器查看；Teams 计划预览因缺少带团队的 queued 任务未点击。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -137,7 +138,7 @@
 - [x] 测试：pipeline 持久化/自动 id/重开 DB、两步串行成功（每步不同文件、第二步可见第一步文件、两个不同 commit SHA、Role 分别正确、Task done、worktree clean）、第一步失败即停（仅 1 个 Run、pipeline failed、Task failed）、server pipeline 读取与执行、MCP create_task pipeline 透传；全仓 typecheck 0，49 文件 / 643 tests 绿。
 - [x] 本轮提交：`79644d3 feat(storage-core): add serial task pipelines`、`dffa9db test(storage-core): cover pipeline execution`。
 - [ ] F6 只覆盖 F6-01/F6-02/F6-03；每步审批/暂停恢复（F6-04）、失败重跑与 step base reset（F6-05）、并行 DAG（F6-06）在后续完成（见 F6-04/F6-05/F6-06 章节）。
-- [ ] Pipeline 当前只允许 `idle` 启动，completed/failed 不能直接重跑；step 间不替换 output 模板，下游只依赖上一步 commit 的 worktree 状态。
+- [ ] Pipeline 当前只允许 `idle` 启动，completed/failed 不能直接重跑；step 间 output 模板已在 F6-01 模板补做（2026-11-21），下游仍基于上一步 commit 的 worktree 状态。
 
 ## 技术债 — 已完成
 
@@ -188,7 +189,25 @@
 - [x] MCP 新增 `agent_ops_retry_pipeline`；Studio failed 状态的按钮从错误的 execute 改为 Retry failed step，并沿用 busy/错误处理。
 - [x] 测试：三步 Pipeline 首步保留、第二步失败后重试成功、失败文件被清掉、首步 runner 不重复执行、首步 commit 不变、最终 4 个 commit 且 worktree clean；驳回第二步时保留第一步 commit 与文件；server HTTP 重试与 completed 再重试 409；全仓 typecheck 0，49 文件 / 652 tests 绿。
 - [x] 本轮提交：`20d707a feat(storage-core): retry failed pipelines`、`4ec87aa feat(server-core): expose pipeline retry`、`53687f3 feat(studio): retry failed pipeline steps`、`28e4e5a test(storage-core): cover pipeline retry`。
-- [ ] F6-05 只支持 failed pipeline 的重试；completed pipeline 仍不支持 reset 后重跑，step 间 output 模板替换也未做。F6-06 并行 DAG 已在后续完成，F7-05 Run 详情扩展也在后续完成。
+- [ ] F6-05 的 failed 重试已完成；completed pipeline 的重跑已在后续补齐（见下节）。step 间 output 模板替换已在 F6-01 模板补做。F6-06 并行 DAG 已在后续完成，F7-05 Run 详情扩展也在后续完成。
+
+## F6-01 Pipeline 提示词模板 — 已完成（2026-11-21）
+
+- [x] 新增 `packages/storage-core/src/pipeline-template.ts`：后续 step 的 prompt 支持 `{{previous.output}}` / `{{previous.commit}}`（串行上一步；DAG 取最后一个依赖）与 `{{step:<id>.output}}` / `{{step:<id>.commit}}`（任意已完成 step）。
+- [x] 只在目标 step 已完成且字段有值时才替换；未知 id、未完成 step、或没有记录 output/commit 时保留原 token，不静默清空；output 使用内核记录的 2000 字符截断值。
+- [x] 串行执行（`pipelineStepInstruction`）与 DAG 执行（`executeDagPipeline`）都在创建 Run 前展开模板；DAG 并发下只使用该 step 的已完成依赖快照。
+- [x] 测试：模板纯函数 4 例（previous / 按 id / 未知与缺失保持原样 / 无占位符原样返回）；两步串行端到端断言第二步 prompt 与 Run instruction 含第一步 output 和 commit；DAG 端到端断言 join 步骤拿到 last dependency 的 output 与 commit；全仓 typecheck 0，63 文件 / 743 tests 绿。
+- [x] 本轮提交见 git log（`feat(storage-core): expand pipeline step templates`）。
+- [ ] 未做：模板只支持 output / commit 两种字段，没有加密或转义处理（上游 output 会按原文进入下游 prompt）；没有模板语法校验，拼写错的 token 会原样保留；单次 output 仍受 2000 字符截断。
+
+## F6-05 completed pipeline 重跑 — 已完成（2026-11-21）
+
+- [x] `rerunTaskPipeline` 只接受 `completed`：worktree 重置到任务 base commit（`baseCommit || baseRef`），清空旧 step results，从第一步重新执行，并写 `pipeline.rerun` 审计（steps / previousResults）。旧 commits 仍在 git 历史里，但不再挂在这条 worktree 分支上。
+- [x] 修复真实缺陷：`resetWorktree`（`git reset --hard` + `git clean -fdx`）会删掉 worktree 里链接的 `node_modules`。失败 Run 的 auto hygiene 与 `retryTaskPipeline` 现在 reset 后重新 `linkNodeModules`。
+- [x] server 新增 `POST /api/tasks/:id/pipeline/rerun`（非 completed 返回 409）；MCP 新增 `agent_ops_rerun_pipeline`；Studio completed pipeline 显示 Rerun pipeline 按钮，点击前 `window.confirm`。
+- [x] 测试：storage-core 两步 pipeline 重跑产生全新 commit 且 HEAD 只含 init + 2（worktree clean）、idle pipeline 拒绝重跑、retry 后 `node_modules` 仍可访问；server HTTP 200/409；MCP 工具清单更新；全仓 typecheck 0，63 文件 / 747 tests 绿。
+- [x] 本轮提交见 git log。
+- [ ] 未做：重跑会清空旧 results（旧 commit 只留 git 历史，不做 ref pin），没有“保留旧结果用于对比”的模式；真实模型下的 completed 重跑未跑。
 
 ## M1 退出验收 — 4 步串行完整组合 — 已完成（2026-11-20）
 
@@ -221,7 +240,7 @@
 - [x] 文案全部走 i18n：`en`/`zh` 同步新增 `teams` 与 `nav.teams`；`owned-copy` 扫描通过。
 - [x] 验证：Studio `tsc` 与 `vite build` 通过（1655 modules），Studio 14 文件 / 257 tests 绿；全仓 typecheck 0，50 文件 / 664 tests 绿。
 - [x] 本轮提交：`b216d83 feat(studio): add the teams view`。
-- [ ] 未做：交接边只有文本列表，没有可视化图；花名册不校验角色是否绑定 runtime；TeamsView 未在真实浏览器里逐项点过（仅 tsc/build + 单元测试）。
+- [ ] 未做：交接边只有文本列表，没有可视化图；花名册不校验角色是否绑定 runtime；TeamsView 的角色 / 交接 / 队列 / 团队用量已在真实浏览器查看（2026-11-21），但计划预览需要一条带团队的 queued 任务，尚未点击。
 
 ## F5-04 Handoff — 已完成（2026-11-20）
 
@@ -314,7 +333,7 @@
 - [x] Studio：新增 Metrics 页面（KPI 卡片 + 按运行时/按角色表格），侧边栏入口 `nav.metrics`，中英文文案齐。
 - [x] 测试：空库全零且比率为 null；两步 Pipeline + 失败 Run + 驳回 Run 得到 tasks 3/1/1/1、runs 4/3/2/1/1、成功率 2/3、返工率 1/3、usage null、平均耗时 > 0、codex 桶 4 条、role 桶 builder/unassigned；未来窗口归零；server 200/400；MCP 空库比率为 null。全仓 typecheck 0，55 文件 / 687 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
 - [x] 本轮提交：`169b837 feat(storage-core): aggregate kernel metrics`、`7362bbc feat(server-core): serve kernel metrics`、`5481167 feat(cli): add the metrics tool`、`37f7611 feat(studio): add the metrics view`。
-- [ ] 未做：指标按创建时间窗口过滤，不按完成时间；返工率是全局启发式，不是逐任务口径；不接外部 observability（Prometheus/OTel）；Studio 指标页未在真实浏览器点击。
+- [ ] 未做：指标按创建时间窗口过滤，不按完成时间；返工率是全局启发式，不是逐任务口径；不接外部 observability（Prometheus/OTel）。Studio 指标页已在真实浏览器查看（2026-11-21，23 runs / 11 tasks 聚合）。
 
 ## F5-06 Coordinator — 已完成（串行版，2026-11-20）
 
@@ -327,7 +346,7 @@
 - [x] Studio：TeamsView 任务队列里 `queued` 任务显示“生成计划”，预览步骤后点“应用计划”才落库。
 - [x] 测试：拓扑排序（链/并列/菱形/越界边）；协调器 plan→apply→execute→summary（3 步全部 completed、2 条交接、卡点为空、重复 apply 被拒）；无 Team 报错；server 200/400/404；MCP 端到端 plan/apply。全仓 typecheck 0，57 文件 / 695 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
 - [x] 本轮提交：`4190eb9 feat(agent-runtime): order team roles by handoff`、`cdfe346 feat(storage-core): add a team coordinator`、`dea6f98 feat(server-core): serve coordinator plans`、`c0b5e8e feat(cli): add coordinator tools`、`b124e4a feat(studio): plan a pipeline from a team`。
-- [ ] 未做：这是**串行**协调器；并行版见下节（F5-07）。“拆任务”只按花名册拆到角色，不按内容再拆子任务；汇总不调模型、不做语义总结；Studio 未在真实浏览器点击。
+- [ ] 未做：这是**串行**协调器；并行版见下节（F5-07）。“拆任务”只按花名册拆到角色，不按内容再拆子任务；汇总不调模型、不做语义总结；Studio 的计划预览尚未点击（需要一条带团队的 queued 任务）。
 
 ## F5-07 并行团队 — 已完成（内核版，2026-11-20）
 
@@ -401,7 +420,8 @@
 - [x] server：`GET /api/tasks/:id/budget?roleId=`；MCP：新增 `agent_ops_get_budget`。
 - [x] 测试：role 预算 $1 两笔 $0.6 后第三笔被阻断且审计含 `budget.blocked`；team 预算 100 input tokens 跨角色累计到 120 后，先建后执行的 queued Run 在 execute 时被阻断；未上报用量不阻断（spend null）；server 200/404；MCP 返回 null scope。全仓 typecheck 0，61 文件 / 723 tests 绿。
 - [x] 本轮提交：`4ac5021 feat(agent-runtime): add role and team budgets`、`81ca0a5 feat(storage-core): enforce role and team budgets`、`e4a7594 feat(server-core): serve task budget status`、`068a55b feat(cli): add the budget tool`。
-- [ ] 未做：预算是“任务内”口径（同一 Role/Team 在不同任务里各自计算，不跨任务累计）；只在 Run 启动前阻断，不中断正在跑的 Run；Studio 没有预算输入框或展示；真实 CLI 不报 usage 时预算实际不生效。
+- [x] Studio 预算输入（2026-11-21）：RolesView 与 TeamsView 的表单新增 Budget fieldset（USD / input tokens / output tokens），经 `lib/budget.ts` 合成 `CostBudget` 并随 create/update 提交；编辑时回填既有上限。浏览器实测：创建带 $1 的临时角色并回查 `/api/roles` 得到 `budget.maxCostUsd = 1`；创建/编辑临时团队 `$2 + 100000 input tokens` 回查一致、编辑表单回填正确，探针角色与团队均已删除。
+- [ ] 未做：预算是“任务内”口径（同一 Role/Team 在不同任务里各自计算，不跨任务累计）；只在 Run 启动前阻断，不中断正在跑的 Run；API 不支持清空已配置的预算（表单留空只会省略 `budget` 字段，已有上限保留）；真实 CLI 不报 usage 时预算实际不生效。
 
 ## F4-05 重跑 hygiene — 已完成（2026-11-20）
 
