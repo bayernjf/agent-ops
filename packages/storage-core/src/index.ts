@@ -375,6 +375,7 @@ export type KernelAuditEventType =
   | 'team.updated'
   | 'team.deleted'
   | 'task.created'
+  | 'task.deleted'
   | 'run.accepted'
   | 'run.rejected'
   | 'pipeline.step.approved'
@@ -896,6 +897,30 @@ export class KernelStore {
   listTasksByTeam(teamId: string): TaskRecord[] {
     const rows = this.kernelOrm.select().from(tasks).where(eq(tasks.teamId, teamId)).all() as TaskRow[];
     return rows.map(toTaskRecord);
+  }
+
+  /**
+   * Delete a task that produced no runs. Runs, audits and their worktrees are evidence, so such
+   * a task can only be released; this path exists for tasks created in error, e.g. a queued
+   * probe that never started. Its worktree, if provisioned, is removed with the task.
+   */
+  async deleteTask(id: string): Promise<boolean> {
+    const task = this.getTask(id);
+    if (!task) return false;
+    if (this.activePipelines.has(id)) throw new Error(`Task ${id} has a running pipeline.`);
+    if (this.listRuns(id).length > 0) {
+      throw new Error(`Task ${id} has runs; only a task without runs can be deleted.`);
+    }
+    if (task.worktreePath) await removeWorktree(task.repo, task.worktreePath).catch(() => undefined);
+    this.kernelOrm.delete(tasks).where(eq(tasks.id, id)).run();
+    await this.persist();
+    await this.recordAudit({
+      type: 'task.deleted',
+      taskId: id,
+      teamId: task.teamId,
+      data: { title: task.title, status: task.status },
+    });
+    return true;
   }
 
   async updateTaskStatus(id: string, status: TaskRunState): Promise<TaskRecord> {
