@@ -31,7 +31,7 @@ const success = (output = 'ok') => ({
 const exists = (path: string) => access(path).then(() => true).catch(() => false);
 
 describe('KernelStore DAG pipeline', () => {
-  it('runs ready steps in parallel, branches a join from its dependencies and reports conflicts', async () => {
+  it('runs ready steps in parallel and merges every dependency into a join', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-dag-'));
     try {
       const repo = await initRepo(join(directory, 'repo'));
@@ -67,7 +67,6 @@ describe('KernelStore DAG pipeline', () => {
           await writeFile(join(options.cwd, 'SHARED.md'), 'left\n', 'utf8');
         } else if (stepId === 'right') {
           await writeFile(join(options.cwd, 'RIGHT.md'), 'right\n', 'utf8');
-          await writeFile(join(options.cwd, 'SHARED.md'), 'right\n', 'utf8');
         } else {
           observed[stepId] = {
             right: await exists(join(options.cwd, 'RIGHT.md')),
@@ -81,12 +80,10 @@ describe('KernelStore DAG pipeline', () => {
       const result = await store.executeDagPipeline(task.id, { runner, maxConcurrency: 2 });
       expect(result.steps.map(step => step.status)).toEqual(['completed', 'completed', 'completed']);
       expect(maxActive).toBe(2);
-      // The join branched from the last dependency (right), so only its file is present.
-      expect(observed.join).toEqual({ right: true, left: false });
-      expect(result.warnings.join(' ')).toContain('commits from left are not merged');
-      // Concurrent lanes finish in any order, so compare the owners as a set.
-      expect(result.conflicts.map(conflict => ({ file: conflict.file, stepIds: [...conflict.stepIds].sort() })))
-        .toEqual([{ file: 'SHARED.md', stepIds: ['left', 'right'] }]);
+      // The join merges both dependency commits, so files from both sides are present.
+      expect(observed.join).toEqual({ right: true, left: true });
+      expect(result.warnings.join(' ')).not.toContain('not merged');
+      expect(result.conflicts).toEqual([]);
       expect(result.taskStatus).toBe('review');
       expect(store.getTask(task.id)?.pipeline?.results.map(entry => entry.status)).toEqual(['completed', 'completed', 'completed']);
       expect(store.listAudit({ taskId: task.id }).map(event => event.type)).toContain('pipeline.dag.executed');
@@ -94,6 +91,52 @@ describe('KernelStore DAG pipeline', () => {
       const commits = result.steps.map(step => step.commitSha);
       expect(new Set(commits).size).toBe(3);
       for (const step of result.steps) await execFileAsync('git', ['cat-file', '-e', `${step.commitSha}^{commit}`], { cwd: repo });
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('fails a join whose dependency commits conflict and names the conflicting files', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-dag-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'DAG conflict',
+        pipeline: {
+          steps: [
+            { id: 'left', name: 'Left', agentId: 'codex', dependsOn: [] },
+            { id: 'right', name: 'Right', agentId: 'codex', dependsOn: [] },
+            { id: 'join', name: 'Join', agentId: 'codex', dependsOn: ['left', 'right'] },
+          ],
+        },
+      });
+      await store.provisionTask(task.id);
+
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        const stepId = basename(options.cwd);
+        if (stepId !== 'join') {
+          await writeFile(join(options.cwd, 'SHARED.md'), `${stepId}\n`, 'utf8');
+        } else {
+          await writeFile(join(options.cwd, 'JOIN.md'), 'join\n', 'utf8');
+        }
+        return success();
+      };
+
+      const result = await store.executeDagPipeline(task.id, { runner, maxConcurrency: 2 });
+      expect(result.steps.map(step => [step.stepId, step.status])).toEqual([
+        ['left', 'completed'],
+        ['right', 'completed'],
+        ['join', 'failed'],
+      ]);
+      expect(result.steps[2]?.error).toContain('merge conflict');
+      expect(result.steps[2]?.error).toContain('SHARED.md');
+      expect(result.conflicts.map(conflict => ({ file: conflict.file, stepIds: [...conflict.stepIds].sort() })))
+        .toEqual([{ file: 'SHARED.md', stepIds: ['left', 'right'] }]);
+      expect(store.getTask(task.id)?.pipeline?.results[2]).toMatchObject({ stepId: 'join', status: 'failed' });
       await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });

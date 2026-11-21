@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { KernelStore } from '../src/index.js';
-import { addWorktree, linkNodeModules, removeWorktree } from '../src/worktree.js';
+import { addWorktree, linkNodeModules, mergeDependencyCommits, removeWorktree } from '../src/worktree.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -41,6 +41,34 @@ describe('worktree', () => {
 
       await removeWorktree(repo, worktreePath);
       await expect(exists(worktreePath)).resolves.toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('does not add a merge commit when a dependency is already an ancestor', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-worktree-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const worktreePath = join(directory, 'wt');
+      await addWorktree(repo, 'main', worktreePath);
+
+      await writeFile(join(worktreePath, 'A.md'), 'a\n', 'utf8');
+      await execFileAsync('git', ['add', '-A'], { cwd: worktreePath });
+      await execFileAsync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'A'], { cwd: worktreePath });
+      const commitA = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: worktreePath })).stdout.trim();
+
+      await writeFile(join(worktreePath, 'B.md'), 'b\n', 'utf8');
+      await execFileAsync('git', ['add', '-A'], { cwd: worktreePath });
+      await execFileAsync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'B'], { cwd: worktreePath });
+
+      const merged = await mergeDependencyCommits(worktreePath, [commitA]);
+      const head = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: worktreePath })).stdout.trim();
+      expect(merged).toBe(head);
+      const count = Number((await execFileAsync('git', ['rev-list', '--count', 'main..HEAD'], { cwd: worktreePath })).stdout.trim());
+      expect(count).toBe(2);
+
+      await removeWorktree(repo, worktreePath);
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
