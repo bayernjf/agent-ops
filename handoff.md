@@ -20,6 +20,7 @@
 - [x] **DAG 多依赖合并** — 已完成（2026-11-21）。`executeDagPipeline` 不再只取最后一个依赖 commit：join step 先 checkout 最后一个依赖，再把其余依赖逐个 `--no-ff` merge 成真实 merge commit 作为 `evidenceBase`；合并冲突则 abort 该次 merge、step 标 failed 并列出冲突文件。新增依赖合并冲突与已包含依赖不重复 merge 用例；全仓 68 文件 / 762 tests 绿，typecheck 0。
 - [x] **重跑前 pin 旧 pipeline commit** — 已完成（2026-11-21）。completed pipeline 重跑前把每个旧 step commit pin 到 `refs/agent-ops/pipelines/<taskId>/<runId>`，再 reset worktree、清空旧 results；`pipeline.rerun` 审计记录 `pinnedCommits`。测试覆盖 `git gc --prune=now` 后旧 commit 仍可解析；全仓 68 文件 / 762 tests 绿。
 - [x] **修复任务 ref 命名空间冲突** — 已完成（2026-11-21）。默认 accept ref 从 `refs/agent-ops/tasks/<taskId>` 改为 `.../<taskId>/accepts/latest`；旧路径是文件，导致同一任务先串行接受再接受 lane 时 `update-ref` 报 “cannot lock ref”。新增默认 ref 与 lane ref 共存测试；全仓 68 文件 / 763 tests 绿。
+- [x] **Pipeline 模板语法校验** — 已完成（2026-11-21）。`validatePipelineTemplates` 在创建任务时拒绝未知 step id、坏字段、自引用和未闭合 token，server 返回 400；`{{ previous.output }}` 这类花括号内空白现在也能真正展开。纯函数新增 6 例、创建任务 1 例、HTTP 400 1 例；全仓 68 文件 / 771 tests 绿。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -204,12 +205,13 @@
 
 ## F6-01 Pipeline 提示词模板 — 已完成（2026-11-21）
 
-- [x] 新增 `packages/storage-core/src/pipeline-template.ts`：后续 step 的 prompt 支持 `{{previous.output}}` / `{{previous.commit}}`（串行上一步；DAG 取最后一个依赖）与 `{{step:<id>.output}}` / `{{step:<id>.commit}}`（任意已完成 step）。
+- [x] 新增 `packages/storage-core/src/pipeline-template.ts`：后续 step 的 prompt 支持 `{{previous.output}}` / `{{previous.commit}}`（串行上一步；DAG 取最后一个依赖）与 `{{step:<id>.output}}` / `{{step:<id>.commit}}`（任意已完成 step）；花括号内允许空白。
 - [x] 只在目标 step 已完成且字段有值时才替换；未知 id、未完成 step、或没有记录 output/commit 时保留原 token，不静默清空；output 使用内核记录的 2000 字符截断值。
 - [x] 串行执行（`pipelineStepInstruction`）与 DAG 执行（`executeDagPipeline`）都在创建 Run 前展开模板；DAG 并发下只使用该 step 的已完成依赖快照。
+- [x] 2026-11-21 补齐校验：`validatePipelineTemplates` 在 `normalizePipeline` 阶段拒绝未知 step id、坏字段、自引用和未闭合 token，server 映射 400；普通 `{{...}}` 文本不受影响。纯函数新增 6 例 + 创建任务拒绝/接受 1 例 + HTTP 400 1 例；全仓 68 文件 / 771 tests 绿。
 - [x] 测试：模板纯函数 4 例（previous / 按 id / 未知与缺失保持原样 / 无占位符原样返回）；两步串行端到端断言第二步 prompt 与 Run instruction 含第一步 output 和 commit；DAG 端到端断言 join 步骤拿到 last dependency 的 output 与 commit；全仓 typecheck 0，63 文件 / 743 tests 绿。
 - [x] 本轮提交见 git log（`feat(storage-core): expand pipeline step templates`）。
-- [ ] 未做：模板只支持 output / commit 两种字段，没有加密或转义处理（上游 output 会按原文进入下游 prompt）；没有模板语法校验，拼写错的 token 会原样保留；单次 output 仍受 2000 字符截断。
+- [ ] 未做：模板只支持 output / commit 两种字段，没有加密或转义处理（上游 output 会按原文进入下游 prompt）；单次 output 仍受 2000 字符截断。模板校验只看 token 形状和 step id，不校验该 step 是否真的会在目标步骤前完成。
 
 ## F6-05 completed pipeline 重跑 — 已完成（2026-11-21）
 
