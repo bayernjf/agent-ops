@@ -855,6 +855,7 @@ export const zh = {
       failed: '失败',
       skipped: '已跳过',
       cancelled: '已取消',
+      awaiting_approval: '待审批',
     },
     runs: '运行',
     noRuns: '暂无运行。',

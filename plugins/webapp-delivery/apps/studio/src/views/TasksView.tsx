@@ -825,7 +825,7 @@ export function TasksView() {
                                 </button>
                               </>
                             )}
-                            {(task.status === 'queued' || task.status === 'review') && pipeline.status !== 'running' && pipeline.status !== 'awaiting_approval' && !pipeline.steps.some(step => step.requiresApproval) && (
+                            {(task.status === 'queued' || task.status === 'review') && pipeline.status !== 'running' && pipeline.status !== 'awaiting_approval' && (
                               <button className="secondary-button" type="button" onClick={() => void runDagPipeline(task)} disabled={fanoutBusy === `${task.id}:dag`}>
                                 <GitFork size={14} aria-hidden="true" /> {fanoutBusy === `${task.id}:dag` ? t('tasks.pipelineRunning') : t('tasks.dagRun')}
                               </button>

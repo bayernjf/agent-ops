@@ -873,6 +873,7 @@ export const en = {
       failed: 'Failed',
       skipped: 'Skipped',
       cancelled: 'Cancelled',
+      awaiting_approval: 'Awaiting approval',
     },
     runs: 'Runs',
     noRuns: 'No runs yet.',

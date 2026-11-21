@@ -412,7 +412,7 @@ export type TaskPipelineStep = {
 export type DagStepResult = {
   stepId: string;
   name: string;
-  status: 'completed' | 'failed' | 'skipped' | 'cancelled';
+  status: 'completed' | 'failed' | 'skipped' | 'cancelled' | 'awaiting_approval';
   runId: string | null;
   commitSha: string | null;
   worktreePath: string | null;
@@ -467,6 +467,8 @@ export type TaskPipeline = {
   steps: TaskPipelineStep[];
   results: TaskPipelineStepResult[];
   status: 'idle' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
+  executionMode?: 'serial' | 'dag';
+  maxConcurrency?: number;
   startedAt?: string;
   completedAt?: string;
 };
