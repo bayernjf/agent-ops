@@ -35,6 +35,7 @@ import { RoleStore } from './roles-store.js';
 import { TeamStore } from './teams-store.js';
 import { addWorktree, linkNodeModules, pinWorktreeCommit, removeWorktree } from './worktree.js';
 import { assertWorktreeClean, commitWorktreeChanges, resetWorktree } from './commit.js';
+import { expandPipelineTemplate, type PipelineTemplateSnapshot } from './pipeline-template.js';
 
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
@@ -1367,6 +1368,20 @@ export class KernelStore {
     return task.baseCommit;
   }
 
+  /**
+   * Run instruction for one serial step, with `{{previous.*}}` / `{{step:<id>.*}}`
+   * placeholders expanded from results that already completed.
+   */
+  private pipelineStepInstruction(pipeline: TaskPipeline, index: number, step: TaskPipelineStep): string {
+    const snapshots = new Map<string, PipelineTemplateSnapshot>();
+    for (const result of pipeline.results) {
+      if (result.status === 'completed') snapshots.set(result.stepId, { output: result.output, commitSha: result.commitSha });
+    }
+    const previousId = index > 0 ? pipeline.steps[index - 1]?.id : undefined;
+    const prompt = step.prompt ? expandPipelineTemplate(step.prompt, { previous: previousId ? snapshots.get(previousId) : undefined, steps: snapshots }) : '';
+    return `Pipeline step ${index + 1}/${pipeline.steps.length}: ${step.name}${prompt ? `\n\n${prompt}` : ''}`;
+  }
+
   async retryTaskPipeline(id: string, runner?: CodexProcessRunner): Promise<TaskPipeline> {
     if (this.activePipelines.has(id)) throw new Error(`Task ${id} already has a running pipeline.`);
     this.activePipelines.add(id);
@@ -1474,7 +1489,7 @@ export class KernelStore {
       let runId: string | undefined;
       try {
         const agentId = await this.resolvePipelineStepAgent(step);
-        const instruction = `Pipeline step ${index + 1}/${pipeline.steps.length}: ${step.name}${step.prompt ? `\n\n${step.prompt}` : ''}`;
+        const instruction = this.pipelineStepInstruction(pipeline, index, step);
         const run = await this.createRun(id, agentId, step.roleId, instruction);
         runId = run.id;
         updateResult({ stepId: step.id, status: 'running', runId, startedAt });
@@ -2321,6 +2336,8 @@ export class KernelStore {
       };
 
       const results = new Map<string, DagStepResult>();
+      // Completed steps' outputs, kept aside so later prompts can template them in.
+      const outputs = new Map<string, string>();
       const warnings: string[] = [];
       await this.updateTaskStatus(taskId, 'running');
 
@@ -2344,7 +2361,15 @@ export class KernelStore {
           await addWorktree(task.repo, branchFrom ?? base, lanePath);
           await linkNodeModules(task.repo, lanePath);
           const agentId = await this.resolvePipelineStepAgent(step);
-          const instruction = `DAG step: ${step.name}${step.prompt ? `\n\n${step.prompt}` : ''}`;
+          const snapshots = new Map<string, PipelineTemplateSnapshot>();
+          for (const [id, result] of results) {
+            if (result.status === 'completed') snapshots.set(id, { output: outputs.get(id), commitSha: result.commitSha });
+          }
+          const previousId = dependencies[dependencies.length - 1];
+          const prompt = step.prompt
+            ? expandPipelineTemplate(step.prompt, { previous: previousId ? snapshots.get(previousId) : undefined, steps: snapshots })
+            : '';
+          const instruction = `DAG step: ${step.name}${prompt ? `\n\n${prompt}` : ''}`;
           const run = await this.createRun(taskId, agentId, step.roleId, instruction);
           runId = run.id;
           const executed = await this.executeRun(run.id, options.runner, { worktreePath: lanePath, laneId: `dag-${step.id}`, taskStatus: 'none', evidenceBase: branchFrom ?? base });
@@ -2353,6 +2378,7 @@ export class KernelStore {
             return;
           }
           const accepted = await this.acceptRun(run.id);
+          outputs.set(step.id, executed.artifacts.output.slice(0, 2000));
           results.set(step.id, { stepId: step.id, name: step.name, status: 'completed', runId, commitSha: accepted.commitSha, worktreePath: lanePath, changedFiles: accepted.artifacts.changedFiles, error: null });
         } catch (error) {
           results.set(step.id, {
@@ -2699,3 +2725,5 @@ export { assertWorktreeClean, commitWorktreeChanges, resetWorktree, UnsafeCommit
 export type { CommitWorktreeResult } from './commit.js';
 export type { CreateProfileInput, UpdateProfileInput, ProfileValidationResult } from './profiles-store.js';
 export type { WorktreeResult } from './worktree.js';
+export { expandPipelineTemplate } from './pipeline-template.js';
+export type { PipelineTemplateContext, PipelineTemplateSnapshot } from './pipeline-template.js';
