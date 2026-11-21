@@ -352,6 +352,7 @@ export type View =
   | { kind: 'credentials' }
   | { kind: 'agents' }
   | { kind: 'activity' }
+  | { kind: 'audit' }
   | { kind: 'tasks' }
   | { kind: 'teams' }
   | { kind: 'metrics' }
@@ -366,6 +367,17 @@ export type ProjectTab =
 // The kernel Task/Run control plane (server-core). Studio only renders these records; it never
 // derives state from them, so the shapes mirror `TaskRecord`/`RunRecord` from @agent-ops/storage-core
 // without pulling that package into the webapp plugin.
+export type KernelAuditEvent = {
+  id: string;
+  seq: number;
+  taskId: string | null;
+  teamId: string | null;
+  actor: 'operator' | 'system';
+  type: string;
+  data: Record<string, unknown>;
+  at: string;
+};
+
 export type KernelTaskState = 'queued' | 'running' | 'review' | 'done' | 'failed' | 'cancelled';
 
 export type KernelTask = {
