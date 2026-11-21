@@ -24,6 +24,7 @@
 - [x] **显式标记 step output 截断** — 已完成（2026-11-21）。step result 落 `outputTruncated`，DAG 结果同时保留 `changedFiles` / `output`；串行与 DAG 下游展开被截断的 output 时追加 `[The output above was truncated to 2000 characters.]`，Studio 步骤状态显示“输出已截断”。新增串行 1 例、DAG 1 例、模板 1 例；全仓 68 文件 / 773 tests 绿，Studio build 1661 modules 成功。
 - [x] **DAG 审批门** — 已完成（2026-11-21）。`executeDagPipeline` 支持 `requiresApproval`：gated step 单独执行，Run 到 `review` 时 DAG 存 `awaiting_approval`，pipeline 持久化 `executionMode: 'dag'` / `maxConcurrency` / 已完成结果；`approvePipelineStep` 接受该 lane Run 后从已完成 results 续跑，不重跑已完成步骤；`rejectPipelineStep` 将该步与所有尚未完成的 step 标 failed。暂停/恢复写 `pipeline.dag.paused` / `pipeline.dag.resumed` 审计。新增 4 个 DAG 用例（批准续跑、连续两道门、驳回下游、原有 DAG 回归）；全仓 68 文件 / 776 tests 绿，typecheck 0，Studio build 1661 modules 成功。
 - [x] **记录 DAG merge commit** — 已完成（2026-11-21）。多依赖 join 实际生成 merge commit 时，把 SHA 写入 `DagStepResult.mergeCommitSha` 与 `pipeline.results`，并在 `pipeline.dag.executed` / `paused` 审计的 `mergeCommits` 中列出；根步骤与单依赖 step 不写。测试断言 SHA 可解析、有两个父提交、单依赖为空，并检查持久化与审计；全仓 68 文件 / 776 tests 绿，typecheck 0，Studio build 1661 modules 成功。
+- [x] **模板引用执行顺序校验** — 已完成（2026-11-22）。`validatePipelineTemplates` 按 `dependsOn`（未写回退串行上一步）计算传递祖先；`{{step:<id>.*}}` 引用非确定上游、`{{previous.*}}` 无上游都会在 createTask 时拒绝并映射 400。新增纯函数 4 例、createTask 与 HTTP 各 1 例；全仓 68 文件 / 780 tests 绿，typecheck 0，Studio build 1661 modules 成功。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -212,10 +213,11 @@
 - [x] 只在目标 step 已完成且字段有值时才替换；未知 id、未完成 step、或没有记录 output/commit 时保留原 token，不静默清空；output 使用内核记录的 2000 字符截断值。
 - [x] 串行执行（`pipelineStepInstruction`）与 DAG 执行（`executeDagPipeline`）都在创建 Run 前展开模板；DAG 并发下只使用该 step 的已完成依赖快照。
 - [x] 2026-11-21 补齐校验：`validatePipelineTemplates` 在 `normalizePipeline` 阶段拒绝未知 step id、坏字段、自引用和未闭合 token，server 映射 400；普通 `{{...}}` 文本不受影响。纯函数新增 6 例 + 创建任务拒绝/接受 1 例 + HTTP 400 1 例；全仓 68 文件 / 771 tests 绿。
+- [x] 2026-11-22 补齐顺序校验：`PipelineTemplateStep` 接受 `dependsOn`，校验器按显式依赖（未写回退串行上一步）计算传递祖先。`{{previous.*}}` 无上游、`{{step:<id>.*}}` 引用非祖先（后续 step 或独立并行 step）均拒绝；消息含 `template token`，server 返回 400。纯函数新增 4 例 + createTask 正反例 + HTTP 400；全仓 68 文件 / 780 tests 绿。
 - [x] 测试：模板纯函数 4 例（previous / 按 id / 未知与缺失保持原样 / 无占位符原样返回）；两步串行端到端断言第二步 prompt 与 Run instruction 含第一步 output 和 commit；DAG 端到端断言 join 步骤拿到 last dependency 的 output 与 commit；全仓 typecheck 0，63 文件 / 743 tests 绿。
 - [x] 本轮提交见 git log（`feat(storage-core): expand pipeline step templates`）。
 - [x] 2026-11-21 补齐截断显式化：`capturePipelineStepOutput` 按 2000 字符截断并写 `outputTruncated`，存储文本不带 marker；串行与 DAG 下游展开被截断的 output 时追加 `[The output above was truncated to 2000 characters.]`。DAG 结果同时落 `changedFiles` / `output` / `outputTruncated`，Studio 步骤状态显示“输出已截断”。新增串行、DAG、模板各 1 例；全仓 68 文件 / 773 tests 绿，Studio build 1661 modules 成功。
-- [ ] 未做：模板只支持 output / commit 两种字段，没有加密或转义处理（上游 output 会按原文进入下游 prompt）；模板校验只看 token 形状和 step id，不校验该 step 是否真的会在目标步骤前完成。
+- [ ] 未做：模板只支持 output / commit 两种字段，没有加密或转义处理（上游 output 会按原文进入下游 prompt）；顺序校验只拒绝非祖先引用，不验证运行时某步是否因失败被跳过。
 
 ## F6-05 completed pipeline 重跑 — 已完成（2026-11-21）
 

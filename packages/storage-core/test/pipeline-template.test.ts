@@ -42,6 +42,44 @@ describe('validatePipelineTemplates', () => {
     expect(issues[0]?.message).toContain('cannot reference its own output');
   });
 
+  it('rejects previous on a step with no upstream', () => {
+    const issues = validatePipelineTemplates([
+      { id: 'architecture', prompt: 'Use {{previous.output}}.' },
+      { id: 'root', prompt: 'Use {{ previous.commit }}.', dependsOn: [] },
+    ]);
+    expect(issues.map(issue => issue.reason)).toEqual(['no-upstream', 'no-upstream']);
+    expect(issues[0]?.message).toContain('no upstream step');
+  });
+
+  it('rejects a serial reference to a later step', () => {
+    const issues = validatePipelineTemplates([
+      { id: 'architecture', prompt: 'Plan.' },
+      { id: 'review', prompt: 'Check {{step:implement.output}}.' },
+      { id: 'implement', prompt: 'Do the work.' },
+    ]);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ stepId: 'review', reason: 'not-upstream' });
+    expect(issues[0]?.message).toContain('not guaranteed to complete');
+  });
+
+  it('rejects a DAG root that references an independent root', () => {
+    const issues = validatePipelineTemplates([
+      { id: 'left', prompt: 'Use {{step:right.output}}.', dependsOn: [] },
+      { id: 'right', prompt: 'Right.', dependsOn: [] },
+    ]);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ stepId: 'left', reason: 'not-upstream' });
+  });
+
+  it('accepts transitive ancestors and both parents of a DAG join', () => {
+    expect(validatePipelineTemplates([
+      { id: 'a', prompt: 'A.', dependsOn: [] },
+      { id: 'b', prompt: 'B after {{step:a.output}}.', dependsOn: ['a'] },
+      { id: 'c', prompt: 'C after {{step:a.commit}}.', dependsOn: ['b'] },
+      { id: 'join', prompt: 'J {{step:b.output}} {{step:c.commit}}.', dependsOn: ['b', 'c'] },
+    ])).toEqual([]);
+  });
+
   it('rejects an unclosed token', () => {
     const issues = validatePipelineTemplates([
       { id: 'review', prompt: 'Check {{step:architecture.output' },
