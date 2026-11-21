@@ -161,4 +161,11 @@ export const kernelMigrations: readonly Migration[] = [
       ALTER TABLE runs ADD COLUMN lane_id TEXT NOT NULL DEFAULT '';
     `,
   },
+  {
+    id: '0020_task_final_lane',
+    sql: `
+      ALTER TABLE tasks ADD COLUMN final_run_id TEXT NOT NULL DEFAULT '';
+      ALTER TABLE tasks ADD COLUMN final_commit_sha TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];

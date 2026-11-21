@@ -127,6 +127,9 @@ export type TaskRecord = {
   roleId: string | null;
   teamId: string | null;
   pipeline: TaskPipeline | null;
+  /** Accepted lane chosen as the task's final deliverable; empty when none is chosen. */
+  finalRunId: string;
+  finalCommitSha: string;
   status: TaskRunState;
   createdAt: string;
   updatedAt: string;
@@ -375,6 +378,8 @@ export type KernelAuditEventType =
   | 'team.updated'
   | 'team.deleted'
   | 'task.created'
+  | 'task.deleted'
+  | 'task.final_lane.selected'
   | 'run.accepted'
   | 'run.rejected'
   | 'pipeline.step.approved'
@@ -862,6 +867,8 @@ export class KernelStore {
       roleId: linkedRoleId ?? null,
       teamId: linkedTeamId ?? null,
       pipeline,
+      finalRunId: '',
+      finalCommitSha: '',
       status: 'queued',
       createdAt: now,
       updatedAt: now,
@@ -896,6 +903,30 @@ export class KernelStore {
   listTasksByTeam(teamId: string): TaskRecord[] {
     const rows = this.kernelOrm.select().from(tasks).where(eq(tasks.teamId, teamId)).all() as TaskRow[];
     return rows.map(toTaskRecord);
+  }
+
+  /**
+   * Delete a task that produced no runs. Runs, audits and their worktrees are evidence, so such
+   * a task can only be released; this path exists for tasks created in error, e.g. a queued
+   * probe that never started. Its worktree, if provisioned, is removed with the task.
+   */
+  async deleteTask(id: string): Promise<boolean> {
+    const task = this.getTask(id);
+    if (!task) return false;
+    if (this.activePipelines.has(id)) throw new Error(`Task ${id} has a running pipeline.`);
+    if (this.listRuns(id).length > 0) {
+      throw new Error(`Task ${id} has runs; only a task without runs can be deleted.`);
+    }
+    if (task.worktreePath) await removeWorktree(task.repo, task.worktreePath).catch(() => undefined);
+    this.kernelOrm.delete(tasks).where(eq(tasks.id, id)).run();
+    await this.persist();
+    await this.recordAudit({
+      type: 'task.deleted',
+      taskId: id,
+      teamId: task.teamId,
+      data: { title: task.title, status: task.status },
+    });
+    return true;
   }
 
   async updateTaskStatus(id: string, status: TaskRunState): Promise<TaskRecord> {
@@ -1723,6 +1754,8 @@ export class KernelStore {
       await this.updateTaskStatus(run.taskId, 'done');
     }
     const accepted = await this.updateRunStatus(id, 'done', run.diffStat, run.artifacts, commit.sha);
+    // A re-accepted lane that is already the chosen deliverable must keep its final SHA in sync.
+    if (task.finalRunId === id) await this.setTaskFinalLane(task.id, id, commit.sha);
     await this.recordAudit({
       type: 'run.accepted',
       taskId: run.taskId,
@@ -1730,6 +1763,36 @@ export class KernelStore {
       data: { runId: id, commitSha: commit.sha, roleId: run.roleId, laneId: run.laneId, files: selected ?? null },
     });
     return accepted;
+  }
+
+  /**
+   * Mark an accepted parallel lane as the task's final deliverable. This is a pointer, not a
+   * merge: the lane commit stays in its own worktree/ref, and the task worktree is untouched.
+   */
+  async selectFinalLane(taskId: string, runId: string): Promise<TaskRecord> {
+    const task = this.getTask(taskId);
+    if (!task) throw new Error(`Task ${taskId} was not found.`);
+    const run = this.getRun(runId);
+    if (!run || run.taskId !== taskId) throw new Error(`Run ${runId} was not found for task ${taskId}.`);
+    if (!run.laneId) throw new Error(`Run ${runId} cannot be selected as final because it is not a parallel lane.`);
+    if (run.status !== 'done' || !run.commitSha) {
+      throw new Error(`Run ${runId} cannot be selected as final until its lane is accepted with a commit.`);
+    }
+    await this.setTaskFinalLane(taskId, run.id, run.commitSha);
+    await this.recordAudit({
+      type: 'task.final_lane.selected',
+      taskId,
+      teamId: task.teamId,
+      data: { runId: run.id, laneId: run.laneId, commitSha: run.commitSha },
+    });
+    const updated = this.getTask(taskId);
+    if (!updated) throw new Error(`Task ${taskId} was not found after selecting its final lane.`);
+    return updated;
+  }
+
+  private async setTaskFinalLane(taskId: string, runId: string, commitSha: string): Promise<void> {
+    this.kernelOrm.update(tasks).set({ finalRunId: runId, finalCommitSha: commitSha, updatedAt: new Date().toISOString() }).where(eq(tasks.id, taskId)).run();
+    await this.persist();
   }
 
   async rejectRun(id: string, resetTo?: string): Promise<RunRecord> {
@@ -1746,6 +1809,9 @@ export class KernelStore {
     // the task back in the queue awaiting a re-run.
     await this.updateTaskStatus(run.taskId, run.laneId ? 'review' : 'queued');
     const rejected = await this.updateRunStatus(id, 'queued');
+    // Rejecting the chosen lane invalidates the final-delivery pointer; the commit itself stays
+    // reachable from its lane ref for audit.
+    if (task.finalRunId === id) await this.setTaskFinalLane(task.id, '', '');
     await this.recordAudit({
       type: 'run.rejected',
       taskId: run.taskId,

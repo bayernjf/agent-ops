@@ -9,7 +9,12 @@
 
 - [x] **真实模型 UI E2E** — 已完成（2026-11-20）。UI 里新建 CodeBuddy 角色与一步 Pipeline 任务，点 `Run pipeline` 由真实 CodeBuddy 2.185.0 执行，任务 done、Run 可见（commit `ea4553f7d2`）。Claude Code / Codex 仍受 CC Switch `base_url` 阻塞，但不影响 CodeBuddy 路径；真实模型 API 路径与 UI 路径均已有证据。
 - [x] **3–5 个本仓 dogfood** — 已完成 3 条真实任务 + 4 次团队运行（2026-11-21）：单任务接受率 3/3、检查通过率 3/3、返工 1 次人工小修；五角色串行 5 步完成（首轮暴露落盘 owner 缺口）；owner 机制补齐并实测落盘；带 owner 的五角色交付重跑成功；依赖链接后五角色完成**真实代码交付**（`listTasksByTeam` + 单测，含 reviewer→owner 修正）。详见下方 “F10-01/F10-02 Dogfood” 章节。
-- [x] **Studio 浏览器复查** — 2026-11-21：Role/Team 表单预算输入（创建 / 编辑回填与探针清理）、completed pipeline 的 Rerun 按钮、Metrics 页（23 runs / 11 tasks 聚合）与 Teams 详情（花名册 / 交接边 / 队列 / 用量）均在真实浏览器查看；Teams 计划预览因缺少带团队的 queued 任务未点击。
+- [x] **Studio 浏览器复查** — 2026-11-21：Role/Team 表单预算输入（创建 / 编辑回填与探针清理）、completed pipeline 的 Rerun 按钮、Metrics 页（23 runs / 11 tasks 聚合）与 Teams 详情（花名册 / 交接边 / 队列 / 用量）均在真实浏览器查看；Teams 计划预览当时因缺少带团队的 queued 任务未点击，已由下方“Studio 分支入口浏览器验收”补验。
+- [x] **Studio 分支入口浏览器验收** — 已完成（2026-11-21）。隔离数据库 + 临时 git 仓实测：DAG 先验 `aider` candidate 失败面板，再用真实 CodeBuddy 跑通成功路径（pipeline completed、commit `b976ee0`、输出 `PROBE_OK`）；并行 lane 先验失败面板，再用真实 CodeBuddy 跑通 `review` lane（0 文件、`PROBE_OK`）；Teams 计划预演在带 Team 的 queued 任务上点开并取消；`Delete probe` 从 Studio 删除后后端列表确认消失。过程中发现并修复 Studio 长请求沿用 15 秒默认超时的问题（commit `d7dd834`）。
+- [x] **并行 lane 决策入口** — 已完成（2026-11-21）。并行结果面板直接提供 Accept lane / Reject lane；已接受的 lane 可 Set as final，持久化 `finalRunId` / `finalCommitSha` 并写 `task.final_lane.selected` 审计。真实 CodeBuddy 两条 lane 已在浏览器走通接受、驳回和最终选择；选择只是指向已 pin 的 lane commit，不合并到任务 worktree。提交 `2ed1adb` / `6b51497` / `9750a83` / `88cd6bd`。
+- [x] **Studio 审计面板与导出** — 已完成（2026-11-21）。新增独立 Audit 导航，`GET /api/audit` 支持任务 / 团队 / 类型 / 条数筛选；事件可展开查看 actor、task/team 与 data；`Export audit JSON` 导出当前筛选切片，`Export task evidence` 调用 `GET /api/tasks/:id/export` 下载单任务证据包。真实浏览器已验证 6 条事件、两层过滤、详情展开和两种下载；全仓 65 文件 / 752 tests 绿，Studio build 1659 modules 成功。
+- [x] **Studio 策略预览面板** — 已完成（2026-11-21）。角色创建 / 编辑表单接入 `POST /api/policy/evaluate`，保存前逐 Runtime 展示 capability、enforcement、只读、人工门与 allow/deny 判定；策略字段变更立即清空旧结果，空策略显示默认工具集提示。真实浏览器已验证 7 个 Runtime、20 条判定、unsupported 原因与中英文文案；全仓 66 文件 / 753 tests 绿，Studio build 1660 modules 成功。
+- [x] **Teams 任务队列服务端过滤** — 已完成（2026-11-21）。`TeamsView` 不再拉取全量 `/api/tasks` 后按 `teamId` 过滤，改为对选中团队调用 `GET /api/teams/:teamId/tasks`；切换团队立即清空旧队列并带取消标记，队列与卡点面板分别有加载态和错误态，计划预览对团队切换做了响应隔离。真实浏览器已验证 Alpha 2 条 / Beta 1 条、未归属任务不出现，切换与刷新只请求当前团队队列；全仓 66 文件 / 753 tests 绿，Studio build 1660 modules 成功。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -209,6 +214,18 @@
 - [x] 本轮提交见 git log。
 - [ ] 未做：重跑会清空旧 results（旧 commit 只留 git 历史，不做 ref pin），没有“保留旧结果用于对比”的模式；真实模型下的 completed 重跑未跑。
 
+## Studio DAG / 并行入口 + 任务删除 — 已完成（2026-11-21）
+
+- [x] Studio 任务展开面板新增两个分支动作：**Run as DAG**（`POST /api/tasks/:id/pipeline/dag`）与 **Run parallel team**（`POST /api/tasks/:id/parallel/execute`）。两者都会在缺 worktree 时先 provision、执行前 `window.confirm`，完成后刷新任务与 Run 列表。
+- [x] 结果面板：DAG 展示每步状态 / commit / 未合并依赖 warning / 冲突；并行展示 lane 状态 / 变更文件数 / 冲突。类型定义在 `studio/src/types.ts`，文案 en/zh 同步。
+- [x] 任务删除：内核 `deleteTask` 只允许没有 Run 的任务，删除 worktree 与任务行并写 `task.deleted` 审计；server `DELETE /api/tasks/:id`（404 / 409）与 MCP `agent_ops_delete_task`；Studio 对 `queued` 且无 Run 的任务显示删除入口。
+- [x] 测试：`task-delete.test.ts` 覆盖删除与拒绝有 Run 的任务；server HTTP 200/404/409；MCP 工具清单更新；全仓 typecheck 0，64 文件 / 750 tests 绿；Studio 14 文件 / 257 tests 绿。
+- [x] 浏览器验证：用隔离数据库 `/tmp/agent-ops-browser-verify/agent-ops.sqlite` + 临时 git 仓，不污染本机真实任务库。DAG 先验 `aider` candidate 的失败面板；再用真实 CodeBuddy 2.142.0 跑通成功路径（pipeline `completed`、commit `b976ee0`、输出 `PROBE_OK`）。并行 lane 先验失败面板；再用同一个角色跑通 `review` lane（0 文件、`PROBE_OK`）。Teams 计划预演在带 Team 的 queued 任务上打开并取消，不写回 Pipeline；`Delete probe` 从 Studio 删除后，后端任务列表确认消失。
+- [x] 真实模型登录补充：首次并行尝试因 daemon 启动时 `PATH` 未包含 `~/.local/bin`，报 `spawn codebuddy ENOENT`；用 `PATH="$HOME/.local/bin:$PATH"` 重启 daemon 后成功。这不是 Studio 代码缺陷，但本机 daemon 启动环境应显式带上 CLI 路径。
+- [x] 发现并修复：DAG / 并行 / 串行 / retry / rerun / approve 都是同步长请求，但 Studio 原来复用 `apiFetch` 的 15 秒默认超时，真实模型超过 15 秒会被前端 abort，daemon 仍在后台执行。新增 `PIPELINE_REQUEST_TIMEOUT_MS = 10 分钟` 并用于这些请求（commit `d7dd834`）。
+- [ ] 未做：并行 lane 的接受/驳回仍走普通 Run 操作；task 级 cancel 仍未做，目前只有“无 Run 的 task 可删除”。（团队任务队列已于 2026-11-21 改为 `GET /api/teams/:teamId/tasks`。）
+- [x] 本轮提交：`2efd97a feat(storage-core): delete tasks without runs`、`0eb7917 feat(server-core): expose task deletion`、`24d8891 feat(cli): add the delete task tool`、`3592b06 feat(studio): run DAG and parallel teams`、`69bfffc docs(handoff): record branch runs and task deletion`、`d7dd834 fix(studio): keep long pipeline requests alive`。
+
 ## M1 退出验收 — 4 步串行完整组合 — 已完成（2026-11-20）
 
 - [x] 新增 4 步串行 Pipeline 端到端测试：`Plan → Implement（requiresApproval）→ Review → Verify`，四个不同 Role，真实 git 仓库 + 真实 worktree + 注入 runner。
@@ -235,7 +252,7 @@
 
 - [x] 新增 `TeamsView`：团队列表（花名册人数、交接边数、启用切换、编辑/删除），选中团队后在下方展示花名册、交接边与任务队列。
 - [x] 建/编辑表单：名称、描述、角色花名册多选（角色来自 `/api/roles`）、交接边编辑器（上游/下游/备注，下拉取花名册角色）、启用开关；保存/取消/错误提示沿用 RolesView 的处理方式。
-- [x] 任务队列：按 `task.teamId` 过滤 `/api/tasks`，显示任务状态；`pipeline.status === 'awaiting_approval'` 的任务额外标记“审批卡点”。
+- [x] 任务队列：初版按 `task.teamId` 过滤 `/api/tasks`；2026-11-21 已改为对选中团队调用 `GET /api/teams/:teamId/tasks`，显示任务状态，`pipeline.status === 'awaiting_approval'` 的任务额外标记“审批卡点”。
 - [x] 接入 Studio 导航（`nav.teams`）与 `View` 联合类型；浏览器侧补 `AgentTeam`/`TeamHandoff` 类型与 `KernelTask.teamId`。
 - [x] 文案全部走 i18n：`en`/`zh` 同步新增 `teams` 与 `nav.teams`；`owned-copy` 扫描通过。
 - [x] 验证：Studio `tsc` 与 `vite build` 通过（1655 modules），Studio 14 文件 / 257 tests 绿；全仓 typecheck 0，50 文件 / 664 tests 绿。
@@ -369,13 +386,60 @@
 - [x] `run.accepted` / `run.rejected` 审计新增 `laneId`；Studio Run 身份行显示 `Lane`（并行通道）。
 - [x] 测试：两条 lane 各自接受后任务才 `done`、主 worktree 未被污染、lane commit 在各自 worktree HEAD 且 pin ref 存在；驳回 lane 后任务仍 `review`、lane worktree 干净、文件被清掉。全仓 typecheck 0，58 文件 / 700 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
 - [x] 本轮提交：`5b32c6f feat(storage-core): accept parallel lanes`、`6bee0e6 feat(studio): label parallel lane runs`。
-- [ ] 未做：仍然**不自动合并**多 lane 结果，也没有“选哪条 lane 作为最终交付”的一等操作；并行任务没有专用 UI 入口（接受/驳回仍走普通 Run 操作）。
+- [x] 后续补齐（2026-11-21）：并行结果面板已有一等 lane 决策入口与最终交付选择，见下方“并行 lane 决策与最终交付”。
 
 ## F5-07 收尾 — release 清理 lane worktree — 已完成（2026-11-20）
 
 - [x] `releaseTask` 现在会先收集所有 Run 记录的非主 worktree（并行 lane 与 DAG step 各一个），逐个 `git status` 检查后再统一删除；任一路径有未提交改动即拒绝释放，主 worktree 保持原样（不会半释放）。
 - [x] 测试：两条 lane 接受并 release 后，主 worktree 与两条 lane worktree 均不存在；存在失败 lane（留下 `DIRTY.md`）时 release 抛 `uncommitted changes` 且主 worktree 未被删除。全仓 typecheck 0，62 文件 / 730 tests 绿。
 - [ ] 未做：release 不清理 `refs/agent-ops/tasks/<id>/lanes/*` 的 pin（保留可审计的 commit）；Studio 的 release 按钮未在浏览器验证。
+
+## 并行 lane 决策与最终交付 — 已完成（2026-11-21）
+
+- [x] storage-core：migration `0020_task_final_lane` 给 `tasks` 增加 `final_run_id` / `final_commit_sha`；`selectFinalLane(taskId, runId)` 只接受已 accepted 且有 commit 的 lane，持久化指针，不 merge；再次选择会替换指针。
+- [x] server：`POST /api/tasks/:id/final-lane`，body `{ runId }`；非法 body 400、未知任务/Run 404、未接受或非 lane 409；`GET /api/tasks/:id` 返回两个 final 字段。
+- [x] MCP：`agent_ops_select_final_lane`；`agent_ops_accept_run` 文案改为“并行 lane 要等全部决定后才关闭任务”。
+- [x] Studio：并行结果面板在 lane `review` 时直接显示 Accept lane / Reject lane；`done` lane 显示 Set as final，选中后显示“最终交付 / Final”徽标；接受/驳回后本地 lane 状态即时刷新。
+- [x] 语义：最终选择只指向 lane worktree 里已 pin 的 commit，不把改动应用到任务主 worktree；release 清理 lane worktree 后仍可通过 `refs/agent-ops/tasks/<taskId>/lanes/<laneId>` 读取。
+- [x] 测试：storage-core 并行 6 例；server API 200/400/404；MCP 工具清单；全仓 typecheck 0，64 文件 / 751 tests 绿；Studio 1658 modules 构建成功。
+- [x] 浏览器验收：隔离 DB `/tmp/agent-ops-lane-verify/agent-ops.sqlite` + 临时 git 仓，真实 CodeBuddy 2.142.0 两条 lane 各写 `PROBE_LANE.txt`；点 Accept lane 后第一条 done、第二条仍 review；点 Set as final 后第一条显示“最终交付”；点 Reject lane 后第二条 queued，任务保持 review。后端确认 `finalRunId=75e4cf8c-…`、`finalCommitSha=ced58f34…`；主 worktree clean 且没有 `PROBE_LANE.txt`；审计表存在 `task.final_lane.selected`。
+- [x] 本轮提交：`2ed1adb feat(storage-core): select the final parallel lane`、`6b51497 feat(server-core): expose final lane selection`、`9750a83 feat(cli): add final lane selection`、`88cd6bd feat(studio): decide parallel lanes inline`。
+
+## Studio 审计面板与导出 — 已完成（2026-11-21）
+
+- [x] Studio 新增独立 **Audit / 审计** 导航与 `AuditView`，没有替换既有的 **Activity / 活动** 页：活动页记录项目创建、Blueprint 修订、Baseline 批准等前端事件，审计页只回放内核 `audit_events`。
+- [x] `AuditView` 通过 `GET /api/audit` 读取 append-only 事件，筛选任务 ID、团队 ID、事件类型与最多条数（50 / 200 / 500 / 1000）；表单提交后才应用筛选，避免每次输入都请求。事件以 `<details>` 展开，显示 `seq` / 类型 / 时间、actor / task / team 与格式化 JSON data。
+- [x] **Export audit JSON** 把已应用筛选与当前事件导出为 `agent-ops-audit-YYYY-MM-DD.json`；**Export task evidence** 要求任务 ID，调用 `GET /api/tasks/:id/export`，从 `content-disposition` 解析文件名并下载单任务证据包。下载 helper 先挂载 anchor，再在 `setTimeout(0)` 里 revoke blob URL，避免立即 revoke 取消下载。
+- [x] 安全边界：审计页只调用已有的只读 API；导出在浏览器侧组装，不新增服务端权限面；任务证据仍走内核既有导出端点。
+- [x] 测试：新增 `audit-view.test.tsx` SSR 冒烟，断言筛选与两个导出入口在事件加载前已渲染；全仓 typecheck 0，65 文件 / 752 tests 绿；Studio build 1659 modules 成功，主 chunk 288.60 kB。
+- [x] 浏览器验收：隔离 DB `/tmp/agent-ops-audit-verify/agent-ops.sqlite` + 临时 git 仓，造 6 条真实角色 / 团队 / 任务审计。页面显示 `#1`–`#6`；按任务过滤后剩 2 条，再按 `task.created` 过滤后剩 1 条；展开可见 data。任务证据下载 `agent-ops-task-897204a3-….json`（1 KB，task 与 totals 正确）；审计 JSON 下载 `agent-ops-audit-2026-11-21.json`（3.2 KB，`count=7`，filters 与事件类型正确）。第二次下载触发浏览器多文件下载权限，重载后用 CDP 允许下载完成验证。
+- [x] 本轮提交：`e85e4c4 feat(studio): add the kernel audit panel`。
+- [ ] 未做：事件类型下拉是固定 21 项清单，不能从内核类型动态派生；没有自动轮询或实时追加，只有手动 Refresh；没有按时间范围或 actor 过滤。
+
+## Studio 策略预览面板 — 已完成（2026-11-21）
+
+- [x] 角色创建 / 编辑表单新增 `PolicyPreview`，位置在白名单、黑名单、审批模式之后、预算之前；点击 **Preview policy / 预览策略** 调用 `POST /api/policy/evaluate`，不新增服务端路由。
+- [x] 结果表逐 Runtime 展示 `capability`、`enforcement`、只读、人工门与判定条数；每行可展开，列出逐工具 allow / deny、原因、warnings 与 `unsupportedReason`，并显示已评估 Runtime 数与当前审批模式。
+- [x] 防止过期结果：以 `JSON.stringify(policy)` 作为签名，任一策略字段变化即清空旧结果；请求返回时若签名已变，丢弃响应，不会把旧策略的判定写回。
+- [x] 空策略语义明确：没有白名单 / 黑名单时，页面提示各 Runtime 使用自身默认工具集；表格显示 0 条判定、`readOnly=false`，`enforcement=exact`（没有限制可执行，所以不存在不支持）。
+- [x] 类型：`types.ts` 新增 `PolicyVerdict` 与 `PolicyPreviewResponse`，镜像内核 `UnifiedPolicyVerdict`；中英文文案补齐 `policy` 块。
+- [x] 样式：新增 `.policy-preview`、`.policy-table`、`.policy-enforcement`、`.policy-decision`、`.policy-warnings` 等；预览按钮覆盖 `.secondary-button` 的 100% 宽度，改为自适应，避免挤占标题。
+- [x] 测试：新增 `policy-preview.test.tsx` SSR 冒烟，断言标题、预览入口与空态；全仓 typecheck 0，66 文件 / 753 tests 绿；Studio build 1660 modules 成功，主 chunk 294.55 kB。
+- [x] 浏览器验收：隔离 DB `/tmp/agent-ops-policy-verify/agent-ops.sqlite`，在 Roles → New role 填 `Read, Grep` + `Bash`，点预览得到 7 个 Runtime；`codex` / `claude-code` 为 native + exact，其余 5 个为 unsupported；每个 Runtime 20 条判定，`Read` / `Grep` allow、`Bash` 按黑名单 deny、其他已知工具按 allowlist deny；展开 aider 看到 warning 与 unsupportedReason。改动白名单后结果立即清空；空策略显示 7 个 Runtime、0 decisions 和默认工具集提示；中英文文案均正常。daemon 停止后再预览显示 `Unable to evaluate the policy.`，旧结果不保留。
+- [x] 本轮提交：`babbb80 feat(studio): preview role policy across runtimes`。
+- [ ] 未做：预览结果只用于人工查看，不会自动写入角色；没有“把判定导出 JSON”按钮；不支持原因与 warnings 仍显示服务端英文原文；没有独立于角色表单的全局策略沙盒页。
+
+## Studio Teams 任务队列服务端过滤 — 已完成（2026-11-21）
+
+- [x] `TeamsView` 不再在 `loadData` 里拉取全量 `/api/tasks` 后按 `teamId` 过滤；选中团队后单独调用 `GET /api/teams/:teamId/tasks`，团队列表只加载 `/api/teams` 与 `/api/roles`。
+- [x] 切换团队立即清空旧队列，并用取消标记忽略上一团队的迟到响应；队列与卡点面板分别显示加载态和错误态，避免把“尚未加载”误报成“没有任务 / 没有卡点”。
+- [x] 刷新按钮同时重载团队列表与当前团队队列；应用 Coordinator 计划后额外刷新当前队列，使 Pipeline 状态及时更新。
+- [x] 计划预览增加团队切换保护：响应回来时若选中团队已变，不写入 `planResult`；旧请求的失败也不会污染新团队的全局错误；`planningTaskId` 只清除自己那条任务的 loading。
+- [x] 中英文新增 `teams.tasksLoading` / `teams.tasksLoad`。
+- [x] 真实浏览器验收：隔离 DB + 临时 git 仓，Alpha 团队 2 个任务、Beta 团队 1 个、未归属 1 个。进入 Teams 默认显示 Alpha 的两条队列，切到 Beta 只显示 `Beta queue only`，未归属任务不出现；网络记录只有 `/api/teams/alpha-team/tasks` 与 `/api/teams/beta-team/tasks`，刷新只重载当前团队队列。停止 daemon 后刷新，页面显示 `Unable to load teams.`，队列与卡点面板分别显示 `Unable to load the team task queue.`。
+- [x] 门禁：全仓 typecheck 0；66 文件 / 753 tests 全部通过；Studio build 1660 modules 成功，主 chunk 295.45 kB，CSS 65.24 kB。
+- [x] 本轮提交：`1636843 feat(studio): load team tasks from the team queue`。
+- [ ] 未做：团队队列接口没有分页或状态过滤；任务数量大时仍会一次返回该团队全部任务。
 
 ## F7-06 团队看板 — 已完成（2026-11-20）
 

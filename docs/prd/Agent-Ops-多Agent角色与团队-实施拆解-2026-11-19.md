@@ -620,3 +620,4 @@ npm --workspace @agent-ops/studio run build
 | 2026-11-21 | Studio Role/Team 表单补预算输入（`lib/budget.ts` + 双语文案 + 三列栅格），浏览器实测创建/编辑回填与临时探针清理；清空既有预算的 API 未支持 |
 | 2026-11-21 | Pipeline step 提示词模板：`{{previous.output}}` / `{{previous.commit}}` 与 `{{step:<id>.*}}` 在创建 Run 前展开（串行 + DAG），未知/未完成引用保持原样；typecheck 0、63 文件 / 743 tests 绿 |
 | 2026-11-21 | completed pipeline 重跑：`rerunTaskPipeline` 重置 worktree 到 base commit 并清空旧 results，server/MCP/Studio 暴露；同时修复 retry/auto hygiene 重置后丢失 `node_modules` 链接的真实缺陷；63 文件 / 747 tests 绿 |
+| 2026-11-21 | Studio 分支入口：任务面板新增 Run as DAG / Run parallel team 与结果面板（步骤、lane、冲突、warning）；任务删除 API/MCP/UI（仅无 Run 的 queued 任务）；64 文件 / 750 tests 绿；DAG/并行按钮与 Teams 计划预览的浏览器验收待补 |

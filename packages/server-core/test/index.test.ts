@@ -757,7 +757,7 @@ describe('createKernelApp', () => {
       });
       expect(response.status).toBe(200);
       const body = (await response.json()) as {
-        lanes: Array<{ roleId: string; status: string }>;
+        lanes: Array<{ roleId: string; status: string; runId: string | null }>;
         conflicts: Array<{ file: string; roleIds: string[] }>;
         taskStatus: string;
         maxConcurrency: number;
@@ -767,6 +767,33 @@ describe('createKernelApp', () => {
       expect(body.lanes.every(lane => lane.status === 'review')).toBe(true);
       expect(body.conflicts.map(conflict => ({ file: conflict.file, roleIds: [...conflict.roleIds].sort() })))
         .toEqual([{ file: 'lane.md', roleIds: [left.id, right.id].sort() }]);
+
+      const leftRunId = body.lanes[0]?.runId ?? '';
+      const accepted = await app.request(`/api/runs/${leftRunId}/accept`, { method: 'POST' });
+      expect(accepted.status).toBe(200);
+      const acceptedBody = (await accepted.json()) as { commitSha: string };
+      expect(acceptedBody.commitSha).toMatch(/^[0-9a-f]{40}$/);
+
+      const selected = await app.request(`/api/tasks/${task.id}/final-lane`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId: leftRunId }),
+      });
+      expect(selected.status).toBe(200);
+      expect((await selected.json()) as object).toMatchObject({ finalRunId: leftRunId, finalCommitSha: acceptedBody.commitSha });
+
+      const invalidSelection = await app.request(`/api/tasks/${task.id}/final-lane`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(invalidSelection.status).toBe(400);
+      const missingSelection = await app.request(`/api/tasks/${task.id}/final-lane`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId: 'missing' }),
+      });
+      expect(missingSelection.status).toBe(404);
 
       const invalid = await app.request(`/api/tasks/${task.id}/parallel/execute`, {
         method: 'POST',
@@ -1191,6 +1218,30 @@ describe('createKernelApp', () => {
       await store.provisionTask(idle.id);
       const rejected = await app.request(`/api/tasks/${idle.id}/pipeline/rerun`, { method: 'POST' });
       expect(rejected.status).toBe(409);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('deletes a task without runs and refuses one with runs', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const task = await store.createTask({ repo: '/tmp/repo', baseRef: 'main', title: 'Probe' });
+      const deleted = await app.request(`/api/tasks/${task.id}`, { method: 'DELETE' });
+      expect(deleted.status).toBe(200);
+      expect((await deleted.json()) as object).toMatchObject({ deleted: true });
+      expect(store.getTask(task.id)).toBeUndefined();
+
+      const missing = await app.request(`/api/tasks/${task.id}`, { method: 'DELETE' });
+      expect(missing.status).toBe(404);
+
+      const busy = await store.createTask({ repo: '/tmp/repo', baseRef: 'main', title: 'Busy' });
+      await store.createRun(busy.id, 'codex');
+      const refused = await app.request(`/api/tasks/${busy.id}`, { method: 'DELETE' });
+      expect(refused.status).toBe(409);
+      expect(store.getTask(busy.id)?.title).toBe('Busy');
     } finally {
       await store.close();
       await rm(directory, { recursive: true, force: true });

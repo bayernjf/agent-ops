@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, ListTodo, Play, Plus, RefreshCw, RotateCcw, Square, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, GitFork, ListTodo, Play, Plus, RefreshCw, RotateCcw, Square, Trash2, Users, X } from 'lucide-react';
 import { useI18n, type KeyPath } from '../i18n/i18n';
-import type { AgentRole, BudgetStatus, KernelRun, KernelTask, KernelTaskState, TaskBudgetStatus, TaskPipeline, TaskPipelineStep, TaskPipelineStepResult } from '../types';
+import type { AgentRole, BudgetStatus, DagPipelineResult, KernelRun, KernelTask, KernelTaskState, ParallelTeamResult, TaskBudgetStatus, TaskPipeline, TaskPipelineStep, TaskPipelineStepResult } from '../types';
 import { apiFetch, apiStreamFetch } from '../lib/api';
 
 type RunAction = 'execute' | 'accept' | 'reject';
@@ -41,6 +41,11 @@ const emptyTaskForm: TaskForm = {
   pipelineEnabled: false,
   steps: [],
 };
+
+// Pipeline and fan-out endpoints run synchronously until the model finishes. The shared
+// apiFetch default is 15s, which aborts a real model run and leaves the daemon working on a
+// request the UI has already abandoned. Give these the same budget as a long dogfood run.
+const PIPELINE_REQUEST_TIMEOUT_MS = 10 * 60_000;
 
 const splitLines = (value: string) => value.split('\n').map(line => line.trim()).filter(Boolean);
 
@@ -86,6 +91,10 @@ export function TasksView() {
   const [creating, setCreating] = useState(false);
   const [taskForm, setTaskForm] = useState<TaskForm>(emptyTaskForm);
   const [pipelineBusyId, setPipelineBusyId] = useState<string | null>(null);
+  const [fanoutBusy, setFanoutBusy] = useState<string | null>(null);
+  const [dagResultByTask, setDagResultByTask] = useState<Record<string, DagPipelineResult>>({});
+  const [parallelResultByTask, setParallelResultByTask] = useState<Record<string, ParallelTeamResult>>({});
+  const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
 
   const stateLabel = (state: KernelTaskState) => t(`tasks.state.${state}` as KeyPath);
 
@@ -235,17 +244,20 @@ export function TasksView() {
     steps: prev.steps.map((step, i) => (i === index ? { ...step, [key]: value } : step)),
   }));
 
+  const ensureProvisioned = async (task: KernelTask, fallback: KeyPath) => {
+    // The create form does not provision a worktree, so a fresh task cannot run until it has one.
+    if (task.worktreePath) return;
+    const provision = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/provision`, { method: 'POST' });
+    const provisionBody = (await provision.json().catch(() => null)) as { error?: string } | null;
+    if (!provision.ok) throw new Error(provisionBody?.error ?? t(fallback));
+  };
+
   const executePipeline = async (task: KernelTask) => {
     setPipelineBusyId(task.id);
     setError('');
     try {
-      // The create form does not provision a worktree, so a fresh task cannot run until it has one.
-      if (!task.worktreePath) {
-        const provision = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/provision`, { method: 'POST' });
-        const provisionBody = (await provision.json().catch(() => null)) as { error?: string } | null;
-        if (!provision.ok) throw new Error(provisionBody?.error ?? t('tasks.pipelineExecute'));
-      }
-      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/execute`, { method: 'POST' });
+      await ensureProvisioned(task, 'tasks.pipelineExecute');
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/execute`, { method: 'POST' }, PIPELINE_REQUEST_TIMEOUT_MS);
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineExecute'));
       await loadTasks();
@@ -263,7 +275,7 @@ export function TasksView() {
     setPipelineBusyId(task.id);
     setError('');
     try {
-      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/retry`, { method: 'POST' });
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/retry`, { method: 'POST' }, PIPELINE_REQUEST_TIMEOUT_MS);
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineRetry'));
       await loadTasks();
@@ -280,7 +292,7 @@ export function TasksView() {
     setPipelineBusyId(task.id);
     setError('');
     try {
-      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/rerun`, { method: 'POST' });
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/rerun`, { method: 'POST' }, PIPELINE_REQUEST_TIMEOUT_MS);
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineRerun'));
       await loadTasks();
@@ -292,11 +304,76 @@ export function TasksView() {
     }
   };
 
+  const runDagPipeline = async (task: KernelTask) => {
+    if (!window.confirm(t('tasks.dagConfirm'))) return;
+    const busyKey = `${task.id}:dag`;
+    setFanoutBusy(busyKey);
+    setError('');
+    try {
+      await ensureProvisioned(task, 'tasks.dagRun');
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/dag`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      }, PIPELINE_REQUEST_TIMEOUT_MS);
+      const body = (await response.json().catch(() => null)) as (DagPipelineResult & { error?: string }) | null;
+      if (!response.ok || !body) throw new Error(body?.error ?? t('tasks.dagRun'));
+      setDagResultByTask(previous => ({ ...previous, [task.id]: body }));
+      await loadTasks();
+      if (expandedId === task.id) await loadRuns(task.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.dagRun'));
+    } finally {
+      setFanoutBusy(null);
+    }
+  };
+
+  const runParallelTeam = async (task: KernelTask) => {
+    if (!window.confirm(t('tasks.parallelConfirm'))) return;
+    const busyKey = `${task.id}:parallel`;
+    setFanoutBusy(busyKey);
+    setError('');
+    try {
+      await ensureProvisioned(task, 'tasks.parallelRun');
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/parallel/execute`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      }, PIPELINE_REQUEST_TIMEOUT_MS);
+      const body = (await response.json().catch(() => null)) as (ParallelTeamResult & { error?: string }) | null;
+      if (!response.ok || !body) throw new Error(body?.error ?? t('tasks.parallelRun'));
+      setParallelResultByTask(previous => ({ ...previous, [task.id]: body }));
+      await loadTasks();
+      if (expandedId === task.id) await loadRuns(task.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.parallelRun'));
+    } finally {
+      setFanoutBusy(null);
+    }
+  };
+
+  const deleteTask = async (task: KernelTask) => {
+    if (!window.confirm(t('tasks.deleteConfirm'))) return;
+    setDeletingTaskId(task.id);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}`, { method: 'DELETE' });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(body?.error ?? t('tasks.deleteFailed'));
+      setExpandedId(current => (current === task.id ? null : current));
+      await loadTasks();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.deleteFailed'));
+    } finally {
+      setDeletingTaskId(null);
+    }
+  };
+
   const approvePipeline = async (task: KernelTask) => {
     setPipelineBusyId(task.id);
     setError('');
     try {
-      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/approve`, { method: 'POST' });
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/approve`, { method: 'POST' }, PIPELINE_REQUEST_TIMEOUT_MS);
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineApprove'));
       await loadTasks();
@@ -428,7 +505,7 @@ export function TasksView() {
     }));
   };
 
-  const runAction = async (run: KernelRun, action: RunAction, files?: string[], worktree?: WorktreePolicy) => {
+  const runAction = async (run: KernelRun, action: RunAction, files?: string[], worktree?: WorktreePolicy): Promise<boolean> => {
     const isExecute = action === 'execute';
     if (isExecute) {
       setExecutingRunId(run.id);
@@ -460,9 +537,11 @@ export function TasksView() {
       if (!response.ok) throw new Error(payload?.error ?? t(`tasks.${action}Run` as KeyPath));
       await loadRuns(run.taskId);
       await loadTasks();
+      return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t(`tasks.${action}Run` as KeyPath));
       if (isExecute) await loadRuns(run.taskId);
+      return false;
     } finally {
       if (isExecute) {
         stopRunStream();
@@ -490,6 +569,48 @@ export function TasksView() {
   };
 
   const taskRuns = (taskId: string) => runsByTask[taskId] ?? [];
+
+  const updateParallelLaneStatus = (taskId: string, runId: string, status: string) => {
+    setParallelResultByTask(previous => {
+      const result = previous[taskId];
+      if (!result) return previous;
+      return {
+        ...previous,
+        [taskId]: {
+          ...result,
+          lanes: result.lanes.map(lane => lane.runId === runId ? { ...lane, status } : lane),
+        },
+      };
+    });
+  };
+
+  const laneAction = async (task: KernelTask, lane: ParallelTeamResult['lanes'][number], action: 'accept' | 'reject') => {
+    const run = taskRuns(task.id).find(candidate => candidate.id === lane.runId);
+    if (!run) return;
+    const changed = await runAction(run, action);
+    if (changed) updateParallelLaneStatus(task.id, run.id, action === 'accept' ? 'done' : 'queued');
+  };
+
+  const selectFinalLane = async (task: KernelTask, lane: ParallelTeamResult['lanes'][number]) => {
+    const run = taskRuns(task.id).find(candidate => candidate.id === lane.runId);
+    if (!run) return;
+    setBusyRunId(run.id);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/final-lane`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ runId: run.id }),
+      });
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(payload?.error ?? t('tasks.selectFinalLaneFailed'));
+      await loadTasks();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.selectFinalLaneFailed'));
+    } finally {
+      setBusyRunId(null);
+    }
+  };
 
   const configuredBudgetScopes = (status: TaskBudgetStatus): BudgetStatus[] =>
     [status.role, status.team].filter((scope): scope is BudgetStatus => Boolean(scope?.configured));
@@ -619,6 +740,13 @@ export function TasksView() {
 
                 {expandedId === task.id && (
                   <div className="run-list">
+                    {task.status === 'queued' && taskRuns(task.id).length === 0 && (
+                      <div className="task-danger-row">
+                        <button className="quiet-button" type="button" onClick={() => void deleteTask(task)} disabled={deletingTaskId === task.id}>
+                          <Trash2 size={14} aria-hidden="true" /> {t('tasks.deleteTask')}
+                        </button>
+                      </div>
+                    )}
                     {task.pipeline && (() => {
                       const pipeline = task.pipeline;
                       return (
@@ -650,6 +778,11 @@ export function TasksView() {
                                 </button>
                               </>
                             )}
+                            {(task.status === 'queued' || task.status === 'review') && pipeline.status !== 'running' && pipeline.status !== 'awaiting_approval' && !pipeline.steps.some(step => step.requiresApproval) && (
+                              <button className="secondary-button" type="button" onClick={() => void runDagPipeline(task)} disabled={fanoutBusy === `${task.id}:dag`}>
+                                <GitFork size={14} aria-hidden="true" /> {fanoutBusy === `${task.id}:dag` ? t('tasks.pipelineRunning') : t('tasks.dagRun')}
+                              </button>
+                            )}
                           </div>
                           <div className="pipeline-steps">
                             {pipeline.steps.map(step => {
@@ -664,6 +797,94 @@ export function TasksView() {
                               );
                             })}
                           </div>
+                        </div>
+                      );
+                    })()}
+                    {task.teamId && (task.status === 'queued' || task.status === 'review') && (
+                      <div className="fanout-actions">
+                        <button className="secondary-button" type="button" onClick={() => void runParallelTeam(task)} disabled={fanoutBusy === `${task.id}:parallel`}>
+                          <Users size={14} aria-hidden="true" /> {fanoutBusy === `${task.id}:parallel` ? t('tasks.pipelineRunning') : t('tasks.parallelRun')}
+                        </button>
+                      </div>
+                    )}
+                    {dagResultByTask[task.id] && (() => {
+                      const result = dagResultByTask[task.id];
+                      return (
+                        <div className="fanout-panel" aria-label={t('tasks.dagResultTitle')}>
+                          <div className="fanout-head">
+                            <strong>{t('tasks.dagResultTitle')}</strong>
+                            <span>{t('tasks.fanoutConcurrency', { count: result.maxConcurrency })}</span>
+                          </div>
+                          <div className="fanout-rows">
+                            {result.steps.map(step => (
+                              <div className="fanout-row" key={step.stepId}>
+                                <span>{step.name}</span>
+                                <span className={`state ${step.status}`}>{t(`tasks.fanoutStatus.${step.status}` as KeyPath)}</span>
+                                <span className="pipeline-step-commit">{step.commitSha ? step.commitSha.slice(0, 10) : '—'}</span>
+                                {step.error ? <small>{step.error}</small> : null}
+                              </div>
+                            ))}
+                          </div>
+                          {result.conflicts.length > 0 && (
+                            <div className="fanout-notes">
+                              <strong>{t('tasks.conflictsTitle')}</strong>
+                              <ul>{result.conflicts.map(conflict => <li key={conflict.file}>{conflict.file} — {conflict.stepIds.join(', ')}</li>)}</ul>
+                            </div>
+                          )}
+                          {result.warnings.length > 0 && (
+                            <div className="fanout-notes">
+                              <strong>{t('tasks.warningsTitle')}</strong>
+                              <ul>{result.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                    {parallelResultByTask[task.id] && (() => {
+                      const result = parallelResultByTask[task.id];
+                      return (
+                        <div className="fanout-panel" aria-label={t('tasks.parallelResultTitle')}>
+                          <div className="fanout-head">
+                            <strong>{t('tasks.parallelResultTitle')}</strong>
+                            <span>{t('tasks.fanoutConcurrency', { count: result.maxConcurrency })}</span>
+                          </div>
+                          <div className="fanout-rows">
+                            {result.lanes.map(lane => {
+                              const laneRun = taskRuns(task.id).find(candidate => candidate.id === lane.runId);
+                              const finalLane = task.finalRunId === lane.runId;
+                              return (
+                                <div className="fanout-row fanout-row-decision" key={lane.roleId}>
+                                  <span>{lane.roleName}{finalLane ? <span className="final-lane-badge">{t('tasks.finalLane')}</span> : null}</span>
+                                  <span className={`state ${lane.status}`}>{stateLabel(lane.status as KernelTaskState)}</span>
+                                  <span className="pipeline-step-commit">{t('tasks.changedFileCount', { count: lane.changedFiles.length })}</span>
+                                  <span className="fanout-lane-actions">
+                                    {lane.status === 'review' && laneRun ? (
+                                      <>
+                                        <button className="secondary-button" type="button" onClick={() => void laneAction(task, lane, 'accept')} disabled={busyRunId === laneRun.id}>
+                                          <Check size={14} aria-hidden="true" /> {t('tasks.acceptLane')}
+                                        </button>
+                                        <button className="secondary-button" type="button" onClick={() => void laneAction(task, lane, 'reject')} disabled={busyRunId === laneRun.id}>
+                                          <X size={14} aria-hidden="true" /> {t('tasks.rejectLane')}
+                                        </button>
+                                      </>
+                                    ) : null}
+                                    {lane.status === 'done' && !finalLane && laneRun ? (
+                                      <button className="secondary-button" type="button" title={t('tasks.finalLaneHint')} onClick={() => void selectFinalLane(task, lane)} disabled={busyRunId === laneRun.id}>
+                                        {t('tasks.selectFinalLane')}
+                                      </button>
+                                    ) : null}
+                                  </span>
+                                  {lane.error ? <small>{lane.error}</small> : null}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {result.conflicts.length > 0 && (
+                            <div className="fanout-notes">
+                              <strong>{t('tasks.conflictsTitle')}</strong>
+                              <ul>{result.conflicts.map(conflict => <li key={conflict.file}>{conflict.file} — {conflict.roleIds.join(', ')}</li>)}</ul>
+                            </div>
+                          )}
                         </div>
                       );
                     })()}

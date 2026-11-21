@@ -91,6 +91,10 @@ const executeParallelSchema = z.object({
   maxConcurrency: z.number().int().min(1).max(8).optional(),
 });
 
+const selectFinalLaneSchema = z.object({
+  runId: z.string().trim().min(1),
+});
+
 const policyEvaluateSchema = z.object({
   allowedTools: z.array(z.string().trim().min(1).max(100)).max(100).default([]),
   blockedTools: z.array(z.string().trim().min(1).max(100)).max(100).default([]),
@@ -128,7 +132,7 @@ function errorResponse(context: Context, error: unknown) {
   if (message.includes('is not assigned to a Team') || message.includes('produced an empty plan')) {
     return context.json({ error: message }, 400);
   }
-  if (message.includes('cannot be') || message.includes('no worktree') || message.includes('nothing is awaiting approval') || message.includes('can only be applied') || message.includes('parallel execution starts from')) {
+  if (message.includes('cannot be') || message.includes('no worktree') || message.includes('nothing is awaiting approval') || message.includes('can only be applied') || message.includes('parallel execution starts from') || message.includes('only a task without runs') || message.includes('has a running pipeline')) {
     return context.json({ error: message }, 409);
   }
   return context.json({ error: message }, 500);
@@ -430,6 +434,15 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
 
   app.get('/api/tasks', (c) => c.json(store.listTasks()));
 
+  app.delete('/api/tasks/:id', async (c) => {
+    try {
+      const deleted = await store.deleteTask(c.req.param('id'));
+      return deleted ? c.json({ deleted: true }) : c.json({ error: 'Task not found.' }, 404);
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
   app.get('/api/tasks/:id', (c) => {
     const task = store.getTask(c.req.param('id'));
     return task ? c.json(task) : c.json({ error: `Task ${c.req.param('id')} was not found.` }, 404);
@@ -504,6 +517,16 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     const roleId = c.req.query('roleId')?.trim() || undefined;
     const status = await store.budgetStatus(taskId, roleId);
     return status ? c.json(status) : c.json({ error: `Task ${taskId} was not found.` }, 404);
+  });
+
+  app.post('/api/tasks/:id/final-lane', async (c) => {
+    const parsed = selectFinalLaneSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: 'Invalid final lane input.', details: parsed.error.flatten() }, 400);
+    try {
+      return c.json(await store.selectFinalLane(c.req.param('id'), parsed.data.runId));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
   });
 
   app.post('/api/tasks/:id/parallel/execute', async (c) => {

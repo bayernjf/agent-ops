@@ -112,12 +112,20 @@ describe('KernelStore parallel lanes', () => {
       const acceptedLeft = await store.acceptRun(leftLane?.runId ?? '');
       expect(acceptedLeft.commitSha).toMatch(/^[0-9a-f]{40}$/);
       expect(store.getTask(task.id)?.status).toBe('review');
+      const selected = await store.selectFinalLane(task.id, leftLane?.runId ?? '');
+      expect(selected.finalRunId).toBe(leftLane?.runId);
+      expect(selected.finalCommitSha).toBe(acceptedLeft.commitSha);
       expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: leftLane?.worktreePath ?? '' })).stdout.trim()).toBe('');
       expect((await execFileAsync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: leftLane?.worktreePath ?? '' })).stdout).toContain(`${left.id}.md`);
       expect((await execFileAsync('git', ['show-ref', '--verify', `refs/agent-ops/tasks/${task.id}/lanes/${left.id}`], { cwd: repo })).stdout).toContain(acceptedLeft.commitSha);
 
-      await store.acceptRun(rightLane?.runId ?? '');
+      const acceptedRight = await store.acceptRun(rightLane?.runId ?? '');
       expect(store.getTask(task.id)?.status).toBe('done');
+      // Selection is a pointer; choosing another accepted lane re-points it without merging.
+      const switched = await store.selectFinalLane(task.id, rightLane?.runId ?? '');
+      expect(switched.finalRunId).toBe(rightLane?.runId);
+      expect(switched.finalCommitSha).toBe(acceptedRight.commitSha);
+      expect(store.listAudit({ taskId: task.id, type: 'task.final_lane.selected' })).toHaveLength(2);
       // The task's own worktree is untouched: lanes never merge into it.
       expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: provisioned.worktreePath })).stdout.trim()).toBe('');
       expect(await access(join(provisioned.worktreePath, `${left.id}.md`)).then(() => true).catch(() => false)).toBe(false);
@@ -128,6 +136,35 @@ describe('KernelStore parallel lanes', () => {
         expect(await access(lane.worktreePath ?? '').then(() => true).catch(() => false)).toBe(false);
       }
       expect(await access(provisioned.worktreePath).then(() => true).catch(() => false)).toBe(false);
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('refuses to mark an unaccepted or ordinary run as the final lane', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-parallel-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const left = await store.roles.createRole({ name: 'Left', baseAgentId: 'codex' });
+      const right = await store.roles.createRole({ name: 'Right', baseAgentId: 'codex' });
+      const team = await store.teams.createTeam({ name: 'Pair', roleIds: [left.id, right.id] });
+      const task = await store.createTask({ repo, baseRef: 'main', title: 'Pair', teamId: team.id });
+      await store.provisionTask(task.id);
+      const result = await store.executeParallelTeam(task.id, {
+        runner: async (_command, _arguments, options) => {
+          await writeFile(join(options.cwd, `${basename(options.cwd)}.md`), 'x\n', 'utf8');
+          return success();
+        },
+      });
+      const laneRunId = result.lanes[0]?.runId ?? '';
+      // Still in review: selecting before acceptance must fail without touching the task.
+      await expect(store.selectFinalLane(task.id, laneRunId)).rejects.toThrow('cannot be selected as final');
+      expect(store.getTask(task.id)?.finalRunId).toBe('');
+      // A normal (non-lane) run cannot become the final lane either.
+      const ordinary = await store.createRun(task.id, 'codex');
+      await expect(store.selectFinalLane(task.id, ordinary.id)).rejects.toThrow('not a parallel lane');
       await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });

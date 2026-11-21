@@ -17,12 +17,13 @@
 |---|---|
 | Task / Run | 每任务一个 worktree（自动链接仓库 `node_modules`，`AGENT_OPS_LINK_NODE_MODULES=0` 关闭）；Run 持久化 stdout/stderr、完整 diff（含未跟踪 patch）、exit code、耗时、usage；SSE 实时输出与取消 |
 | Roles | 角色绑定 Profile / base agent、系统提示、验收标准、工具策略与成本预算；内置 architect / implementer / reviewer / tester / researcher 模板 |
-| Teams + Handoff | 团队 = 花名册 + 交接边 + 可选 owner（落盘角色，必须最后一步且不再交接）；Pipeline 每跨一条边写一条交接收据（上游 commit + changedFiles） |
+| 策略预览 | 角色表单保存前调用 `POST /api/policy/evaluate`，逐 Runtime 展示只读、执行精度、人工门、allow/deny 判定与不支持原因；策略一改，旧结果立即清空 |
+| Teams + Handoff | 团队 = 花名册 + 交接边 + 可选 owner（落盘角色，必须最后一步且不再交接）；Pipeline 每跨一条边写一条交接收据（上游 commit + changedFiles）；Studio 任务队列按选中团队调用 `GET /api/teams/:teamId/tasks`，不拉全量任务 |
 | 串行 Pipeline | 每步独立 Run，成功后自动提交并交接；支持每步审批门、失败重跑、从失败 step 重试、completed 后从第一步重跑；后续 step 的 prompt 可模板引用上游 output / commit |
-| 并行 DAG | 步骤可写 `dependsOn`（`[]` 为根）；ready steps 在各自 worktree 内有界并发，失败依赖跳过下游，文件冲突只报告、不合并 |
+| 并行 DAG | 步骤可写 `dependsOn`（`[]` 为根）；ready steps 在各自 worktree 内有界并发，失败依赖跳过下游，文件冲突只报告、不合并；Studio 任务面板可触发并展示每步结果 |
 | Coordinator | 按团队花名册与交接边推导 Pipeline（确定性拓扑序），预览后由人点击应用；owner 置末并标记 `ownsDeliverable`，完成后若没改动任何文件会在 summary 里告警 |
-| 并行 lanes | 每角色独立 worktree，有界并发；lane 结束后统一任务状态；文件级冲突只报告、不自动合并；接受 / 驳回按 lane 独立提交与 pin |
-| 证据与审计 | Run 证据（含实际工具调用与被拒原因，拿不到标 unknown）；append-only 审计可回放；单任务 JSON 导出；成功率 / 返工 / 用量 / 耗时指标 |
+| 并行 lanes | 每角色独立 worktree，有界并发；lane 结束后统一任务状态；文件级冲突只报告、不自动合并；接受 / 驳回按 lane 独立提交与 pin；Studio 结果面板可直接决策每条 lane，并把已接受的一条标记为最终交付（指针，不合并） |
+| 证据与审计 | Run 证据（含实际工具调用与被拒原因，拿不到标 unknown）；append-only 审计可回放，Studio 可按任务 / 团队 / 类型筛选并导出 JSON；单任务 JSON 证据导出；成功率 / 返工 / 用量 / 耗时指标 |
 | 成本预算 | Role / Team 可设 cost / token 上限，按任务已上报用量检查，超限阻断 createRun 与 executeRun |
 | 重跑 hygiene | 失败 Run 默认 reset 到 base commit；可选 keep 保留残留或 fresh 重建 worktree |
 
@@ -33,6 +34,38 @@
 ### Pipeline 重跑
 
 completed pipeline 通过 `POST /api/tasks/:id/pipeline/rerun` 从第一步重跑：worktree 重置到任务 base commit、旧 step results 清空，旧 commit 退到 git 历史；failed pipeline 仍走 retry，保留已完成的 step 前缀。Studio 的 Rerun pipeline 按钮执行前会二次确认。
+
+### DAG 与并行 lanes 的运行入口
+
+Studio 任务展开面板在任务处于 `queued` / `review` 时提供两个分支动作：
+
+- **Run as DAG**：调用 `POST /api/tasks/:id/pipeline/dag`，按步骤的 `dependsOn` 在独立 worktree 内有界并发；DAG 不支持 `requiresApproval`。结果面板展示每步状态、commit 与未自动合并的依赖 warning。
+- **Run parallel team**：仅对绑定了 Team 的任务显示，调用 `POST /api/tasks/:id/parallel/execute`，按团队花名册每角色一条 lane；结果面板展示 lane 状态、变更文件数和文件冲突。
+- **Lane 决策**：并行结果面板在 lane 处于 `review` 时直接提供 Accept lane / Reject lane；已接受的 lane 可点 Set as final，调用 `POST /api/tasks/:id/final-lane` 持久化 `finalRunId` / `finalCommitSha`。最终选择只是指向已 pin 的 lane commit，不把改动 merge 到任务 worktree；重新选择会替换指针，并写 `task.final_lane.selected` 审计。
+
+两个动作都不会自动合并产物；lane/step 的 commit 仍要人工接受。任务没有运行记录且状态为 `queued` 时，面板还提供删除入口（`DELETE /api/tasks/:id`）：删除任务及其 worktree；任何已有 Run 的任务会被拒绝，因为 Run 与审计是证据。
+
+### Studio 审计与证据导出
+
+Studio 侧边栏的 **Audit（审计）** 是内核 append-only 事件流的只读回放，和记录前端操作的 **Activity（活动）** 页分开。它调用 `GET /api/audit`，可按任务 ID、团队 ID、事件类型和最多条数筛选；列表按 `seq` 展示最近 N 条，展开后显示 actor、task/team 与事件 data。
+
+- **Export audit JSON**：把当前已应用的筛选条件与当前事件列表导出为 `agent-ops-audit-YYYY-MM-DD.json`。
+- **Export task evidence**：按任务 ID 调用 `GET /api/tasks/:id/export`，使用服务端 `content-disposition` 的文件名下载完整证据包（task、runs、handoffs、pipeline、audit、totals）。
+- 审计页目前需要手动 **Refresh**，没有自动轮询或实时追加；事件类型下拉是固定清单，暂未从内核类型动态派生。
+
+真实浏览器验收（2026-11-21，隔离 DB + 临时 git 仓）：审计页显示 6 条角色 / 团队 / 任务事件；任务过滤后剩 2 条（`task.created` / `task.deleted`），再按 `task.created` 过滤后剩 1 条；事件展开显示 data。`Export task evidence` 下载 `agent-ops-task-897204a3-….json`（1 KB，任务、totals 正确）；`Export audit JSON` 下载 `agent-ops-audit-2026-11-21.json`（3.2 KB，`count=7`，filters 与事件类型正确）。
+
+### Studio 策略预览
+
+角色创建 / 编辑表单里有 **Cross-runtime policy preview（跨 Runtime 策略预览）**。它把当前表单里的 `allowedTools` / `blockedTools` / `approvalMode` 发给 `POST /api/policy/evaluate`，在保存角色前返回每个注册 Runtime 的同一份策略判定：
+
+- Runtime 的 `capability`（native / wrapper / unsupported）与 `enforcement`（exact / coarse / unsupported）；
+- 是否只读、是否需要人工门；
+- 展开后显示逐工具 allow / deny、原因、warnings 与 `unsupportedReason`。
+
+策略字段一改，旧预览结果立即清空，避免把过期判定当成当前策略。空策略（没有白名单和黑名单）也会返回 7 个 Runtime 的“0 条判定”，页面会明确提示各 Runtime 使用自身默认工具集。
+
+真实浏览器验收（2026-11-21，隔离 DB）：填 `Read, Grep` + `Bash` 后预览，7 个 Runtime 全部返回；`codex` / `claude-code` 为 native + exact，其他 5 个 Runtime 为 unsupported（展开可见 warning 与不支持原因）；每个 Runtime 20 条判定，`Read` / `Grep` 允许、`Bash` 因黑名单拒绝、其他已知工具因不在白名单拒绝。修改白名单后旧结果立即清空；空策略显示 7 个 Runtime、0 条判定和默认工具集提示；中英文文案均正常。
 
 ## 报告指标
 
@@ -142,8 +175,8 @@ npx tsx apps/cli/src/index.ts export <taskId> [--summary] [--out file]   # 导�
 ## 已知限制
 
 - 真实模型的执行入口已可用（CodeBuddy）；token/cost 与工具审计仍取决于 Runtime 是否上报，CodeBuddy 当前不报。
-- 并行团队不自动合并，也没有“选哪条 lane 作为最终交付”的一等操作。
+- 并行团队不自动合并；最终交付 lane 只记录指针，不把 commit 应用到任务 worktree。
 - 预算为任务内口径，不跨任务累计；只在启动前阻断。
-- Studio 的 Teams 计划预览尚未在真实浏览器点击验证（Metrics 页、Role/Team 预算输入、任务预算面板与 completed pipeline 的 Rerun 按钮已实测）。
+- Studio 的 Teams 计划预览已在真实浏览器打开并取消；把计划应用回 Pipeline 尚未做浏览器验收。Metrics 页、Role/Team 预算输入、任务预算面板、completed pipeline 的 Rerun 按钮与并行 lane 决策已实测。
 - worktree 只链接根 `node_modules`：仓库本身未安装依赖时仍需先 `npm ci`；跨包的 TypeScript 类型可能指回主仓源码。
 - SSE 实时投递在本地 UI 用过，终态回放与重启回放有测试覆盖，但未做长时间 / 并发压测。

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Pencil, Plus, RefreshCw, Trash2, Users, X } from 'lucide-react';
 import { useI18n, type KeyPath } from '../i18n/i18n';
 import { apiFetch } from '../lib/api';
@@ -61,7 +61,10 @@ export function TeamsView() {
   const { t } = useI18n();
   const [teams, setTeams] = useState<AgentTeam[]>([]);
   const [roles, setRoles] = useState<AgentRole[]>([]);
-  const [tasks, setTasks] = useState<KernelTask[]>([]);
+  const [teamTasks, setTeamTasks] = useState<KernelTask[]>([]);
+  const [teamTasksLoading, setTeamTasksLoading] = useState(false);
+  const [teamTasksError, setTeamTasksError] = useState('');
+  const [teamTasksRevision, setTeamTasksRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -87,11 +90,6 @@ export function TeamsView() {
       const rolesPayload = (await rolesResponse.json().catch(() => null)) as { roles?: AgentRole[]; error?: string } | null;
       if (!rolesResponse.ok) throw new Error(rolesPayload?.error ?? t('teams.load'));
       setRoles(Array.isArray(rolesPayload?.roles) ? rolesPayload.roles : []);
-
-      const tasksResponse = await apiFetch('/api/tasks');
-      const tasksPayload = (await tasksResponse.json().catch(() => null)) as KernelTask[] | { error?: string } | null;
-      if (!tasksResponse.ok) throw new Error((tasksPayload as { error?: string } | null)?.error ?? t('teams.load'));
-      setTasks(Array.isArray(tasksPayload) ? tasksPayload : []);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('teams.load'));
     } finally {
@@ -110,14 +108,47 @@ export function TeamsView() {
     () => teams.find(team => team.id === selectedId) ?? (teams.length > 0 ? teams[0] : null),
     [teams, selectedId],
   );
+  const selectedTeamId = selected?.id ?? null;
+  const selectedTeamIdRef = useRef(selectedTeamId);
+  selectedTeamIdRef.current = selectedTeamId;
 
   useEffect(() => {
-    const teamId = selected?.id;
-    if (!teamId) { setTeamMetrics(null); return; }
+    setPlanResult(null);
+    setPlanningTaskId(null);
+  }, [selectedTeamId]);
+
+  useEffect(() => {
+    if (!selectedTeamId) {
+      setTeamTasks([]);
+      setTeamTasksError('');
+      setTeamTasksLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setTeamTasks([]);
+    setTeamTasksError('');
+    setTeamTasksLoading(true);
+    void (async () => {
+      try {
+        const response = await apiFetch(`/api/teams/${encodeURIComponent(selectedTeamId)}/tasks`);
+        const body = (await response.json().catch(() => null)) as { tasks?: KernelTask[]; error?: string } | null;
+        if (!response.ok) throw new Error(body?.error ?? t('teams.tasksLoad'));
+        if (!cancelled) setTeamTasks(Array.isArray(body?.tasks) ? body.tasks : []);
+      } catch (cause) {
+        if (!cancelled) setTeamTasksError(cause instanceof Error ? cause.message : t('teams.tasksLoad'));
+      } finally {
+        if (!cancelled) setTeamTasksLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedTeamId, teamTasksRevision, t]);
+
+  useEffect(() => {
+    if (!selectedTeamId) { setTeamMetrics(null); return; }
     let cancelled = false;
     void (async () => {
       try {
-        const response = await apiFetch(`/api/metrics?teamId=${encodeURIComponent(teamId)}`);
+        const response = await apiFetch(`/api/metrics?teamId=${encodeURIComponent(selectedTeamId)}`);
         const body = (await response.json().catch(() => null)) as KernelMetrics | null;
         if (!cancelled && response.ok) setTeamMetrics(body);
       } catch {
@@ -125,7 +156,7 @@ export function TeamsView() {
       }
     })();
     return () => { cancelled = true; };
-  }, [selected?.id]);
+  }, [selectedTeamId]);
 
   const startCreate = () => { setEditingId('new'); setForm(emptyForm); setError(''); };
   const startEdit = (team: AgentTeam) => { setEditingId(team.id); setForm(toForm(team)); setError(''); };
@@ -237,7 +268,6 @@ export function TeamsView() {
     }
   };
 
-  const teamTasks = selected ? tasks.filter(task => task.teamId === selected.id) : [];
   const blockers = teamTasks.filter(task => task.status === 'failed' || task.pipeline?.status === 'awaiting_approval');
 
   const planTask = async (task: KernelTask) => {
@@ -247,11 +277,11 @@ export function TeamsView() {
       const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/coordinator/plan`, { method: 'POST' });
       const body = (await response.json().catch(() => null)) as { plan?: TeamPipelinePlan; error?: string } | null;
       if (!response.ok) throw new Error(body?.error ?? t('teams.planFailed'));
-      setPlanResult(body?.plan ?? null);
+      if (selectedTeamIdRef.current === task.teamId) setPlanResult(body?.plan ?? null);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('teams.planFailed'));
+      if (selectedTeamIdRef.current === task.teamId) setError(cause instanceof Error ? cause.message : t('teams.planFailed'));
     } finally {
-      setPlanningTaskId(null);
+      setPlanningTaskId(current => current === task.id ? null : current);
     }
   };
 
@@ -265,11 +295,16 @@ export function TeamsView() {
       if (!response.ok) throw new Error(body?.error ?? t('teams.applyFailed'));
       setPlanResult(null);
       await loadData();
+      setTeamTasksRevision(previous => previous + 1);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('teams.applyFailed'));
     } finally {
       setApplyingPlan(false);
     }
+  };
+  const refreshAll = async () => {
+    await loadData();
+    setTeamTasksRevision(previous => previous + 1);
   };
   const canAddHandoff = form.roleIds.length >= 2;
 
@@ -282,7 +317,7 @@ export function TeamsView() {
             <p>{t('teams.description')}</p>
           </div>
           <div className="teams-actions">
-            <button className="icon-button" type="button" onClick={() => void loadData()} aria-label={t('common.refresh')} title={t('common.refresh')}><RefreshCw size={18} /></button>
+            <button className="icon-button" type="button" onClick={() => void refreshAll()} aria-label={t('common.refresh')} title={t('common.refresh')}><RefreshCw size={18} /></button>
             <button className="quiet-button" type="button" onClick={startCreate}><Plus size={16} aria-hidden="true" /> {t('teams.new')}</button>
           </div>
         </div>
@@ -450,7 +485,11 @@ export function TeamsView() {
 
                 <div className="team-panel">
                   <h3>{t('teams.taskQueue')}</h3>
-                  {teamTasks.length === 0 ? (
+                  {teamTasksError ? (
+                    <p className="error">{teamTasksError}</p>
+                  ) : teamTasksLoading ? (
+                    <p className="empty-state">{t('teams.tasksLoading')}</p>
+                  ) : teamTasks.length === 0 ? (
                     <p className="empty-state">{t('teams.noTasks')}</p>
                   ) : (
                     <ul className="team-task-list">
@@ -474,7 +513,11 @@ export function TeamsView() {
 
                 <div className="team-panel">
                   <h3>{t('teams.blockers')}</h3>
-                  {blockers.length === 0 ? (
+                  {teamTasksError ? (
+                    <p className="error">{teamTasksError}</p>
+                  ) : teamTasksLoading ? (
+                    <p className="empty-state">{t('teams.tasksLoading')}</p>
+                  ) : blockers.length === 0 ? (
                     <p className="empty-state">{t('teams.noBlockers')}</p>
                   ) : (
                     <ul className="team-task-list">

@@ -352,6 +352,7 @@ export type View =
   | { kind: 'credentials' }
   | { kind: 'agents' }
   | { kind: 'activity' }
+  | { kind: 'audit' }
   | { kind: 'tasks' }
   | { kind: 'teams' }
   | { kind: 'metrics' }
@@ -366,6 +367,17 @@ export type ProjectTab =
 // The kernel Task/Run control plane (server-core). Studio only renders these records; it never
 // derives state from them, so the shapes mirror `TaskRecord`/`RunRecord` from @agent-ops/storage-core
 // without pulling that package into the webapp plugin.
+export type KernelAuditEvent = {
+  id: string;
+  seq: number;
+  taskId: string | null;
+  teamId: string | null;
+  actor: 'operator' | 'system';
+  type: string;
+  data: Record<string, unknown>;
+  at: string;
+};
+
 export type KernelTaskState = 'queued' | 'running' | 'review' | 'done' | 'failed' | 'cancelled';
 
 export type KernelTask = {
@@ -380,6 +392,8 @@ export type KernelTask = {
   roleId?: string | null;
   teamId?: string | null;
   pipeline?: TaskPipeline | null;
+  finalRunId?: string;
+  finalCommitSha?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -392,6 +406,46 @@ export type TaskPipelineStep = {
   agentId?: string;
   prompt?: string;
   requiresApproval?: boolean;
+  dependsOn?: string[];
+};
+
+export type DagStepResult = {
+  stepId: string;
+  name: string;
+  status: 'completed' | 'failed' | 'skipped';
+  runId: string | null;
+  commitSha: string | null;
+  worktreePath: string | null;
+  changedFiles: string[];
+  error: string | null;
+};
+
+export type DagPipelineResult = {
+  taskId: string;
+  maxConcurrency: number;
+  steps: DagStepResult[];
+  conflicts: Array<{ file: string; stepIds: string[] }>;
+  warnings: string[];
+  taskStatus: KernelTaskState;
+};
+
+export type ParallelLaneResult = {
+  roleId: string;
+  roleName: string;
+  runId: string | null;
+  worktreePath: string | null;
+  status: string;
+  changedFiles: string[];
+  error: string | null;
+};
+
+export type ParallelTeamResult = {
+  taskId: string;
+  teamId: string;
+  maxConcurrency: number;
+  lanes: ParallelLaneResult[];
+  conflicts: Array<{ file: string; roleIds: string[] }>;
+  taskStatus: KernelTaskState;
 };
 
 export type TaskPipelineStepResult = {
@@ -504,6 +558,25 @@ export type RoleRuntimePolicy = {
   allowedTools: string[];
   blockedTools: string[];
   approvalMode: RoleApprovalMode;
+};
+
+/** One Runtime's answer to `POST /api/policy/evaluate`; mirrors `UnifiedPolicyVerdict`. */
+export type PolicyVerdict = {
+  runtimeId: string;
+  capability: 'native' | 'wrapper' | 'unsupported';
+  readOnly: boolean;
+  enforcement: 'exact' | 'coarse' | 'unsupported';
+  allowedTools: string[];
+  blockedTools: string[];
+  decisions: Array<{ tool: string; decision: 'allow' | 'deny'; reason: string | null }>;
+  approval: { mode: RoleApprovalMode; humanGate: boolean };
+  warnings: string[];
+  unsupportedReason: string | null;
+};
+
+export type PolicyPreviewResponse = {
+  policy: RoleRuntimePolicy;
+  verdicts: PolicyVerdict[];
 };
 
 /** Mirrors `AgentRole` in `@agent-ops/agent-runtime/roles` for the browser. */

@@ -1,5 +1,5 @@
 import { Fragment, Suspense, lazy, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Activity, ArrowLeft, ArrowRight, CheckCircle2, CircleDot, FolderKanban, Gauge, KeyRound, ListTodo, Moon, PlugZap, RefreshCw, ShieldCheck, Sparkles, Sun, Users,
+import { Activity, ArrowLeft, ArrowRight, CheckCircle2, CircleDot, FolderKanban, Gauge, KeyRound, ListTodo, Moon, PlugZap, RefreshCw, ScrollText, ShieldCheck, Sparkles, Sun, Users,
 } from 'lucide-react';
 import { useI18n, type KeyPath } from './i18n/i18n';
 import { useDomainText } from './lib/domain-text';
@@ -9,6 +9,7 @@ import { TasksView } from './views/TasksView';
 import { RolesView } from './views/RolesView';
 import { TeamsView } from './views/TeamsView';
 import { MetricsView } from './views/MetricsView';
+import { AuditView } from './views/AuditView';
 import { useTheme } from './theme/theme';
 import { baselineProvidersFor, getBlueprintDecisions, isRuntimeProviderId, type BaselinePlan, type BlueprintAnswers, type DryRunPlan } from '@agent-ops/blueprint/client';
 // Import CONFIRMATIONS from the sub-path: the policy package's top-level entry re-exports
@@ -1834,6 +1835,7 @@ export function App() {
           <button className={`nav-item ${view.kind === 'credentials' ? 'active' : ''}`} type="button" onClick={() => setView({ kind: 'credentials' })}><KeyRound size={18} aria-hidden="true" />{t('nav.credentials')}</button>
           <button className={`nav-item ${view.kind === 'agents' ? 'active' : ''}`} type="button" onClick={() => setView({ kind: 'agents' })}><CircleDot size={18} aria-hidden="true" />{t('nav.agents')}</button>
           <button className={`nav-item ${view.kind === 'activity' ? 'active' : ''}`} type="button" onClick={() => setView({ kind: 'activity' })}><Activity size={18} aria-hidden="true" />{t('nav.activity')}</button>
+          <button className={`nav-item ${view.kind === 'audit' ? 'active' : ''}`} type="button" onClick={() => setView({ kind: 'audit' })}><ScrollText size={18} aria-hidden="true" />{t('nav.audit')}</button>
         </nav>
         <div className={`sidebar-note ${daemonOnline === false ? 'offline' : ''}`}><CircleDot size={14} aria-hidden="true" />{daemonOnline === null ? t('activity.localDaemonChecking') : daemonOnline ? t('activity.localDaemonConnected') : t('activity.localDaemonDisconnected')}</div>
       </aside>
@@ -1861,6 +1863,8 @@ export function App() {
               <div><p className="eyebrow">{t('agents.eyebrow')}</p><h1>{t('agents.title')}</h1></div>
             ) : view.kind === 'activity' ? (
               <div><p className="eyebrow">{t('activity.eyebrow')}</p><h1>{t('activity.panelTitle')}</h1></div>
+            ) : view.kind === 'audit' ? (
+              <div><p className="eyebrow">{t('audit.eyebrow')}</p><h1>{t('audit.title')}</h1></div>
             ) : view.kind === 'tasks' ? (
               <div><p className="eyebrow">{t('tasks.eyebrow')}</p><h1>{t('tasks.title')}</h1></div>
             ) : view.kind === 'roles' ? (
@@ -2195,6 +2199,12 @@ export function App() {
         {view.kind === 'activity' && (
           <div className="standalone-view">
             {activityPanel}
+          </div>
+        )}
+
+        {view.kind === 'audit' && (
+          <div className="standalone-view">
+            <AuditView />
           </div>
         )}
 

@@ -4,6 +4,7 @@ import { useI18n, type KeyPath } from '../i18n/i18n';
 import { apiFetch } from '../lib/api';
 import { budgetFromForm, budgetToForm } from '../lib/budget';
 import type { AgentRole, RoleApprovalMode, RoleTemplate, RoleTestPlan } from '../types';
+import { PolicyPreview } from './PolicyPreview';
 
 type RoleForm = {
   name: string;
@@ -273,6 +274,7 @@ export function RolesView() {
               </label>
               <label className="role-enabled"><input type="checkbox" checked={form.enabled} onChange={e => update('enabled', e.target.checked)} /> {t('roles.enabled')}</label>
             </div>
+            <PolicyPreview policy={{ allowedTools: splitCommas(form.allowedTools), blockedTools: splitCommas(form.blockedTools), approvalMode: form.approvalMode }} />
             <fieldset className="budget-fieldset">
               <legend>{t('roles.budgetTitle')}</legend>
               <div className="form-grid-3">
