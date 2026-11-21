@@ -11,6 +11,7 @@
 - [x] **3–5 个本仓 dogfood** — 已完成 3 条真实任务 + 4 次团队运行（2026-11-21）：单任务接受率 3/3、检查通过率 3/3、返工 1 次人工小修；五角色串行 5 步完成（首轮暴露落盘 owner 缺口）；owner 机制补齐并实测落盘；带 owner 的五角色交付重跑成功；依赖链接后五角色完成**真实代码交付**（`listTasksByTeam` + 单测，含 reviewer→owner 修正）。详见下方 “F10-01/F10-02 Dogfood” 章节。
 - [x] **Studio 浏览器复查** — 2026-11-21：Role/Team 表单预算输入（创建 / 编辑回填与探针清理）、completed pipeline 的 Rerun 按钮、Metrics 页（23 runs / 11 tasks 聚合）与 Teams 详情（花名册 / 交接边 / 队列 / 用量）均在真实浏览器查看；Teams 计划预览当时因缺少带团队的 queued 任务未点击，已由下方“Studio 分支入口浏览器验收”补验。
 - [x] **Studio 分支入口浏览器验收** — 已完成（2026-11-21）。隔离数据库 + 临时 git 仓实测：DAG 先验 `aider` candidate 失败面板，再用真实 CodeBuddy 跑通成功路径（pipeline completed、commit `b976ee0`、输出 `PROBE_OK`）；并行 lane 先验失败面板，再用真实 CodeBuddy 跑通 `review` lane（0 文件、`PROBE_OK`）；Teams 计划预演在带 Team 的 queued 任务上点开并取消；`Delete probe` 从 Studio 删除后后端列表确认消失。过程中发现并修复 Studio 长请求沿用 15 秒默认超时的问题（commit `d7dd834`）。
+- [x] **并行 lane 决策入口** — 已完成（2026-11-21）。并行结果面板直接提供 Accept lane / Reject lane；已接受的 lane 可 Set as final，持久化 `finalRunId` / `finalCommitSha` 并写 `task.final_lane.selected` 审计。真实 CodeBuddy 两条 lane 已在浏览器走通接受、驳回和最终选择；选择只是指向已 pin 的 lane commit，不合并到任务 worktree。提交 `2ed1adb` / `6b51497` / `9750a83` / `88cd6bd`。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -382,13 +383,24 @@
 - [x] `run.accepted` / `run.rejected` 审计新增 `laneId`；Studio Run 身份行显示 `Lane`（并行通道）。
 - [x] 测试：两条 lane 各自接受后任务才 `done`、主 worktree 未被污染、lane commit 在各自 worktree HEAD 且 pin ref 存在；驳回 lane 后任务仍 `review`、lane worktree 干净、文件被清掉。全仓 typecheck 0，58 文件 / 700 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
 - [x] 本轮提交：`5b32c6f feat(storage-core): accept parallel lanes`、`6bee0e6 feat(studio): label parallel lane runs`。
-- [ ] 未做：仍然**不自动合并**多 lane 结果，也没有“选哪条 lane 作为最终交付”的一等操作；并行任务没有专用 UI 入口（接受/驳回仍走普通 Run 操作）。
+- [x] 后续补齐（2026-11-21）：并行结果面板已有一等 lane 决策入口与最终交付选择，见下方“并行 lane 决策与最终交付”。
 
 ## F5-07 收尾 — release 清理 lane worktree — 已完成（2026-11-20）
 
 - [x] `releaseTask` 现在会先收集所有 Run 记录的非主 worktree（并行 lane 与 DAG step 各一个），逐个 `git status` 检查后再统一删除；任一路径有未提交改动即拒绝释放，主 worktree 保持原样（不会半释放）。
 - [x] 测试：两条 lane 接受并 release 后，主 worktree 与两条 lane worktree 均不存在；存在失败 lane（留下 `DIRTY.md`）时 release 抛 `uncommitted changes` 且主 worktree 未被删除。全仓 typecheck 0，62 文件 / 730 tests 绿。
 - [ ] 未做：release 不清理 `refs/agent-ops/tasks/<id>/lanes/*` 的 pin（保留可审计的 commit）；Studio 的 release 按钮未在浏览器验证。
+
+## 并行 lane 决策与最终交付 — 已完成（2026-11-21）
+
+- [x] storage-core：migration `0020_task_final_lane` 给 `tasks` 增加 `final_run_id` / `final_commit_sha`；`selectFinalLane(taskId, runId)` 只接受已 accepted 且有 commit 的 lane，持久化指针，不 merge；再次选择会替换指针。
+- [x] server：`POST /api/tasks/:id/final-lane`，body `{ runId }`；非法 body 400、未知任务/Run 404、未接受或非 lane 409；`GET /api/tasks/:id` 返回两个 final 字段。
+- [x] MCP：`agent_ops_select_final_lane`；`agent_ops_accept_run` 文案改为“并行 lane 要等全部决定后才关闭任务”。
+- [x] Studio：并行结果面板在 lane `review` 时直接显示 Accept lane / Reject lane；`done` lane 显示 Set as final，选中后显示“最终交付 / Final”徽标；接受/驳回后本地 lane 状态即时刷新。
+- [x] 语义：最终选择只指向 lane worktree 里已 pin 的 commit，不把改动应用到任务主 worktree；release 清理 lane worktree 后仍可通过 `refs/agent-ops/tasks/<taskId>/lanes/<laneId>` 读取。
+- [x] 测试：storage-core 并行 6 例；server API 200/400/404；MCP 工具清单；全仓 typecheck 0，64 文件 / 751 tests 绿；Studio 1658 modules 构建成功。
+- [x] 浏览器验收：隔离 DB `/tmp/agent-ops-lane-verify/agent-ops.sqlite` + 临时 git 仓，真实 CodeBuddy 2.142.0 两条 lane 各写 `PROBE_LANE.txt`；点 Accept lane 后第一条 done、第二条仍 review；点 Set as final 后第一条显示“最终交付”；点 Reject lane 后第二条 queued，任务保持 review。后端确认 `finalRunId=75e4cf8c-…`、`finalCommitSha=ced58f34…`；主 worktree clean 且没有 `PROBE_LANE.txt`；审计表存在 `task.final_lane.selected`。
+- [x] 本轮提交：`2ed1adb feat(storage-core): select the final parallel lane`、`6b51497 feat(server-core): expose final lane selection`、`9750a83 feat(cli): add final lane selection`、`88cd6bd feat(studio): decide parallel lanes inline`。
 
 ## F7-06 团队看板 — 已完成（2026-11-20）
 
