@@ -23,6 +23,7 @@
 - [x] **Pipeline 模板语法校验** — 已完成（2026-11-21）。`validatePipelineTemplates` 在创建任务时拒绝未知 step id、坏字段、自引用和未闭合 token，server 返回 400；`{{ previous.output }}` 这类花括号内空白现在也能真正展开。纯函数新增 6 例、创建任务 1 例、HTTP 400 1 例；全仓 68 文件 / 771 tests 绿。
 - [x] **显式标记 step output 截断** — 已完成（2026-11-21）。step result 落 `outputTruncated`，DAG 结果同时保留 `changedFiles` / `output`；串行与 DAG 下游展开被截断的 output 时追加 `[The output above was truncated to 2000 characters.]`，Studio 步骤状态显示“输出已截断”。新增串行 1 例、DAG 1 例、模板 1 例；全仓 68 文件 / 773 tests 绿，Studio build 1661 modules 成功。
 - [x] **DAG 审批门** — 已完成（2026-11-21）。`executeDagPipeline` 支持 `requiresApproval`：gated step 单独执行，Run 到 `review` 时 DAG 存 `awaiting_approval`，pipeline 持久化 `executionMode: 'dag'` / `maxConcurrency` / 已完成结果；`approvePipelineStep` 接受该 lane Run 后从已完成 results 续跑，不重跑已完成步骤；`rejectPipelineStep` 将该步与所有尚未完成的 step 标 failed。暂停/恢复写 `pipeline.dag.paused` / `pipeline.dag.resumed` 审计。新增 4 个 DAG 用例（批准续跑、连续两道门、驳回下游、原有 DAG 回归）；全仓 68 文件 / 776 tests 绿，typecheck 0，Studio build 1661 modules 成功。
+- [x] **记录 DAG merge commit** — 已完成（2026-11-21）。多依赖 join 实际生成 merge commit 时，把 SHA 写入 `DagStepResult.mergeCommitSha` 与 `pipeline.results`，并在 `pipeline.dag.executed` / `paused` 审计的 `mergeCommits` 中列出；根步骤与单依赖 step 不写。测试断言 SHA 可解析、有两个父提交、单依赖为空，并检查持久化与审计；全仓 68 文件 / 776 tests 绿，typecheck 0，Studio build 1661 modules 成功。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -476,7 +477,9 @@
 - [x] `dag.test.ts`：join 用例改为 left 写 `LEFT.md` + `SHARED.md`、right 写 `RIGHT.md`，断言 join 同时看到两个文件、无 “not merged” warning、`conflicts=[]`；新增 left / right 都改 `SHARED.md` 的冲突用例，断言 join failed、error 含 `merge conflict` 与 `SHARED.md`、`conflicts` 的 stepIds 为 left / right、pipeline 第三条为 failed。
 - [x] 门禁：`packages/storage-core/test` 17 文件 / 95 tests 绿；`worktree.test.ts` 覆盖“依赖已是 HEAD 祖先时不新增 merge commit”；全仓 typecheck 0；全仓 68 文件 / 762 tests 绿。
 - [x] 文档：README 并行 DAG 能力与运行入口段落改为“多依赖依次 merge、冲突整步 failed”，去掉旧“只从最后一个依赖检出 / 未自动合并 warning”描述。
-- [ ] 未做：没有把 merge commit SHA 单独写入 `DagStepResult` / 审计字段；需要回放时只能从 step commit 的父链定位。跨步骤 changedFiles 交集仍只报告，不回写任务主 worktree。
+- [x] `DagStepResult` 新增 `mergeCommitSha`：仅当多依赖 join 实际产生新 merge commit 时写入，随 `pipeline.results` 持久化；`pipeline.dag.executed` / `paused` 审计 data 增加 `mergeCommits: [{stepId, commitSha}]`。Studio DAG 结果行显示 `merge <sha>`。
+- [x] `dag.test.ts` 回归断言 join 的 merge SHA 可 `cat-file`、`rev-list --parents` 为两父提交、`pipeline.results` 含同值、审计 `mergeCommits` 命中；单依赖 join 的 `mergeCommitSha` 为空。
+- [ ] 未做：跨步骤 changedFiles 交集仍只报告，不回写任务主 worktree。
 
 ## DAG 审批门 — 已完成（2026-11-21）
 
