@@ -2072,6 +2072,29 @@ select option {
 
 .role-form-actions { display: flex; gap: 10px; justify-content: flex-end; }
 
+.form-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+
+.budget-fieldset {
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.budget-fieldset legend {
+  padding: 0 6px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.budget-fieldset small {
+  display: block;
+  margin-top: 8px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
 .role-templates { margin-bottom: 14px; }
 
 .role-templates > span {

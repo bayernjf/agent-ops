@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Check, FlaskConical, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, X } from 'lucide-react';
 import { useI18n, type KeyPath } from '../i18n/i18n';
 import { apiFetch } from '../lib/api';
+import { budgetFromForm, budgetToForm } from '../lib/budget';
 import type { AgentRole, RoleApprovalMode, RoleTemplate, RoleTestPlan } from '../types';
 
 type RoleForm = {
@@ -14,6 +15,9 @@ type RoleForm = {
   allowedTools: string;
   blockedTools: string;
   approvalMode: RoleApprovalMode;
+  budgetCost: string;
+  budgetInputTokens: string;
+  budgetOutputTokens: string;
   enabled: boolean;
 };
 
@@ -27,21 +31,30 @@ const emptyForm: RoleForm = {
   allowedTools: '',
   blockedTools: '',
   approvalMode: 'human',
+  budgetCost: '',
+  budgetInputTokens: '',
+  budgetOutputTokens: '',
   enabled: true,
 };
 
-const toForm = (role: AgentRole): RoleForm => ({
-  name: role.name,
-  description: role.description ?? '',
-  baseAgentId: role.baseAgentId ?? '',
-  profileId: role.profileId ?? '',
-  systemPrompt: role.systemPrompt ?? '',
-  acceptanceCriteria: role.acceptanceCriteria.join('\n'),
-  allowedTools: role.runtimePolicy.allowedTools.join(', '),
-  blockedTools: role.runtimePolicy.blockedTools.join(', '),
-  approvalMode: role.runtimePolicy.approvalMode,
-  enabled: role.enabled,
-});
+const toForm = (role: AgentRole): RoleForm => {
+  const budget = budgetToForm(role.budget);
+  return {
+    name: role.name,
+    description: role.description ?? '',
+    baseAgentId: role.baseAgentId ?? '',
+    profileId: role.profileId ?? '',
+    systemPrompt: role.systemPrompt ?? '',
+    acceptanceCriteria: role.acceptanceCriteria.join('\n'),
+    allowedTools: role.runtimePolicy.allowedTools.join(', '),
+    blockedTools: role.runtimePolicy.blockedTools.join(', '),
+    approvalMode: role.runtimePolicy.approvalMode,
+    budgetCost: budget.cost,
+    budgetInputTokens: budget.inputTokens,
+    budgetOutputTokens: budget.outputTokens,
+    enabled: role.enabled,
+  };
+};
 
 const splitLines = (value: string) => value.split('\n').map(line => line.trim()).filter(Boolean);
 const splitCommas = (value: string) => value.split(',').map(item => item.trim()).filter(Boolean);
@@ -100,6 +113,7 @@ export function RolesView() {
     setSaving(true);
     setError('');
     try {
+      const budget = budgetFromForm(form.budgetCost, form.budgetInputTokens, form.budgetOutputTokens);
       const payload = {
         name: form.name.trim(),
         description: form.description.trim() || undefined,
@@ -112,6 +126,7 @@ export function RolesView() {
           blockedTools: splitCommas(form.blockedTools),
           approvalMode: form.approvalMode,
         },
+        ...(budget ? { budget } : {}),
         enabled: form.enabled,
       };
       const response = editingId === 'new'
@@ -194,6 +209,9 @@ export function RolesView() {
       allowedTools: template.runtimePolicy.allowedTools.join(', '),
       blockedTools: template.runtimePolicy.blockedTools.join(', '),
       approvalMode: template.runtimePolicy.approvalMode,
+      budgetCost: '',
+      budgetInputTokens: '',
+      budgetOutputTokens: '',
       enabled: true,
     });
   };
@@ -255,6 +273,15 @@ export function RolesView() {
               </label>
               <label className="role-enabled"><input type="checkbox" checked={form.enabled} onChange={e => update('enabled', e.target.checked)} /> {t('roles.enabled')}</label>
             </div>
+            <fieldset className="budget-fieldset">
+              <legend>{t('roles.budgetTitle')}</legend>
+              <div className="form-grid-3">
+                <label>{t('roles.budgetCost')}<input inputMode="decimal" value={form.budgetCost} onChange={e => update('budgetCost', e.target.value)} placeholder={t('roles.budgetCostPlaceholder')} /></label>
+                <label>{t('roles.budgetInputTokens')}<input inputMode="numeric" value={form.budgetInputTokens} onChange={e => update('budgetInputTokens', e.target.value)} placeholder={t('roles.budgetPlaceholder')} /></label>
+                <label>{t('roles.budgetOutputTokens')}<input inputMode="numeric" value={form.budgetOutputTokens} onChange={e => update('budgetOutputTokens', e.target.value)} placeholder={t('roles.budgetPlaceholder')} /></label>
+              </div>
+              <small>{t('roles.budgetHint')}</small>
+            </fieldset>
             <div className="role-form-actions">
               <button className="secondary-button" type="button" onClick={cancelEdit} disabled={saving}><X size={14} aria-hidden="true" /> {t('common.cancel')}</button>
               <button className="primary-button" type="button" onClick={() => void submit()} disabled={saving || !form.name.trim()}><Check size={14} aria-hidden="true" /> {saving ? t('common.saving') : t('common.save')}</button>

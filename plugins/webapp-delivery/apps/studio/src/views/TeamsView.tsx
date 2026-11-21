@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, Pencil, Plus, RefreshCw, Trash2, Users, X } from 'lucide-react';
 import { useI18n, type KeyPath } from '../i18n/i18n';
 import { apiFetch } from '../lib/api';
+import { budgetFromForm, budgetToForm } from '../lib/budget';
 import { formatCost, formatDuration, formatPercent } from '../lib/format';
 import type { AgentRole, AgentTeam, KernelMetrics, KernelTask, TeamHandoff, TeamPipelinePlan } from '../types';
 
@@ -17,6 +18,9 @@ type TeamForm = {
   roleIds: string[];
   handoffs: HandoffDraft[];
   ownerRoleId: string;
+  budgetCost: string;
+  budgetInputTokens: string;
+  budgetOutputTokens: string;
   enabled: boolean;
 };
 
@@ -26,17 +30,26 @@ const emptyForm: TeamForm = {
   roleIds: [],
   handoffs: [],
   ownerRoleId: '',
+  budgetCost: '',
+  budgetInputTokens: '',
+  budgetOutputTokens: '',
   enabled: true,
 };
 
-const toForm = (team: AgentTeam): TeamForm => ({
-  name: team.name,
-  description: team.description ?? '',
-  roleIds: team.roleIds,
-  handoffs: team.handoffs.map(handoff => ({ fromRoleId: handoff.fromRoleId, toRoleId: handoff.toRoleId, note: handoff.note ?? '' })),
-  ownerRoleId: team.ownerRoleId ?? '',
-  enabled: team.enabled,
-});
+const toForm = (team: AgentTeam): TeamForm => {
+  const budget = budgetToForm(team.budget);
+  return {
+    name: team.name,
+    description: team.description ?? '',
+    roleIds: team.roleIds,
+    handoffs: team.handoffs.map(handoff => ({ fromRoleId: handoff.fromRoleId, toRoleId: handoff.toRoleId, note: handoff.note ?? '' })),
+    ownerRoleId: team.ownerRoleId ?? '',
+    budgetCost: budget.cost,
+    budgetInputTokens: budget.inputTokens,
+    budgetOutputTokens: budget.outputTokens,
+    enabled: team.enabled,
+  };
+};
 
 /**
  * The kernel Team registry. A team is a roster of roles plus the handoff edges between them,
@@ -164,12 +177,14 @@ export function TeamsView() {
           toRoleId: handoff.toRoleId,
           ...(handoff.note.trim() ? { note: handoff.note.trim() } : {}),
         }));
+      const budget = budgetFromForm(form.budgetCost, form.budgetInputTokens, form.budgetOutputTokens);
       const payload = {
         name: form.name.trim(),
         description: form.description.trim() || undefined,
         roleIds: form.roleIds,
         handoffs,
         ownerRoleId: form.ownerRoleId || undefined,
+        ...(budget ? { budget } : {}),
         enabled: form.enabled,
       };
       const response = editingId === 'new'
@@ -304,6 +319,16 @@ export function TeamsView() {
               </select>
               <small>{t('teams.ownerHint')}</small>
             </label>
+
+            <fieldset className="budget-fieldset">
+              <legend>{t('teams.budgetTitle')}</legend>
+              <div className="form-grid-3">
+                <label>{t('teams.budgetCost')}<input inputMode="decimal" value={form.budgetCost} onChange={event => update('budgetCost', event.target.value)} placeholder={t('teams.budgetCostPlaceholder')} /></label>
+                <label>{t('teams.budgetInputTokens')}<input inputMode="numeric" value={form.budgetInputTokens} onChange={event => update('budgetInputTokens', event.target.value)} placeholder={t('teams.budgetPlaceholder')} /></label>
+                <label>{t('teams.budgetOutputTokens')}<input inputMode="numeric" value={form.budgetOutputTokens} onChange={event => update('budgetOutputTokens', event.target.value)} placeholder={t('teams.budgetPlaceholder')} /></label>
+              </div>
+              <small>{t('teams.budgetHint')}</small>
+            </fieldset>
 
             <fieldset className="team-handoffs">
               <legend>{t('teams.handoffs')}</legend>
