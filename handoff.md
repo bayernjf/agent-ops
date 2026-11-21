@@ -9,6 +9,7 @@
 
 - [x] **真实模型 UI E2E** — 已完成（2026-11-20）。UI 里新建 CodeBuddy 角色与一步 Pipeline 任务，点 `Run pipeline` 由真实 CodeBuddy 2.185.0 执行，任务 done、Run 可见（commit `ea4553f7d2`）。Claude Code / Codex 仍受 CC Switch `base_url` 阻塞，但不影响 CodeBuddy 路径；真实模型 API 路径与 UI 路径均已有证据。
 - [x] **3–5 个本仓 dogfood** — 已完成 3 条真实任务 + 4 次团队运行（2026-11-21）：单任务接受率 3/3、检查通过率 3/3、返工 1 次人工小修；五角色串行 5 步完成（首轮暴露落盘 owner 缺口）；owner 机制补齐并实测落盘；带 owner 的五角色交付重跑成功；依赖链接后五角色完成**真实代码交付**（`listTasksByTeam` + 单测，含 reviewer→owner 修正）。详见下方 “F10-01/F10-02 Dogfood” 章节。
+- [x] **Studio 浏览器复查** — 2026-11-21：Role/Team 表单预算输入（创建 / 编辑回填与探针清理）、completed pipeline 的 Rerun 按钮、Metrics 页（23 runs / 11 tasks 聚合）与 Teams 详情（花名册 / 交接边 / 队列 / 用量）均在真实浏览器查看；Teams 计划预览因缺少带团队的 queued 任务未点击。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -239,7 +240,7 @@
 - [x] 文案全部走 i18n：`en`/`zh` 同步新增 `teams` 与 `nav.teams`；`owned-copy` 扫描通过。
 - [x] 验证：Studio `tsc` 与 `vite build` 通过（1655 modules），Studio 14 文件 / 257 tests 绿；全仓 typecheck 0，50 文件 / 664 tests 绿。
 - [x] 本轮提交：`b216d83 feat(studio): add the teams view`。
-- [ ] 未做：交接边只有文本列表，没有可视化图；花名册不校验角色是否绑定 runtime；TeamsView 未在真实浏览器里逐项点过（仅 tsc/build + 单元测试）。
+- [ ] 未做：交接边只有文本列表，没有可视化图；花名册不校验角色是否绑定 runtime；TeamsView 的角色 / 交接 / 队列 / 团队用量已在真实浏览器查看（2026-11-21），但计划预览需要一条带团队的 queued 任务，尚未点击。
 
 ## F5-04 Handoff — 已完成（2026-11-20）
 
@@ -332,7 +333,7 @@
 - [x] Studio：新增 Metrics 页面（KPI 卡片 + 按运行时/按角色表格），侧边栏入口 `nav.metrics`，中英文文案齐。
 - [x] 测试：空库全零且比率为 null；两步 Pipeline + 失败 Run + 驳回 Run 得到 tasks 3/1/1/1、runs 4/3/2/1/1、成功率 2/3、返工率 1/3、usage null、平均耗时 > 0、codex 桶 4 条、role 桶 builder/unassigned；未来窗口归零；server 200/400；MCP 空库比率为 null。全仓 typecheck 0，55 文件 / 687 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
 - [x] 本轮提交：`169b837 feat(storage-core): aggregate kernel metrics`、`7362bbc feat(server-core): serve kernel metrics`、`5481167 feat(cli): add the metrics tool`、`37f7611 feat(studio): add the metrics view`。
-- [ ] 未做：指标按创建时间窗口过滤，不按完成时间；返工率是全局启发式，不是逐任务口径；不接外部 observability（Prometheus/OTel）；Studio 指标页未在真实浏览器点击。
+- [ ] 未做：指标按创建时间窗口过滤，不按完成时间；返工率是全局启发式，不是逐任务口径；不接外部 observability（Prometheus/OTel）。Studio 指标页已在真实浏览器查看（2026-11-21，23 runs / 11 tasks 聚合）。
 
 ## F5-06 Coordinator — 已完成（串行版，2026-11-20）
 
@@ -345,7 +346,7 @@
 - [x] Studio：TeamsView 任务队列里 `queued` 任务显示“生成计划”，预览步骤后点“应用计划”才落库。
 - [x] 测试：拓扑排序（链/并列/菱形/越界边）；协调器 plan→apply→execute→summary（3 步全部 completed、2 条交接、卡点为空、重复 apply 被拒）；无 Team 报错；server 200/400/404；MCP 端到端 plan/apply。全仓 typecheck 0，57 文件 / 695 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
 - [x] 本轮提交：`4190eb9 feat(agent-runtime): order team roles by handoff`、`cdfe346 feat(storage-core): add a team coordinator`、`dea6f98 feat(server-core): serve coordinator plans`、`c0b5e8e feat(cli): add coordinator tools`、`b124e4a feat(studio): plan a pipeline from a team`。
-- [ ] 未做：这是**串行**协调器；并行版见下节（F5-07）。“拆任务”只按花名册拆到角色，不按内容再拆子任务；汇总不调模型、不做语义总结；Studio 未在真实浏览器点击。
+- [ ] 未做：这是**串行**协调器；并行版见下节（F5-07）。“拆任务”只按花名册拆到角色，不按内容再拆子任务；汇总不调模型、不做语义总结；Studio 的计划预览尚未点击（需要一条带团队的 queued 任务）。
 
 ## F5-07 并行团队 — 已完成（内核版，2026-11-20）
 
