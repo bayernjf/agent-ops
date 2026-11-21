@@ -190,7 +190,7 @@ describe('KernelStore DAG pipeline', () => {
     }
   });
 
-  it('refuses cyclic or unknown dependencies and per-step approval in DAG mode', async () => {
+  it('refuses cyclic or unknown dependencies', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-dag-'));
     try {
       const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
@@ -212,14 +212,6 @@ describe('KernelStore DAG pipeline', () => {
         title: 'Ghost',
         pipeline: { steps: [{ id: 'a', name: 'A', agentId: 'codex', dependsOn: ['ghost'] }] },
       })).rejects.toThrow('unknown step');
-
-      const gated = await store.createTask({
-        repo: '/r',
-        baseRef: 'main',
-        title: 'Gated',
-        pipeline: { steps: [{ id: 'a', name: 'A', agentId: 'codex', requiresApproval: true }] },
-      });
-      await expect(store.executeDagPipeline(gated.id)).rejects.toThrow('does not support per-step approval');
       await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
@@ -264,6 +256,164 @@ describe('KernelStore DAG step templates', () => {
       expect(prompts[1]).toContain('Join after Left finished.');
       expect(prompts[1]).not.toContain('{{previous.output}}');
       expect(prompts[1]).toContain(`at ${left?.commitSha}`);
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+});
+
+describe('KernelStore DAG approval gate', () => {
+  it('pauses at a gated step and resumes the remaining DAG after approval', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-dag-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'DAG gate',
+        pipeline: {
+          steps: [
+            { id: 'draft', name: 'Draft', agentId: 'codex', dependsOn: [] },
+            { id: 'review', name: 'Review', agentId: 'codex', dependsOn: ['draft'], requiresApproval: true, prompt: 'Review {{previous.output}}' },
+            { id: 'publish', name: 'Publish', agentId: 'codex', dependsOn: ['review'], prompt: 'Publish {{previous.output}}' },
+          ],
+        },
+      });
+      await store.provisionTask(task.id);
+
+      const calls: string[] = [];
+      const prompts: Record<string, string> = {};
+      const runner: CodexProcessRunner = async (_command, arguments_, options) => {
+        const stepId = basename(options.cwd);
+        calls.push(stepId);
+        prompts[stepId] = arguments_[arguments_.length - 1] ?? '';
+        await writeFile(join(options.cwd, `${stepId.toUpperCase()}.md`), `${stepId}\n`, 'utf8');
+        return success(`${stepId} output`);
+      };
+
+      const paused = await store.executeDagPipeline(task.id, { runner, maxConcurrency: 2 });
+      expect(paused.steps.map(step => [step.stepId, step.status])).toEqual([
+        ['draft', 'completed'],
+        ['review', 'awaiting_approval'],
+      ]);
+      expect(paused.taskStatus).toBe('running');
+      expect(calls).toEqual(['draft', 'review']);
+      expect(prompts.review).toContain('Review draft output');
+      const stored = store.getTask(task.id)?.pipeline;
+      expect(stored).toMatchObject({ status: 'awaiting_approval', executionMode: 'dag', maxConcurrency: 2 });
+      expect(stored?.results.map(result => result.status)).toEqual(['completed', 'awaiting_approval']);
+      const gatedRun = store.getRun(paused.steps[1]?.runId ?? '');
+      expect(gatedRun?.status).toBe('review');
+      expect(gatedRun?.worktreePath).toContain(join('dag', 'review'));
+
+      const resumed = await store.approvePipelineStep(task.id, runner);
+      expect(resumed.status).toBe('completed');
+      expect(resumed.results.map(result => result.status)).toEqual(['completed', 'completed', 'completed']);
+      expect(resumed.results[1]?.commitSha).toBeTruthy();
+      expect(calls).toEqual(['draft', 'review', 'publish']);
+      expect(prompts.publish).toContain('Publish review output');
+      expect(store.getRun(paused.steps[1]?.runId ?? '')?.status).toBe('done');
+      const auditTypes = store.listAudit({ taskId: task.id }).map(event => event.type);
+      expect(auditTypes).toContain('pipeline.dag.paused');
+      expect(auditTypes).toContain('pipeline.dag.resumed');
+      expect(auditTypes).toContain('pipeline.dag.executed');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('runs one gated step at a time and pauses again at the next gate', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-dag-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Two gates',
+        pipeline: {
+          steps: [
+            { id: 'gate1', name: 'Gate one', agentId: 'codex', dependsOn: [], requiresApproval: true },
+            { id: 'gate2', name: 'Gate two', agentId: 'codex', dependsOn: [], requiresApproval: true },
+          ],
+        },
+      });
+      await store.provisionTask(task.id);
+
+      const calls: string[] = [];
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        const stepId = basename(options.cwd);
+        calls.push(stepId);
+        await writeFile(join(options.cwd, `${stepId.toUpperCase()}.md`), 'x\n', 'utf8');
+        return success(`${stepId} output`);
+      };
+
+      const first = await store.executeDagPipeline(task.id, { runner, maxConcurrency: 2 });
+      expect(first.steps.map(step => [step.stepId, step.status])).toEqual([['gate1', 'awaiting_approval']]);
+      expect(calls).toEqual(['gate1']);
+
+      const second = await store.approvePipelineStep(task.id, runner);
+      expect(second.status).toBe('awaiting_approval');
+      expect(second.results.map(result => [result.stepId, result.status])).toEqual([
+        ['gate1', 'completed'],
+        ['gate2', 'awaiting_approval'],
+      ]);
+      expect(calls).toEqual(['gate1', 'gate2']);
+
+      const final = await store.approvePipelineStep(task.id, runner);
+      expect(final.status).toBe('completed');
+      expect(final.results.map(result => result.status)).toEqual(['completed', 'completed']);
+      const audits = store.listAudit({ taskId: task.id }).map(event => event.type);
+      expect(audits.filter(type => type === 'pipeline.dag.paused')).toHaveLength(2);
+      expect(audits.filter(type => type === 'pipeline.dag.resumed')).toHaveLength(2);
+      expect(audits.filter(type => type === 'pipeline.dag.executed')).toHaveLength(1);
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('fails the gated step and downstream steps when the operator rejects it', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-dag-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'DAG reject',
+        pipeline: {
+          steps: [
+            { id: 'draft', name: 'Draft', agentId: 'codex', dependsOn: [] },
+            { id: 'gate', name: 'Gate', agentId: 'codex', dependsOn: ['draft'], requiresApproval: true },
+            { id: 'after', name: 'After', agentId: 'codex', dependsOn: ['gate'] },
+          ],
+        },
+      });
+      await store.provisionTask(task.id);
+
+      const calls: string[] = [];
+      const runner: CodexProcessRunner = async (_command, _arguments, options) => {
+        calls.push(basename(options.cwd));
+        await writeFile(join(options.cwd, `${basename(options.cwd).toUpperCase()}.md`), 'x\n', 'utf8');
+        return success();
+      };
+
+      await store.executeDagPipeline(task.id, { runner });
+      expect(calls).toEqual(['draft', 'gate']);
+      const rejected = await store.rejectPipelineStep(task.id);
+      expect(rejected.status).toBe('failed');
+      expect(rejected.results.map(result => [result.stepId, result.status])).toEqual([
+        ['draft', 'completed'],
+        ['gate', 'failed'],
+        ['after', 'failed'],
+      ]);
+      expect(rejected.results[1]?.error).toContain('Rejected by operator');
+      expect(store.getTask(task.id)?.status).toBe('failed');
+      expect(store.listAudit({ taskId: task.id }).map(event => event.type)).toContain('pipeline.step.rejected');
       await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
