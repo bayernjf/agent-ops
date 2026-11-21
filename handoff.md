@@ -17,6 +17,7 @@
 - [x] **Teams 任务队列服务端过滤** — 已完成（2026-11-21）。`TeamsView` 不再拉取全量 `/api/tasks` 后按 `teamId` 过滤，改为对选中团队调用 `GET /api/teams/:teamId/tasks`；切换团队立即清空旧队列并带取消标记，队列与卡点面板分别有加载态和错误态，计划预览对团队切换做了响应隔离。真实浏览器已验证 Alpha 2 条 / Beta 1 条、未归属任务不出现，切换与刷新只请求当前团队队列；全仓 66 文件 / 753 tests 绿，Studio build 1660 modules 成功。
 - [x] **Studio 任务看板分列** — 已完成（2026-11-21）。Tasks 页新增 List / Board 切换，看板按六种任务状态分列、列头计数，卡片显示 `repo@baseRef`、Pipeline 徽标与 Team/Role chip；点卡片切回列表并展开、滚动定位该任务。真实浏览器已验证六列各 1 条、计数、Team/Role/Pipeline 标记、卡片跳转展开与中英文；全仓 67 文件 / 755 tests 绿，Studio build 1661 modules 成功。
 - [x] **Task 级取消** — 已完成（2026-11-21）。新增 `cancelTask` / `POST /api/tasks/:id/cancel` / `agent_ops_cancel_task` / Studio“取消任务”：`queued` / `running` / `review` 可取消，abort 活动 Run，串行 Pipeline、DAG 与并行 lane 都停止后续步骤，Pipeline 与步骤变 `cancelled`，终态拒绝；真实浏览器已验证排队任务取消、状态与 Pipeline 步骤变“已取消”、审计 `task.cancelled`；全仓 68 文件 / 760 tests 绿，Studio build 1661 modules 成功。
+- [x] **DAG 多依赖合并** — 已完成（2026-11-21）。`executeDagPipeline` 不再只取最后一个依赖 commit：join step 先 checkout 最后一个依赖，再把其余依赖逐个 `--no-ff` merge 成真实 merge commit 作为 `evidenceBase`；合并冲突则 abort 该次 merge、step 标 failed 并列出冲突文件。新增依赖合并冲突与已包含依赖不重复 merge 用例；全仓 68 文件 / 762 tests 绿，typecheck 0。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -458,6 +459,17 @@
 - [x] 本轮提交：`706e604 feat(storage-core): cancel tasks and their active runs`、`7d54839 feat(server-core): expose task cancellation`、`e60d8c2 feat(cli): add the cancel task tool`、`fbf7f5c feat(studio): cancel a task from its detail`。
 - [ ] 未做：取消不删除 worktree（保留证据），后续磁盘回收仍需人工 release / delete；已取消任务不支持 retry / rerun；daemon 重启后无法恢复活动执行句柄，遗留 running Run 只能按“无句柄”路径直接标取消。
 
+## DAG 多依赖合并 — 已完成（2026-11-21）
+
+- [x] 缺陷：`executeDagPipeline` 原先 `branchFrom = 最后一个依赖的 commitSha`，多依赖 join 只从最后一个依赖检出，前面的依赖 commit 只记 warning，改动没有进入 step worktree。
+- [x] `worktree.ts` 新增 `mergeDependencyCommits(worktreePath, commits)`：按顺序检查每个 commit 是否已是 `HEAD` 祖先，不是则用 `git -c user.name=Agent Ops -c user.email=agent-ops@localhost merge --no-ff --no-edit <sha>` 生成真实 merge commit；全部合并完成后返回最终 `HEAD`。
+- [x] 冲突处理：读取 `git diff --name-only --diff-filter=U` 收集未合并文件，执行 `git merge --abort`，抛 `DAG dependency merge conflict in <files>`；step 标 `failed`，不带着半合并的 worktree 继续跑，left / right 等已完成结果保留。
+- [x] `executeDagPipeline` 改为收集全部依赖 commit；任一依赖没有 commit 则下游 `skipped`。单依赖 / 根步骤沿用原 base，多依赖调用 `mergeDependencyCommits`，合并后的 HEAD 作为 `executeRun` 的 `evidenceBase`，Agent 改动只相对 merge base 计算。
+- [x] `dag.test.ts`：join 用例改为 left 写 `LEFT.md` + `SHARED.md`、right 写 `RIGHT.md`，断言 join 同时看到两个文件、无 “not merged” warning、`conflicts=[]`；新增 left / right 都改 `SHARED.md` 的冲突用例，断言 join failed、error 含 `merge conflict` 与 `SHARED.md`、`conflicts` 的 stepIds 为 left / right、pipeline 第三条为 failed。
+- [x] 门禁：`packages/storage-core/test` 17 文件 / 95 tests 绿；`worktree.test.ts` 覆盖“依赖已是 HEAD 祖先时不新增 merge commit”；全仓 typecheck 0；全仓 68 文件 / 762 tests 绿。
+- [x] 文档：README 并行 DAG 能力与运行入口段落改为“多依赖依次 merge、冲突整步 failed”，去掉旧“只从最后一个依赖检出 / 未自动合并 warning”描述。
+- [ ] 未做：没有把 merge commit SHA 单独写入 `DagStepResult` / 审计字段；需要回放时只能从 step commit 的父链定位。跨步骤 changedFiles 交集仍只报告，不回写任务主 worktree。
+
 ## Studio 任务看板 — 已完成（2026-11-21）
 
 - [x] 新增 `TaskBoard.tsx`：按 `TASK_BOARD_STATES`（`queued` / `running` / `review` / `done` / `failed` / `cancelled`）分列；每列显示状态标签、任务计数、空列 `No tasks`；卡片展示标题、`repo@baseRef`、Pipeline 状态徽标、Team 或 Role chip。
@@ -537,19 +549,19 @@
 - [x] 后续补齐：`docs/prd/...实施拆解` 已加入“角色与团队功能面完成记录（2026-11-20）”、M2 状态行与 §11 变更记录行（725 tests 基线）。
 - [ ] 未做：README 的能力表按模块描述，不逐条列出 API 路由。
 
-## F6-06 并行 DAG — 已完成（内核版，2026-11-20）
+## F6-06 并行 DAG — 已完成（内核版，2026-11-20；多依赖合并已在 2026-11-21 补齐）
 
 - [x] pipeline step 增加 `dependsOn`：显式 `[]` 表示 DAG 根，未写则沿用串行“上一步”语义；`normalizePipeline` 校验依赖存在、禁自依赖、禁环。
 - [x] `KernelStore.executeDagPipeline(taskId, { runner?, maxConcurrency? })`：按依赖层级调度 ready steps，`maxConcurrency`（默认 2，1–8）分波执行；每步独立 worktree `tasks/<taskId>/dag/<stepId>`，从**最后一个依赖的 commit** 检出。
 - [x] 失败步骤的依赖者标记 `skipped`，其余分支继续跑；任务最终状态：任一 completed → `review`，全部失败 → `failed`。
 - [x] 每步成功后 accept 并 pin 到 `refs/agent-ops/tasks/<taskId>/lanes/dag-<stepId>`；`pipeline.results` 落库（skipped 记为 failed + error）。
 - [x] 新增 `evidenceBase`：DAG step 的 diff 以它自己的 branch base 为准，避免把上游依赖的文件算成本步改动（否则 join 的 changedFiles 会重复上游文件并制造假冲突）。
-- [x] 多依赖时记录 warning（只从最后一个依赖检出，其它依赖 commit 不合并）；跨步骤 changedFiles 交集作为 conflicts 报告，不自动合并。
+- [x] 多依赖时记录 warning（只从最后一个依赖检出，其它依赖 commit 不合并）— 已被 2026-11-21 “DAG 多依赖合并”取代；跨步骤 changedFiles 交集作为 conflicts 报告，不自动合并回任务。
 - [x] 暂不支持 DAG 中的 `requiresApproval`（显式拒绝并提示改用串行 Pipeline）。
 - [x] server：`POST /api/tasks/:id/pipeline/dag`；MCP：`agent_ops_execute_dag`，`create_task` 的 step 接受 `dependsOn`。
 - [x] 测试：两个根并发（实测 maxActive=2）、join 从 right 检出（可见 RIGHT.md、不可见 LEFT.md）、冲突报告 `SHARED.md`、warning 说明 left 未合并；失败根导致 child skipped 而 other 完成；环 / 未知依赖在 createTask 被拒；requiresApproval 在 DAG 被拒；server 200/400。全仓 typecheck 0，62 文件 / 729 tests 绿。
 - [x] 本轮提交：`30f09ff feat(storage-core): run pipelines as a DAG`、`8f4688a feat(server-core): expose DAG pipeline runs`、`3b307cd feat(cli): add the DAG run tool`。
-- [ ] 未做：没有 DAG 级别的自动合并/合成，多依赖只从最后一个依赖检出；Studio 没有 DAG 编辑器或运行入口；DAG 不支持审批门；真实模型下未验证。
+- [ ] 未做：DAG 不支持审批门。多依赖合并已由 2026-11-21 章节补齐，本节“只从最后一个依赖检出”的旧限制不再适用；Studio 的 DAG 运行入口与真实 CodeBuddy 验收已在后续章节完成。
 
 ## 真实模型 Run（CodeBuddy）— 已完成（API + UI，2026-11-20）
 
