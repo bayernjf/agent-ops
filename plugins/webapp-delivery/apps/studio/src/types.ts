@@ -392,6 +392,46 @@ export type TaskPipelineStep = {
   agentId?: string;
   prompt?: string;
   requiresApproval?: boolean;
+  dependsOn?: string[];
+};
+
+export type DagStepResult = {
+  stepId: string;
+  name: string;
+  status: 'completed' | 'failed' | 'skipped';
+  runId: string | null;
+  commitSha: string | null;
+  worktreePath: string | null;
+  changedFiles: string[];
+  error: string | null;
+};
+
+export type DagPipelineResult = {
+  taskId: string;
+  maxConcurrency: number;
+  steps: DagStepResult[];
+  conflicts: Array<{ file: string; stepIds: string[] }>;
+  warnings: string[];
+  taskStatus: KernelTaskState;
+};
+
+export type ParallelLaneResult = {
+  roleId: string;
+  roleName: string;
+  runId: string | null;
+  worktreePath: string | null;
+  status: string;
+  changedFiles: string[];
+  error: string | null;
+};
+
+export type ParallelTeamResult = {
+  taskId: string;
+  teamId: string;
+  maxConcurrency: number;
+  lanes: ParallelLaneResult[];
+  conflicts: Array<{ file: string; roleIds: string[] }>;
+  taskStatus: KernelTaskState;
 };
 
 export type TaskPipelineStepResult = {

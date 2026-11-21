@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, ListTodo, Play, Plus, RefreshCw, RotateCcw, Square, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, GitFork, ListTodo, Play, Plus, RefreshCw, RotateCcw, Square, Trash2, Users, X } from 'lucide-react';
 import { useI18n, type KeyPath } from '../i18n/i18n';
-import type { AgentRole, BudgetStatus, KernelRun, KernelTask, KernelTaskState, TaskBudgetStatus, TaskPipeline, TaskPipelineStep, TaskPipelineStepResult } from '../types';
+import type { AgentRole, BudgetStatus, DagPipelineResult, KernelRun, KernelTask, KernelTaskState, ParallelTeamResult, TaskBudgetStatus, TaskPipeline, TaskPipelineStep, TaskPipelineStepResult } from '../types';
 import { apiFetch, apiStreamFetch } from '../lib/api';
 
 type RunAction = 'execute' | 'accept' | 'reject';
@@ -86,6 +86,10 @@ export function TasksView() {
   const [creating, setCreating] = useState(false);
   const [taskForm, setTaskForm] = useState<TaskForm>(emptyTaskForm);
   const [pipelineBusyId, setPipelineBusyId] = useState<string | null>(null);
+  const [fanoutBusy, setFanoutBusy] = useState<string | null>(null);
+  const [dagResultByTask, setDagResultByTask] = useState<Record<string, DagPipelineResult>>({});
+  const [parallelResultByTask, setParallelResultByTask] = useState<Record<string, ParallelTeamResult>>({});
+  const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
 
   const stateLabel = (state: KernelTaskState) => t(`tasks.state.${state}` as KeyPath);
 
@@ -235,16 +239,19 @@ export function TasksView() {
     steps: prev.steps.map((step, i) => (i === index ? { ...step, [key]: value } : step)),
   }));
 
+  const ensureProvisioned = async (task: KernelTask, fallback: KeyPath) => {
+    // The create form does not provision a worktree, so a fresh task cannot run until it has one.
+    if (task.worktreePath) return;
+    const provision = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/provision`, { method: 'POST' });
+    const provisionBody = (await provision.json().catch(() => null)) as { error?: string } | null;
+    if (!provision.ok) throw new Error(provisionBody?.error ?? t(fallback));
+  };
+
   const executePipeline = async (task: KernelTask) => {
     setPipelineBusyId(task.id);
     setError('');
     try {
-      // The create form does not provision a worktree, so a fresh task cannot run until it has one.
-      if (!task.worktreePath) {
-        const provision = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/provision`, { method: 'POST' });
-        const provisionBody = (await provision.json().catch(() => null)) as { error?: string } | null;
-        if (!provision.ok) throw new Error(provisionBody?.error ?? t('tasks.pipelineExecute'));
-      }
+      await ensureProvisioned(task, 'tasks.pipelineExecute');
       const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/execute`, { method: 'POST' });
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineExecute'));
@@ -289,6 +296,71 @@ export function TasksView() {
       setError(cause instanceof Error ? cause.message : t('tasks.pipelineRerun'));
     } finally {
       setPipelineBusyId(null);
+    }
+  };
+
+  const runDagPipeline = async (task: KernelTask) => {
+    if (!window.confirm(t('tasks.dagConfirm'))) return;
+    const busyKey = `${task.id}:dag`;
+    setFanoutBusy(busyKey);
+    setError('');
+    try {
+      await ensureProvisioned(task, 'tasks.dagRun');
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/dag`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const body = (await response.json().catch(() => null)) as (DagPipelineResult & { error?: string }) | null;
+      if (!response.ok || !body) throw new Error(body?.error ?? t('tasks.dagRun'));
+      setDagResultByTask(previous => ({ ...previous, [task.id]: body }));
+      await loadTasks();
+      if (expandedId === task.id) await loadRuns(task.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.dagRun'));
+    } finally {
+      setFanoutBusy(null);
+    }
+  };
+
+  const runParallelTeam = async (task: KernelTask) => {
+    if (!window.confirm(t('tasks.parallelConfirm'))) return;
+    const busyKey = `${task.id}:parallel`;
+    setFanoutBusy(busyKey);
+    setError('');
+    try {
+      await ensureProvisioned(task, 'tasks.parallelRun');
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/parallel/execute`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const body = (await response.json().catch(() => null)) as (ParallelTeamResult & { error?: string }) | null;
+      if (!response.ok || !body) throw new Error(body?.error ?? t('tasks.parallelRun'));
+      setParallelResultByTask(previous => ({ ...previous, [task.id]: body }));
+      await loadTasks();
+      if (expandedId === task.id) await loadRuns(task.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.parallelRun'));
+    } finally {
+      setFanoutBusy(null);
+    }
+  };
+
+  const deleteTask = async (task: KernelTask) => {
+    if (!window.confirm(t('tasks.deleteConfirm'))) return;
+    setDeletingTaskId(task.id);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}`, { method: 'DELETE' });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(body?.error ?? t('tasks.deleteFailed'));
+      setExpandedId(current => (current === task.id ? null : current));
+      await loadTasks();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.deleteFailed'));
+    } finally {
+      setDeletingTaskId(null);
     }
   };
 
@@ -619,6 +691,13 @@ export function TasksView() {
 
                 {expandedId === task.id && (
                   <div className="run-list">
+                    {task.status === 'queued' && taskRuns(task.id).length === 0 && (
+                      <div className="task-danger-row">
+                        <button className="quiet-button" type="button" onClick={() => void deleteTask(task)} disabled={deletingTaskId === task.id}>
+                          <Trash2 size={14} aria-hidden="true" /> {t('tasks.deleteTask')}
+                        </button>
+                      </div>
+                    )}
                     {task.pipeline && (() => {
                       const pipeline = task.pipeline;
                       return (
@@ -650,6 +729,11 @@ export function TasksView() {
                                 </button>
                               </>
                             )}
+                            {(task.status === 'queued' || task.status === 'review') && pipeline.status !== 'running' && pipeline.status !== 'awaiting_approval' && !pipeline.steps.some(step => step.requiresApproval) && (
+                              <button className="secondary-button" type="button" onClick={() => void runDagPipeline(task)} disabled={fanoutBusy === `${task.id}:dag`}>
+                                <GitFork size={14} aria-hidden="true" /> {fanoutBusy === `${task.id}:dag` ? t('tasks.pipelineRunning') : t('tasks.dagRun')}
+                              </button>
+                            )}
                           </div>
                           <div className="pipeline-steps">
                             {pipeline.steps.map(step => {
@@ -664,6 +748,73 @@ export function TasksView() {
                               );
                             })}
                           </div>
+                        </div>
+                      );
+                    })()}
+                    {task.teamId && (task.status === 'queued' || task.status === 'review') && (
+                      <div className="fanout-actions">
+                        <button className="secondary-button" type="button" onClick={() => void runParallelTeam(task)} disabled={fanoutBusy === `${task.id}:parallel`}>
+                          <Users size={14} aria-hidden="true" /> {fanoutBusy === `${task.id}:parallel` ? t('tasks.pipelineRunning') : t('tasks.parallelRun')}
+                        </button>
+                      </div>
+                    )}
+                    {dagResultByTask[task.id] && (() => {
+                      const result = dagResultByTask[task.id];
+                      return (
+                        <div className="fanout-panel" aria-label={t('tasks.dagResultTitle')}>
+                          <div className="fanout-head">
+                            <strong>{t('tasks.dagResultTitle')}</strong>
+                            <span>{t('tasks.fanoutConcurrency', { count: result.maxConcurrency })}</span>
+                          </div>
+                          <div className="fanout-rows">
+                            {result.steps.map(step => (
+                              <div className="fanout-row" key={step.stepId}>
+                                <span>{step.name}</span>
+                                <span className={`state ${step.status}`}>{t(`tasks.fanoutStatus.${step.status}` as KeyPath)}</span>
+                                <span className="pipeline-step-commit">{step.commitSha ? step.commitSha.slice(0, 10) : '—'}</span>
+                                {step.error ? <small>{step.error}</small> : null}
+                              </div>
+                            ))}
+                          </div>
+                          {result.conflicts.length > 0 && (
+                            <div className="fanout-notes">
+                              <strong>{t('tasks.conflictsTitle')}</strong>
+                              <ul>{result.conflicts.map(conflict => <li key={conflict.file}>{conflict.file} — {conflict.stepIds.join(', ')}</li>)}</ul>
+                            </div>
+                          )}
+                          {result.warnings.length > 0 && (
+                            <div className="fanout-notes">
+                              <strong>{t('tasks.warningsTitle')}</strong>
+                              <ul>{result.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                    {parallelResultByTask[task.id] && (() => {
+                      const result = parallelResultByTask[task.id];
+                      return (
+                        <div className="fanout-panel" aria-label={t('tasks.parallelResultTitle')}>
+                          <div className="fanout-head">
+                            <strong>{t('tasks.parallelResultTitle')}</strong>
+                            <span>{t('tasks.fanoutConcurrency', { count: result.maxConcurrency })}</span>
+                          </div>
+                          <div className="fanout-rows">
+                            {result.lanes.map(lane => (
+                              <div className="fanout-row" key={lane.roleId}>
+                                <span>{lane.roleName}</span>
+                                <span className={`state ${lane.status}`}>{stateLabel(lane.status as KernelTaskState)}</span>
+                                <span className="pipeline-step-commit">{t('tasks.changedFileCount', { count: lane.changedFiles.length })}</span>
+                                {lane.error ? <small>{lane.error}</small> : null}
+                              </div>
+                            ))}
+                          </div>
+                          {result.conflicts.length > 0 && (
+                            <div className="fanout-notes">
+                              <strong>{t('tasks.conflictsTitle')}</strong>
+                              <ul>{result.conflicts.map(conflict => <li key={conflict.file}>{conflict.file} — {conflict.roleIds.join(', ')}</li>)}</ul>
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
