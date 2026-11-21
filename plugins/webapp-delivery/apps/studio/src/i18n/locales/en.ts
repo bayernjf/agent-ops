@@ -834,6 +834,7 @@ export const en = {
     parallelRun: 'Run parallel team',
     parallelConfirm: 'Run every role on the team in its own worktree in parallel? Lanes are not merged automatically.',
     dagResultTitle: 'DAG result',
+    dagMergeCommit: 'merge {sha}',
     parallelResultTitle: 'Parallel result',
     acceptLane: 'Accept lane',
     rejectLane: 'Reject lane',

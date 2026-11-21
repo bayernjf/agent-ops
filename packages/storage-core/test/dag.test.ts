@@ -95,6 +95,14 @@ describe('KernelStore DAG pipeline', () => {
       const commits = result.steps.map(step => step.commitSha);
       expect(new Set(commits).size).toBe(3);
       for (const step of result.steps) await execFileAsync('git', ['cat-file', '-e', `${step.commitSha}^{commit}`], { cwd: repo });
+      const mergeSha = result.steps[2]?.mergeCommitSha;
+      expect(mergeSha).toBeTruthy();
+      await execFileAsync('git', ['cat-file', '-e', `${mergeSha}^{commit}`], { cwd: repo });
+      const parents = (await execFileAsync('git', ['rev-list', '--parents', '-n', '1', mergeSha as string], { cwd: repo })).stdout.trim().split(/\s+/);
+      expect(parents).toHaveLength(3);
+      expect(store.getTask(task.id)?.pipeline?.results[2]).toMatchObject({ mergeCommitSha: mergeSha });
+      const dagAudit = store.listAudit({ taskId: task.id }).find(event => event.type === 'pipeline.dag.executed');
+      expect(dagAudit?.data).toMatchObject({ mergeCommits: [{ stepId: 'join', commitSha: mergeSha }] });
       await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
@@ -256,6 +264,7 @@ describe('KernelStore DAG step templates', () => {
       expect(prompts[1]).toContain('Join after Left finished.');
       expect(prompts[1]).not.toContain('{{previous.output}}');
       expect(prompts[1]).toContain(`at ${left?.commitSha}`);
+      expect(result.steps[1]?.mergeCommitSha).toBeUndefined();
       await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
