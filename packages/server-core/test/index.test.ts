@@ -757,7 +757,7 @@ describe('createKernelApp', () => {
       });
       expect(response.status).toBe(200);
       const body = (await response.json()) as {
-        lanes: Array<{ roleId: string; status: string }>;
+        lanes: Array<{ roleId: string; status: string; runId: string | null }>;
         conflicts: Array<{ file: string; roleIds: string[] }>;
         taskStatus: string;
         maxConcurrency: number;
@@ -767,6 +767,33 @@ describe('createKernelApp', () => {
       expect(body.lanes.every(lane => lane.status === 'review')).toBe(true);
       expect(body.conflicts.map(conflict => ({ file: conflict.file, roleIds: [...conflict.roleIds].sort() })))
         .toEqual([{ file: 'lane.md', roleIds: [left.id, right.id].sort() }]);
+
+      const leftRunId = body.lanes[0]?.runId ?? '';
+      const accepted = await app.request(`/api/runs/${leftRunId}/accept`, { method: 'POST' });
+      expect(accepted.status).toBe(200);
+      const acceptedBody = (await accepted.json()) as { commitSha: string };
+      expect(acceptedBody.commitSha).toMatch(/^[0-9a-f]{40}$/);
+
+      const selected = await app.request(`/api/tasks/${task.id}/final-lane`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId: leftRunId }),
+      });
+      expect(selected.status).toBe(200);
+      expect((await selected.json()) as object).toMatchObject({ finalRunId: leftRunId, finalCommitSha: acceptedBody.commitSha });
+
+      const invalidSelection = await app.request(`/api/tasks/${task.id}/final-lane`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(invalidSelection.status).toBe(400);
+      const missingSelection = await app.request(`/api/tasks/${task.id}/final-lane`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId: 'missing' }),
+      });
+      expect(missingSelection.status).toBe(404);
 
       const invalid = await app.request(`/api/tasks/${task.id}/parallel/execute`, {
         method: 'POST',

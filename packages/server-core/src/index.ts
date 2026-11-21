@@ -91,6 +91,10 @@ const executeParallelSchema = z.object({
   maxConcurrency: z.number().int().min(1).max(8).optional(),
 });
 
+const selectFinalLaneSchema = z.object({
+  runId: z.string().trim().min(1),
+});
+
 const policyEvaluateSchema = z.object({
   allowedTools: z.array(z.string().trim().min(1).max(100)).max(100).default([]),
   blockedTools: z.array(z.string().trim().min(1).max(100)).max(100).default([]),
@@ -513,6 +517,16 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     const roleId = c.req.query('roleId')?.trim() || undefined;
     const status = await store.budgetStatus(taskId, roleId);
     return status ? c.json(status) : c.json({ error: `Task ${taskId} was not found.` }, 404);
+  });
+
+  app.post('/api/tasks/:id/final-lane', async (c) => {
+    const parsed = selectFinalLaneSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: 'Invalid final lane input.', details: parsed.error.flatten() }, 400);
+    try {
+      return c.json(await store.selectFinalLane(c.req.param('id'), parsed.data.runId));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
   });
 
   app.post('/api/tasks/:id/parallel/execute', async (c) => {
