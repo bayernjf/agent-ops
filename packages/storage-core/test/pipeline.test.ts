@@ -578,6 +578,10 @@ describe('KernelStore pipeline rerun', () => {
       const first = await store.executeTaskPipeline(task.id, runner);
       expect(first.status).toBe('completed');
       const firstCommits = first.results.map(result => result.commitSha);
+      for (const result of first.results) {
+        expect(result.runId).toBeTruthy();
+        expect(result.commitSha).toBeTruthy();
+      }
 
       const rerun = await store.rerunTaskPipeline(task.id, runner);
       expect(rerun.status).toBe('completed');
@@ -590,6 +594,27 @@ describe('KernelStore pipeline rerun', () => {
       const count = (await execFileAsync('git', ['rev-list', '--count', 'HEAD'], { cwd: provisioned.worktreePath })).stdout.trim();
       expect(count).toBe('3');
       expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: provisioned.worktreePath })).stdout.trim()).toBe('');
+
+      // Rerun must pin every old step commit and leave them resolvable after aggressive gc.
+      for (const result of first.results) {
+        const ref = `refs/agent-ops/pipelines/${task.id}/${result.runId}`;
+        const pinned = (await execFileAsync('git', ['rev-parse', ref], { cwd: repo })).stdout.trim();
+        expect(pinned).toBe(result.commitSha);
+      }
+      await execFileAsync('git', ['gc', '--prune=now'], { cwd: repo });
+      for (const commitSha of firstCommits) {
+        await expect(execFileAsync('git', ['cat-file', '-e', commitSha ?? ''], { cwd: repo })).resolves.toBeDefined();
+      }
+      const rerunAudit = store.listAudit({ taskId: task.id, type: 'pipeline.rerun' });
+      expect(rerunAudit).toHaveLength(1);
+      expect(rerunAudit[0]?.data).toMatchObject({
+        steps: 2,
+        previousResults: 2,
+        pinnedCommits: [
+          { runId: first.results[0]?.runId, commitSha: first.results[0]?.commitSha },
+          { runId: first.results[1]?.runId, commitSha: first.results[1]?.commitSha },
+        ],
+      });
       await store.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
