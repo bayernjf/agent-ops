@@ -3,7 +3,7 @@
 ## 待办登记（标准）
 
 > 本段是本产品唯一活跃待办入口；详细背景见下方原有章节。完成一项改 `[x]`，并在“最近变更 / Recently shipped”留证据。
-> 最近同步：2026-11-21
+> 最近同步：2026-11-22
 >
 > 产品规划（非活跃待办，不计入上方待办）：多 Agent 角色与团队 v0.2/v0.3，PRD 见 `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md`，实施拆解见 `docs/prd/Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md`；PD-1～PD-9 已于 2026-11-19 拍板；后续方向备忘（Tier 0 能力包 / 现有 Harness / Personal Agent）见 PRD §12.1–12.2。
 
@@ -25,6 +25,7 @@
 - [x] **DAG 审批门** — 已完成（2026-11-21）。`executeDagPipeline` 支持 `requiresApproval`：gated step 单独执行，Run 到 `review` 时 DAG 存 `awaiting_approval`，pipeline 持久化 `executionMode: 'dag'` / `maxConcurrency` / 已完成结果；`approvePipelineStep` 接受该 lane Run 后从已完成 results 续跑，不重跑已完成步骤；`rejectPipelineStep` 将该步与所有尚未完成的 step 标 failed。暂停/恢复写 `pipeline.dag.paused` / `pipeline.dag.resumed` 审计。新增 4 个 DAG 用例（批准续跑、连续两道门、驳回下游、原有 DAG 回归）；全仓 68 文件 / 776 tests 绿，typecheck 0，Studio build 1661 modules 成功。
 - [x] **记录 DAG merge commit** — 已完成（2026-11-21）。多依赖 join 实际生成 merge commit 时，把 SHA 写入 `DagStepResult.mergeCommitSha` 与 `pipeline.results`，并在 `pipeline.dag.executed` / `paused` 审计的 `mergeCommits` 中列出；根步骤与单依赖 step 不写。测试断言 SHA 可解析、有两个父提交、单依赖为空，并检查持久化与审计；全仓 68 文件 / 776 tests 绿，typecheck 0，Studio build 1661 modules 成功。
 - [x] **模板引用执行顺序校验** — 已完成（2026-11-22）。`validatePipelineTemplates` 按 `dependsOn`（未写回退串行上一步）计算传递祖先；`{{step:<id>.*}}` 引用非确定上游、`{{previous.*}}` 无上游都会在 createTask 时拒绝并映射 400。新增纯函数 4 例、createTask 与 HTTP 各 1 例；全仓 68 文件 / 780 tests 绿，typecheck 0，Studio build 1661 modules 成功。
+- [x] **Run 自动继承 Role profileId** — 已完成（2026-11-22）。`createRun(taskId, undefined)` 显式 `agentId` 优先，否则使用 Role 的 `profileId`，无 Profile 时回退 Role 的 `baseAgentId`；Role 绑定 Profile 时仍校验 base 兼容。HTTP `POST /api/tasks/:id/runs` 的 `agentId` 改为可选，缺失身份返回 400；MCP `agent_ops_create_run` 同步可省略。新增 storage 1 例、HTTP 1 例，MCP `create_run` 补继承断言；全仓 68 文件 / 782 tests 绿，typecheck 0。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -139,7 +140,7 @@
 - [x] 测试：Task Role 落库/未知 Role、Run 继承/显式覆盖/agent 不匹配、Role prompt 注入、server Task→Run 继承、MCP Task 字段；全仓 typecheck 0，48 文件 / 639 tests 绿。
 - [x] 本轮提交：`288cdff feat(storage-core): bind task and run roles`、`ebc5b5c test(storage-core): cover task role binding`。
 - [ ] F4 只覆盖 F4-01/F4-02/F4-03；Team 字段（E5 Team 模型尚未存在）、Run version/command/token/cost（F4-04）、重跑 hygiene（F4-05）、成本预算（F4-06）未做。
-- [ ] Run 不会自动把 Role 的 `profileId` 变成执行 Profile；`agentId` 仍由调用方指定，只校验与 Role 的 base 兼容。
+- [x] Run 自动把 Role 的 `profileId` 变成执行身份（2026-11-22 补齐）：`createRun(taskId, undefined)` 继承 Role `profileId`，无 Profile 回退 `baseAgentId`；显式 `agentId` 仍可覆盖并校验 base 兼容。
 
 ## F6 内核串行 Pipeline — 已完成（2026-11-20）
 
