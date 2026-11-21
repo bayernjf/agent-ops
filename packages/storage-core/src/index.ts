@@ -75,7 +75,7 @@ export type TaskPipelineStep = {
 
 export type TaskPipelineStepResult = {
   stepId: string;
-  status: 'pending' | 'running' | 'awaiting_approval' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
   runId?: string;
   commitSha?: string;
   /** Files this step's own commit changed (base of the step vs its commit), not the task-wide diff. */
@@ -89,7 +89,7 @@ export type TaskPipelineStepResult = {
 export type TaskPipeline = {
   steps: TaskPipelineStep[];
   results: TaskPipelineStepResult[];
-  status: 'idle' | 'running' | 'awaiting_approval' | 'completed' | 'failed';
+  status: 'idle' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
   startedAt?: string;
   completedAt?: string;
 };
@@ -147,7 +147,7 @@ function parseTaskPipeline(raw: string): TaskPipeline | null {
   try {
     const parsed = JSON.parse(raw) as TaskPipeline;
     if (!parsed || !Array.isArray(parsed.steps)) return null;
-    const status = parsed.status === 'running' || parsed.status === 'awaiting_approval' || parsed.status === 'completed' || parsed.status === 'failed' ? parsed.status : 'idle';
+    const status = parsed.status === 'running' || parsed.status === 'awaiting_approval' || parsed.status === 'completed' || parsed.status === 'failed' || parsed.status === 'cancelled' ? parsed.status : 'idle';
     return {
       steps: parsed.steps,
       results: Array.isArray(parsed.results) ? parsed.results : [],
@@ -379,6 +379,7 @@ export type KernelAuditEventType =
   | 'team.deleted'
   | 'task.created'
   | 'task.deleted'
+  | 'task.cancelled'
   | 'task.final_lane.selected'
   | 'run.accepted'
   | 'run.rejected'
@@ -439,7 +440,7 @@ export type CoordinatorSummary = {
 export type DagStepResult = {
   stepId: string;
   name: string;
-  status: 'completed' | 'failed' | 'skipped';
+  status: 'completed' | 'failed' | 'skipped' | 'cancelled';
   runId: string | null;
   commitSha: string | null;
   worktreePath: string | null;
@@ -706,6 +707,8 @@ export class KernelStore {
   protected readonly databasePath: string;
   protected migrations: readonly Migration[] = kernelMigrations;
   private readonly activeRuns = new Map<string, AbortController>();
+  /** Tasks whose cancellation was requested, so orchestrators cannot start another step. */
+  private readonly cancelRequestedTasks = new Set<string>();
   private readonly activePipelines = new Set<string>();
   private readonly runEventListeners = new Map<string, Set<(event: RunEvent) => void>>();
   private nextRunEventSeq = 1;
@@ -927,6 +930,70 @@ export class KernelStore {
       data: { title: task.title, status: task.status },
     });
     return true;
+  }
+
+  /**
+   * Stop a task that has not reached a terminal outcome. Active runs receive an abort; a running
+   * or awaiting pipeline is marked cancelled so its orchestrator cannot continue with later
+   * steps. The task row is kept as evidence, unlike `deleteTask` which is only for a probe with
+   * no runs. Completed pipelines keep their completed status: their commits already exist.
+   */
+  async cancelTask(id: string): Promise<{ task: TaskRecord; cancelledRuns: string[] }> {
+    const task = this.getTask(id);
+    if (!task) throw new Error(`Task ${id} was not found.`);
+    if (task.status === 'done' || task.status === 'failed' || task.status === 'cancelled') {
+      throw new Error(`Task ${id} is ${task.status} and cannot be cancelled.`);
+    }
+    this.cancelRequestedTasks.add(id);
+    const cancelledRuns: string[] = [];
+    for (const run of this.listRuns(id)) {
+      if (run.status !== 'running') continue;
+      const controller = this.activeRuns.get(run.id);
+      if (controller) {
+        controller.abort();
+        cancelledRuns.push(run.id);
+      } else {
+        // A run left `running` by a previous process has no execution handle. Marking it
+        // cancelled is better than leaving a task that can never settle.
+        await this.updateRunStatus(run.id, 'cancelled', run.diffStat, { ...run.artifacts, cancelled: true });
+        cancelledRuns.push(run.id);
+      }
+    }
+
+    const now = new Date().toISOString();
+    const pipeline = task.pipeline;
+    if (pipeline && pipeline.status !== 'completed') {
+      const existing = new Set(pipeline.results.map(result => result.stepId));
+      const unstarted: TaskPipelineStepResult[] = pipeline.steps
+        .filter(step => !existing.has(step.id))
+        .map(step => ({ stepId: step.id, status: 'cancelled', error: 'Task was cancelled.', completedAt: now }));
+      const cancelledPipeline: TaskPipeline = {
+        ...pipeline,
+        results: [
+          ...pipeline.results.map(result => (
+            result.status === 'running' || result.status === 'awaiting_approval'
+              ? { ...result, status: 'cancelled' as const, completedAt: now }
+              : result
+          )),
+          ...unstarted,
+        ],
+        status: 'cancelled',
+        completedAt: now,
+      };
+      await this.saveTaskPipeline(id, cancelledPipeline);
+    }
+    const updated = await this.updateTaskStatus(id, 'cancelled');
+    await this.recordAudit({
+      type: 'task.cancelled',
+      taskId: id,
+      teamId: task.teamId,
+      data: {
+        previousStatus: task.status,
+        cancelledRuns,
+        pipelineStatus: pipeline?.status ?? null,
+      },
+    });
+    return { task: updated, cancelledRuns };
   }
 
   async updateTaskStatus(id: string, status: TaskRunState): Promise<TaskRecord> {
@@ -1229,6 +1296,9 @@ export class KernelStore {
     if (!run) throw new Error(`Run ${id} was not found.`);
     const task = this.getTask(run.taskId);
     if (!task) throw new Error(`Task ${run.taskId} was not found.`);
+    if (task.status === 'cancelled' || this.cancelRequestedTasks.has(task.id)) {
+      throw new Error(`Task ${task.id} is cancelled and cannot run.`);
+    }
     const worktreePath = options.worktreePath ?? task.worktreePath;
     if (!worktreePath) throw new Error(`Task ${run.taskId} has no worktree. Provision it before executing a run.`);
     const trackTask = options.taskStatus !== 'none';
@@ -1291,6 +1361,12 @@ export class KernelStore {
     });
 
     await this.updateRunExecutionEvidence(id, { command: plan.command.join(' ') });
+
+    // Cancellation can arrive while this run is preparing; re-read before opening the handle.
+    const currentTask = this.getTask(task.id);
+    if (!currentTask || currentTask.status === 'cancelled' || this.cancelRequestedTasks.has(task.id)) {
+      throw new Error(`Task ${task.id} is cancelled and cannot run.`);
+    }
 
     const controller = new AbortController();
     this.activeRuns.set(id, controller);
@@ -1372,6 +1448,7 @@ export class KernelStore {
     try {
       const task = this.getTask(id);
       if (!task) throw new Error(`Task ${id} was not found.`);
+      if (task.status === 'cancelled' || this.cancelRequestedTasks.has(id)) throw new Error(`Task ${id} is cancelled and cannot start a pipeline.`);
       if (!task.pipeline || task.pipeline.steps.length === 0) throw new Error(`Task ${id} has no pipeline configured.`);
       if (!task.worktreePath) throw new Error(`Task ${id} has no worktree. Provision it before executing its pipeline.`);
       if (task.pipeline.status !== 'idle') {
@@ -1423,6 +1500,7 @@ export class KernelStore {
     try {
       const task = this.getTask(id);
       if (!task) throw new Error(`Task ${id} was not found.`);
+      if (task.status === 'cancelled' || this.cancelRequestedTasks.has(id)) throw new Error(`Task ${id} is cancelled and cannot retry its pipeline.`);
       const pipeline = task.pipeline;
       if (!pipeline || pipeline.steps.length === 0) throw new Error(`Task ${id} has no pipeline configured.`);
       if (!task.worktreePath) throw new Error(`Task ${id} has no worktree. Provision it before retrying its pipeline.`);
@@ -1477,6 +1555,7 @@ export class KernelStore {
     try {
       const task = this.getTask(id);
       if (!task) throw new Error(`Task ${id} was not found.`);
+      if (task.status === 'cancelled' || this.cancelRequestedTasks.has(id)) throw new Error(`Task ${id} is cancelled and cannot rerun its pipeline.`);
       const pipeline = task.pipeline;
       if (!pipeline || pipeline.steps.length === 0) throw new Error(`Task ${id} has no pipeline configured.`);
       if (!task.worktreePath) throw new Error(`Task ${id} has no worktree. Provision it before rerunning its pipeline.`);
@@ -1551,6 +1630,11 @@ export class KernelStore {
     if (!task) throw new Error(`Task ${id} was not found.`);
     let pipeline = initial;
     for (let index = startIndex; index < pipeline.steps.length; index++) {
+      if (this.cancelRequestedTasks.has(id) || this.getTask(id)?.status === 'cancelled') {
+        pipeline = { ...pipeline, status: 'cancelled', completedAt: new Date().toISOString() };
+        await this.saveTaskPipeline(id, pipeline);
+        return pipeline;
+      }
       const step = pipeline.steps[index];
       const startedAt = new Date().toISOString();
       const updateResult = (result: TaskPipelineStepResult) => {
@@ -1573,6 +1657,19 @@ export class KernelStore {
         await this.recordStepHandoff(id, pipeline, index, run.id);
 
         const executed = await this.executeRun(run.id, runner);
+        if (executed.status === 'cancelled' || this.cancelRequestedTasks.has(id) || this.getTask(id)?.status === 'cancelled') {
+          updateResult({
+            stepId: step.id,
+            status: 'cancelled',
+            runId,
+            error: 'Task was cancelled.',
+            startedAt,
+            completedAt: new Date().toISOString(),
+          });
+          pipeline = { ...pipeline, status: 'cancelled', completedAt: new Date().toISOString() };
+          await this.saveTaskPipeline(id, pipeline);
+          return pipeline;
+        }
         if (executed.status !== 'review') {
           updateResult({
             stepId: step.id,
@@ -1619,15 +1716,16 @@ export class KernelStore {
         });
         await this.saveTaskPipeline(id, pipeline);
       } catch (error) {
+        const cancelled = this.cancelRequestedTasks.has(id) || this.getTask(id)?.status === 'cancelled';
         updateResult({
           stepId: step.id,
-          status: 'failed',
+          status: cancelled ? 'cancelled' : 'failed',
           ...(runId ? { runId } : {}),
-          error: error instanceof Error ? error.message : String(error),
+          error: cancelled ? 'Task was cancelled.' : error instanceof Error ? error.message : String(error),
           startedAt,
           completedAt: new Date().toISOString(),
         });
-        pipeline = { ...pipeline, status: 'failed', completedAt: new Date().toISOString() };
+        pipeline = { ...pipeline, status: cancelled ? 'cancelled' : 'failed', completedAt: new Date().toISOString() };
         await this.saveTaskPipeline(id, pipeline);
         return pipeline;
       }
@@ -2267,6 +2365,7 @@ export class KernelStore {
   ): Promise<ParallelTeamResult> {
     const task = this.getTask(taskId);
     if (!task) throw new Error(`Task ${taskId} was not found.`);
+    if (task.status === 'cancelled' || this.cancelRequestedTasks.has(taskId)) throw new Error(`Task ${taskId} is cancelled and cannot run a team fanout.`);
     if (!task.teamId) throw new Error(`Task ${taskId} is not assigned to a Team.`);
     const team = await this.teams.getTeam(task.teamId);
     if (!team) throw new Error(`Team ${task.teamId} was not found.`);
@@ -2345,8 +2444,25 @@ export class KernelStore {
       }
     }
 
-    // Bounded waves: each wave runs at most `maxConcurrency` lanes at the same time.
+    const taskCancelled = () => this.cancelRequestedTasks.has(taskId) || this.getTask(taskId)?.status === 'cancelled';
+    const cancelPendingLane = async (lane: LaneState) => {
+      lane.status = 'cancelled';
+      lane.error = 'Task was cancelled.';
+      if (lane.runId) {
+        const run = this.getRun(lane.runId);
+        if (run && run.status === 'queued') {
+          await this.updateRunStatus(lane.runId, 'cancelled', run.diffStat, { ...run.artifacts, cancelled: true });
+        }
+      }
+    };
+
+    // Bounded waves: each wave runs at most `maxConcurrency` lanes at the same time. A task
+    // cancellation stops later waves and leaves already started lanes to their abort path.
     for (let index = 0; index < pending.length; index += maxConcurrency) {
+      if (taskCancelled()) {
+        for (const lane of pending.slice(index)) await cancelPendingLane(lane);
+        break;
+      }
       await Promise.all(pending.slice(index, index + maxConcurrency).map(async lane => {
         try {
           const executed = await this.executeRun(lane.runId as string, options.runner, {
@@ -2357,10 +2473,26 @@ export class KernelStore {
           lane.status = executed.status;
           lane.changedFiles = executed.artifacts.changedFiles;
         } catch (error) {
-          lane.status = 'failed';
-          lane.error = error instanceof Error ? error.message : String(error);
+          if (taskCancelled()) {
+            lane.status = 'cancelled';
+            lane.error = 'Task was cancelled.';
+          } else {
+            lane.status = 'failed';
+            lane.error = error instanceof Error ? error.message : String(error);
+          }
         }
       }));
+      if (taskCancelled()) {
+        for (const lane of pending.slice(index + maxConcurrency)) await cancelPendingLane(lane);
+        break;
+      }
+    }
+
+    // Lanes that never started still have queued runs; cancel those rows too.
+    if (taskCancelled()) {
+      for (const lane of pending) {
+        if (lane.status === 'queued') await cancelPendingLane(lane);
+      }
     }
 
     const fileOwners = new Map<string, Set<string>>();
@@ -2376,7 +2508,7 @@ export class KernelStore {
       .map(([file, owners]) => ({ file, roleIds: [...owners] }));
 
     const succeeded = lanes.some(lane => lane.status === 'review' || lane.status === 'done');
-    const taskStatus: TaskRunState = succeeded ? 'review' : 'failed';
+    const taskStatus: TaskRunState = taskCancelled() ? 'cancelled' : succeeded ? 'review' : 'failed';
     await this.updateTaskStatus(taskId, taskStatus);
     await this.recordAudit({
       type: 'parallel.executed',
@@ -2424,6 +2556,7 @@ export class KernelStore {
     try {
       const task = this.getTask(taskId);
       if (!task) throw new Error(`Task ${taskId} was not found.`);
+      if (task.status === 'cancelled' || this.cancelRequestedTasks.has(taskId)) throw new Error(`Task ${taskId} is cancelled and cannot run a DAG.`);
       const pipeline = task.pipeline;
       if (!pipeline || pipeline.steps.length === 0) throw new Error(`Task ${taskId} has no pipeline configured.`);
       if (pipeline.steps.some(step => step.requiresApproval)) {
@@ -2451,8 +2584,13 @@ export class KernelStore {
       const outputs = new Map<string, string>();
       const warnings: string[] = [];
       await this.updateTaskStatus(taskId, 'running');
+      const taskCancelled = () => this.cancelRequestedTasks.has(taskId) || this.getTask(taskId)?.status === 'cancelled';
 
       const runStep = async (step: TaskPipelineStep): Promise<void> => {
+        if (taskCancelled()) {
+          results.set(step.id, { stepId: step.id, name: step.name, status: 'cancelled', runId: null, commitSha: null, worktreePath: null, changedFiles: [], error: 'Task was cancelled.' });
+          return;
+        }
         const dependencies = dependencyIds(step);
         const branchFrom = dependencies.length === 0
           ? base
@@ -2484,6 +2622,10 @@ export class KernelStore {
           const run = await this.createRun(taskId, agentId, step.roleId, instruction);
           runId = run.id;
           const executed = await this.executeRun(run.id, options.runner, { worktreePath: lanePath, laneId: `dag-${step.id}`, taskStatus: 'none', evidenceBase: branchFrom ?? base });
+          if (executed.status === 'cancelled' || taskCancelled()) {
+            results.set(step.id, { stepId: step.id, name: step.name, status: 'cancelled', runId, commitSha: null, worktreePath: lanePath, changedFiles: executed.artifacts.changedFiles, error: 'Task was cancelled.' });
+            return;
+          }
           if (executed.status !== 'review') {
             results.set(step.id, { stepId: step.id, name: step.name, status: 'failed', runId, commitSha: null, worktreePath: lanePath, changedFiles: executed.artifacts.changedFiles, error: `Run ended in ${executed.status}.` });
             return;
@@ -2495,18 +2637,25 @@ export class KernelStore {
           results.set(step.id, {
             stepId: step.id,
             name: step.name,
-            status: 'failed',
+            status: taskCancelled() ? 'cancelled' : 'failed',
             runId,
             commitSha: null,
             worktreePath: existsSync(lanePath) ? lanePath : null,
             changedFiles: [],
-            error: error instanceof Error ? error.message : String(error),
+            error: taskCancelled() ? 'Task was cancelled.' : error instanceof Error ? error.message : String(error),
           });
         }
       };
 
       const pending = new Set(pipeline.steps.map(step => step.id));
       while (pending.size > 0) {
+        if (taskCancelled()) {
+          for (const step of pipeline.steps) {
+            if (!pending.has(step.id)) continue;
+            results.set(step.id, { stepId: step.id, name: step.name, status: 'cancelled', runId: null, commitSha: null, worktreePath: null, changedFiles: [], error: 'Task was cancelled.' });
+          }
+          break;
+        }
         // Drop dependents of failed or skipped steps before scheduling anything.
         for (const step of pipeline.steps) {
           if (!pending.has(step.id)) continue;
@@ -2553,21 +2702,22 @@ export class KernelStore {
       const completed = steps.filter(step => step.status === 'completed').length;
       const failed = steps.filter(step => step.status === 'failed').length;
       const skipped = steps.filter(step => step.status === 'skipped').length;
-      const taskStatus: TaskRunState = completed > 0 ? 'review' : 'failed';
+      const cancelled = taskCancelled();
+      const taskStatus: TaskRunState = cancelled ? 'cancelled' : completed > 0 ? 'review' : 'failed';
       const completedAt = new Date().toISOString();
 
       const saved: TaskPipeline = {
         steps: pipeline.steps,
         results: steps.map(step => ({
           stepId: step.stepId,
-          status: step.status === 'completed' ? 'completed' as const : 'failed' as const,
+          status: step.status === 'completed' ? 'completed' as const : step.status === 'cancelled' ? 'cancelled' as const : 'failed' as const,
           ...(step.runId ? { runId: step.runId } : {}),
           ...(step.commitSha ? { commitSha: step.commitSha } : {}),
           ...(step.error ? { error: step.error } : {}),
           startedAt,
           completedAt,
         })),
-        status: completed > 0 ? 'completed' : 'failed',
+        status: cancelled ? 'cancelled' : completed > 0 ? 'completed' : 'failed',
         startedAt,
         completedAt,
       };
@@ -2577,7 +2727,7 @@ export class KernelStore {
         type: 'pipeline.dag.executed',
         taskId,
         teamId: task.teamId,
-        data: { maxConcurrency, steps: pipeline.steps.length, completed, failed, skipped, conflicts: conflicts.length },
+        data: { maxConcurrency, steps: pipeline.steps.length, completed, failed, skipped, cancelled: steps.filter(step => step.status === 'cancelled').length, conflicts: conflicts.length },
       });
 
       return { taskId, maxConcurrency, steps, conflicts, warnings, taskStatus };
@@ -2771,6 +2921,7 @@ export class KernelStore {
 
   async close(): Promise<void> {
     this.activeRuns.clear();
+    this.cancelRequestedTasks.clear();
     this.runEventListeners.clear();
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);

@@ -412,7 +412,7 @@ export type TaskPipelineStep = {
 export type DagStepResult = {
   stepId: string;
   name: string;
-  status: 'completed' | 'failed' | 'skipped';
+  status: 'completed' | 'failed' | 'skipped' | 'cancelled';
   runId: string | null;
   commitSha: string | null;
   worktreePath: string | null;
@@ -450,7 +450,7 @@ export type ParallelTeamResult = {
 
 export type TaskPipelineStepResult = {
   stepId: string;
-  status: 'pending' | 'running' | 'awaiting_approval' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
   runId?: string;
   commitSha?: string;
   output?: string;
@@ -462,7 +462,7 @@ export type TaskPipelineStepResult = {
 export type TaskPipeline = {
   steps: TaskPipelineStep[];
   results: TaskPipelineStepResult[];
-  status: 'idle' | 'running' | 'awaiting_approval' | 'completed' | 'failed';
+  status: 'idle' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
   startedAt?: string;
   completedAt?: string;
 };

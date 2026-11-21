@@ -97,6 +97,7 @@ export function TasksView() {
   const [dagResultByTask, setDagResultByTask] = useState<Record<string, DagPipelineResult>>({});
   const [parallelResultByTask, setParallelResultByTask] = useState<Record<string, ParallelTeamResult>>({});
   const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
+  const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
 
   const stateLabel = (state: KernelTaskState) => t(`tasks.state.${state}` as KeyPath);
 
@@ -368,6 +369,23 @@ export function TasksView() {
       setError(cause instanceof Error ? cause.message : t('tasks.deleteFailed'));
     } finally {
       setDeletingTaskId(null);
+    }
+  };
+
+  const cancelTask = async (task: KernelTask) => {
+    if (!window.confirm(t('tasks.cancelTaskConfirm'))) return;
+    setCancellingTaskId(task.id);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/cancel`, { method: 'POST' });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(body?.error ?? t('tasks.cancelTaskFailed'));
+      await loadTasks();
+      if (expandedId === task.id) await loadRuns(task.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.cancelTaskFailed'));
+    } finally {
+      setCancellingTaskId(null);
     }
   };
 
@@ -764,11 +782,16 @@ export function TasksView() {
 
                 {expandedId === task.id && (
                   <div className="run-list">
-                    {task.status === 'queued' && taskRuns(task.id).length === 0 && (
+                    {(task.status === 'queued' || task.status === 'running' || task.status === 'review') && (
                       <div className="task-danger-row">
-                        <button className="quiet-button" type="button" onClick={() => void deleteTask(task)} disabled={deletingTaskId === task.id}>
-                          <Trash2 size={14} aria-hidden="true" /> {t('tasks.deleteTask')}
+                        <button className="quiet-button" type="button" onClick={() => void cancelTask(task)} disabled={cancellingTaskId === task.id}>
+                          <Square size={14} aria-hidden="true" /> {cancellingTaskId === task.id ? t('tasks.cancellingTask') : t('tasks.cancelTask')}
                         </button>
+                        {task.status === 'queued' && taskRuns(task.id).length === 0 && (
+                          <button className="quiet-button" type="button" onClick={() => void deleteTask(task)} disabled={deletingTaskId === task.id}>
+                            <Trash2 size={14} aria-hidden="true" /> {t('tasks.deleteTask')}
+                          </button>
+                        )}
                       </div>
                     )}
                     {task.pipeline && (() => {

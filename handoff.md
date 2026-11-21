@@ -16,6 +16,7 @@
 - [x] **Studio 策略预览面板** — 已完成（2026-11-21）。角色创建 / 编辑表单接入 `POST /api/policy/evaluate`，保存前逐 Runtime 展示 capability、enforcement、只读、人工门与 allow/deny 判定；策略字段变更立即清空旧结果，空策略显示默认工具集提示。真实浏览器已验证 7 个 Runtime、20 条判定、unsupported 原因与中英文文案；全仓 66 文件 / 753 tests 绿，Studio build 1660 modules 成功。
 - [x] **Teams 任务队列服务端过滤** — 已完成（2026-11-21）。`TeamsView` 不再拉取全量 `/api/tasks` 后按 `teamId` 过滤，改为对选中团队调用 `GET /api/teams/:teamId/tasks`；切换团队立即清空旧队列并带取消标记，队列与卡点面板分别有加载态和错误态，计划预览对团队切换做了响应隔离。真实浏览器已验证 Alpha 2 条 / Beta 1 条、未归属任务不出现，切换与刷新只请求当前团队队列；全仓 66 文件 / 753 tests 绿，Studio build 1660 modules 成功。
 - [x] **Studio 任务看板分列** — 已完成（2026-11-21）。Tasks 页新增 List / Board 切换，看板按六种任务状态分列、列头计数，卡片显示 `repo@baseRef`、Pipeline 徽标与 Team/Role chip；点卡片切回列表并展开、滚动定位该任务。真实浏览器已验证六列各 1 条、计数、Team/Role/Pipeline 标记、卡片跳转展开与中英文；全仓 67 文件 / 755 tests 绿，Studio build 1661 modules 成功。
+- [x] **Task 级取消** — 已完成（2026-11-21）。新增 `cancelTask` / `POST /api/tasks/:id/cancel` / `agent_ops_cancel_task` / Studio“取消任务”：`queued` / `running` / `review` 可取消，abort 活动 Run，串行 Pipeline、DAG 与并行 lane 都停止后续步骤，Pipeline 与步骤变 `cancelled`，终态拒绝；真实浏览器已验证排队任务取消、状态与 Pipeline 步骤变“已取消”、审计 `task.cancelled`；全仓 68 文件 / 760 tests 绿，Studio build 1661 modules 成功。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -224,7 +225,7 @@
 - [x] 浏览器验证：用隔离数据库 `/tmp/agent-ops-browser-verify/agent-ops.sqlite` + 临时 git 仓，不污染本机真实任务库。DAG 先验 `aider` candidate 的失败面板；再用真实 CodeBuddy 2.142.0 跑通成功路径（pipeline `completed`、commit `b976ee0`、输出 `PROBE_OK`）。并行 lane 先验失败面板；再用同一个角色跑通 `review` lane（0 文件、`PROBE_OK`）。Teams 计划预演在带 Team 的 queued 任务上打开并取消，不写回 Pipeline；`Delete probe` 从 Studio 删除后，后端任务列表确认消失。
 - [x] 真实模型登录补充：首次并行尝试因 daemon 启动时 `PATH` 未包含 `~/.local/bin`，报 `spawn codebuddy ENOENT`；用 `PATH="$HOME/.local/bin:$PATH"` 重启 daemon 后成功。这不是 Studio 代码缺陷，但本机 daemon 启动环境应显式带上 CLI 路径。
 - [x] 发现并修复：DAG / 并行 / 串行 / retry / rerun / approve 都是同步长请求，但 Studio 原来复用 `apiFetch` 的 15 秒默认超时，真实模型超过 15 秒会被前端 abort，daemon 仍在后台执行。新增 `PIPELINE_REQUEST_TIMEOUT_MS = 10 分钟` 并用于这些请求（commit `d7dd834`）。
-- [ ] 未做：并行 lane 的接受/驳回仍走普通 Run 操作；task 级 cancel 仍未做，目前只有“无 Run 的 task 可删除”。（团队任务队列已于 2026-11-21 改为 `GET /api/teams/:teamId/tasks`。）
+- [ ] 未做：并行 lane 的接受/驳回仍走普通 Run 操作。原“task 级 cancel 仍未做”的缺口已由上方 `Task 级取消`（2026-11-21）关闭。（团队任务队列已于 2026-11-21 改为 `GET /api/teams/:teamId/tasks`。）
 - [x] 本轮提交：`2efd97a feat(storage-core): delete tasks without runs`、`0eb7917 feat(server-core): expose task deletion`、`24d8891 feat(cli): add the delete task tool`、`3592b06 feat(studio): run DAG and parallel teams`、`69bfffc docs(handoff): record branch runs and task deletion`、`d7dd834 fix(studio): keep long pipeline requests alive`。
 
 ## M1 退出验收 — 4 步串行完整组合 — 已完成（2026-11-20）
@@ -441,6 +442,21 @@
 - [x] 门禁：全仓 typecheck 0；66 文件 / 753 tests 全部通过；Studio build 1660 modules 成功，主 chunk 295.45 kB，CSS 65.24 kB。
 - [x] 本轮提交：`1636843 feat(studio): load team tasks from the team queue`。
 - [ ] 未做：团队队列接口没有分页或状态过滤；任务数量大时仍会一次返回该团队全部任务。
+
+## Task 级取消 — 已完成（2026-11-21）
+
+- [x] `storage-core` 新增 `cancelTask(id)`：仅允许 `queued` / `running` / `review`；`done` / `failed` / `cancelled` 抛错。取消时 abort 该任务所有活动 Run；对没有执行句柄但仍为 `running` 的遗留 Run，直接标 `cancelled` 并补 `artifacts.cancelled`。
+- [x] Pipeline：未 completed 的 Pipeline 整体变 `cancelled`；正在运行或待审批的步骤变 `cancelled`；从未启动的步骤补一条 `cancelled` 结果。已 completed 的 Pipeline 保留 `completed`，不删除既有 commit。
+- [x] 串行 Pipeline 循环、DAG 调度与并行 wave 都检查任务取消标记：取消后不再启动后续步骤 / lane，也不把任务状态覆盖回 `review` 或 `failed`。并行中尚未启动的 lane 及其 queued Run 一并标 `cancelled`。
+- [x] `executeRun` 在入口与打开执行句柄前各检查一次任务状态，防止取消与启动竞态；串行 / DAG / 并行 / retry / rerun 的入口也拒绝已取消任务。
+- [x] 审计新增 `task.cancelled`，记录 `previousStatus`、`cancelledRuns`、`pipelineStatus`。
+- [x] server `POST /api/tasks/:id/cancel`，返回 `{ task, cancelledRuns }`；终态任务经既有错误映射返回 409。
+- [x] CLI MCP 新增 `agent_ops_cancel_task`。
+- [x] Studio 任务展开面板对 `queued` / `running` / `review` 显示“取消任务 / Cancel task”，二次确认后调用取消接口并刷新任务与 Run；`pipelineStatus.cancelled`、`pipelineStepStatus.cancelled`、`fanoutStatus.cancelled` 中英文文案补齐。
+- [x] 测试：`task-cancel.test.ts` 4 例（排队任务 + idle Pipeline、串行 Pipeline 活动 Run、DAG 活动 Run、并行双 lane）；server API 终态 409；MCP 工具清单更新。全仓 typecheck 0，68 文件 / 760 tests 绿；Studio build 1661 modules 成功，主 chunk 299.62 kB，CSS 67.60 kB。
+- [x] 真实浏览器验收（2026-11-21，隔离 DB `/tmp/agent-ops-cancel-verify` + 临时 git 仓）：`Cancel from Studio` 排队任务点“取消任务”并确认后变“已取消”，idle Pipeline 与步骤也显示“已取消”；第二个两步任务取消后两步都显示“已取消”；后端确认 `status=cancelled`、`pipeline.status=cancelled`，审计含 `task.cancelled`（previousStatus `queued`、cancelledRuns `[]`、pipelineStatus `idle`）。
+- [x] 本轮提交：`706e604 feat(storage-core): cancel tasks and their active runs`、`7d54839 feat(server-core): expose task cancellation`、`e60d8c2 feat(cli): add the cancel task tool`、`fbf7f5c feat(studio): cancel a task from its detail`。
+- [ ] 未做：取消不删除 worktree（保留证据），后续磁盘回收仍需人工 release / delete；已取消任务不支持 retry / rerun；daemon 重启后无法恢复活动执行句柄，遗留 running Run 只能按“无句柄”路径直接标取消。
 
 ## Studio 任务看板 — 已完成（2026-11-21）
 

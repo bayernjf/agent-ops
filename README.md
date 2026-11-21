@@ -17,6 +17,7 @@
 |---|---|
 | Task / Run | 每任务一个 worktree（自动链接仓库 `node_modules`，`AGENT_OPS_LINK_NODE_MODULES=0` 关闭）；Run 持久化 stdout/stderr、完整 diff（含未跟踪 patch）、exit code、耗时、usage；SSE 实时输出与取消 |
 | 任务视图 | Studio 任务页提供 List / Board 切换；看板按 `queued` / `running` / `review` / `done` / `failed` / `cancelled` 六状态分列，列头带计数，卡片展示 `repo@baseRef`、Pipeline 状态与 Team/Role chip；点卡片回到列表定位并展开该任务 |
+| 任务取消 | `POST /api/tasks/:id/cancel` 取消 `queued` / `running` / `review` 任务：终止活动 Run，串行 Pipeline、DAG、并行 lane 都停止后续步骤，任务与 Run 证据保留；终态任务返回 409 |
 | Roles | 角色绑定 Profile / base agent、系统提示、验收标准、工具策略与成本预算；内置 architect / implementer / reviewer / tester / researcher 模板 |
 | 策略预览 | 角色表单保存前调用 `POST /api/policy/evaluate`，逐 Runtime 展示只读、执行精度、人工门、allow/deny 判定与不支持原因；策略一改，旧结果立即清空 |
 | Teams + Handoff | 团队 = 花名册 + 交接边 + 可选 owner（落盘角色，必须最后一步且不再交接）；Pipeline 每跨一条边写一条交接收据（上游 commit + changedFiles）；Studio 任务队列按选中团队调用 `GET /api/teams/:teamId/tasks`，不拉全量任务 |
@@ -51,6 +52,17 @@ Studio 任务展开面板在任务处于 `queued` / `review` 时提供两个分�
 任务页顶部提供 **List / Board** 分段切换，默认仍是列表。看板把当前任务按 `queued` / `running` / `review` / `done` / `failed` / `cancelled` 六种状态分列，列头显示状态与任务计数；卡片只做状态概览，展示标题、`repo@baseRef`、Pipeline 状态徽标，以及 Team 或 Role chip。点卡片不会在看板内复制详情面板，而是切回列表、展开该任务，并按任务行 `id` 滚动定位；运行证据、审批门、lane 决策等操作仍在列表详情里使用同一套入口。
 
 看板列宽 220px 起、横向滚动，列体最高 `65vh` 独立滚动；任务多时不会把整页拉长。中英文文案都在 `tasks.view*` / `tasks.board*` 下维护。
+
+### 任务取消
+
+`POST /api/tasks/:id/cancel` 用于停止一个尚未进入终态的任务：
+
+- 允许从 `queued` / `running` / `review` 取消；`done` / `failed` / `cancelled` 返回 409。
+- 取消会 abort 该任务所有活动 Run；没有执行句柄但仍是 `running` 的遗留 Run 会被标成 `cancelled`，避免任务永远无法收口。
+- 串行 Pipeline 当前步骤标 `cancelled`，未启动步骤也补成 `cancelled`；Pipeline 状态变 `cancelled`。DAG 与并行 lane 同样停止后续步骤 / wave，不再把任务状态覆盖回 `review` 或 `failed`。
+- 已 `completed` 的 Pipeline 保留 `completed`：它的 commit 已经存在，取消只放弃任务，不删除已交付产物。
+- 任务行、Run、worktree 都保留为证据；只有“没有 Run 的探测任务”才走 `DELETE /api/tasks/:id`。
+- 审计写 `task.cancelled`，记录 previousStatus、cancelledRuns 与 pipelineStatus；Studio 任务展开面板提供“取消任务”，CLI 提供 `agent_ops_cancel_task`。
 
 ### Studio 审计与证据导出
 

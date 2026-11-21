@@ -1224,6 +1224,32 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('cancels a queued task and refuses a terminal one', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const task = await store.createTask({ repo: '/tmp/repo', baseRef: 'main', title: 'Cancel me' });
+      const cancelled = await app.request(`/api/tasks/${task.id}/cancel`, { method: 'POST' });
+      expect(cancelled.status).toBe(200);
+      expect((await cancelled.json()) as object).toMatchObject({
+        task: { id: task.id, status: 'cancelled' },
+        cancelledRuns: [],
+      });
+      expect(store.getTask(task.id)?.status).toBe('cancelled');
+
+      const missing = await app.request(`/api/tasks/${task.id}/cancel`, { method: 'POST' });
+      expect(missing.status).toBe(409);
+
+      const done = await store.createTask({ repo: '/tmp/repo', baseRef: 'main', title: 'Done' });
+      await store.updateTaskStatus(done.id, 'done');
+      const refused = await app.request(`/api/tasks/${done.id}/cancel`, { method: 'POST' });
+      expect(refused.status).toBe(409);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('deletes a task without runs and refuses one with runs', async () => {
     const { store, directory } = await openStore();
     try {
