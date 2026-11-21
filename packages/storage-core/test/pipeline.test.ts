@@ -685,6 +685,13 @@ describe('KernelStore pipeline rerun', () => {
       expect(rerun.results.map(result => result.status)).toEqual(['completed', 'completed']);
       expect(rerun.results[0]?.commitSha).not.toBe(firstCommits[0]);
       expect(rerun.results[1]?.commitSha).not.toBe(firstCommits[1]);
+      expect(rerun.previousRun).toMatchObject({
+        status: 'completed',
+        startedAt: first.startedAt,
+        completedAt: first.completedAt,
+      });
+      expect(rerun.previousRun?.results).toEqual(first.results);
+      expect(rerun.previousRun?.rerunAt).toBeTruthy();
       expect(calls).toBe(4);
       expect(store.listRuns(task.id)).toHaveLength(4);
       expect(store.getTask(task.id)?.status).toBe('done');
@@ -712,7 +719,11 @@ describe('KernelStore pipeline rerun', () => {
           { runId: first.results[1]?.runId, commitSha: first.results[1]?.commitSha },
         ],
       });
+      expect(store.getTask(task.id)?.pipeline?.previousRun?.results).toEqual(first.results);
       await store.close();
+      const reopened = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      expect(reopened.getTask(task.id)?.pipeline?.previousRun?.results).toEqual(first.results);
+      await reopened.close();
     } finally {
       await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
