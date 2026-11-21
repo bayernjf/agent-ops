@@ -35,7 +35,7 @@ import { RoleStore } from './roles-store.js';
 import { TeamStore } from './teams-store.js';
 import { addWorktree, linkNodeModules, mergeDependencyCommits, pinPipelineCommit, pinWorktreeCommit, removeWorktree } from './worktree.js';
 import { assertWorktreeClean, commitWorktreeChanges, resetWorktree } from './commit.js';
-import { expandPipelineTemplate, validatePipelineTemplates, type PipelineTemplateSnapshot } from './pipeline-template.js';
+import { expandPipelineTemplate, PIPELINE_STEP_OUTPUT_LIMIT, validatePipelineTemplates, type PipelineTemplateSnapshot } from './pipeline-template.js';
 
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
@@ -81,6 +81,8 @@ export type TaskPipelineStepResult = {
   /** Files this step's own commit changed (base of the step vs its commit), not the task-wide diff. */
   changedFiles?: string[];
   output?: string;
+  /** True when the model output exceeded the pipeline handoff limit and `output` is capped. */
+  outputTruncated?: boolean;
   error?: string;
   startedAt?: string;
   completedAt?: string;
@@ -445,6 +447,8 @@ export type DagStepResult = {
   commitSha: string | null;
   worktreePath: string | null;
   changedFiles: string[];
+  output?: string;
+  outputTruncated?: boolean;
   error: string | null;
 };
 
@@ -668,6 +672,18 @@ function boundedText(value: string, limit: number): { text: string; truncated: b
   return {
     text: `${value.slice(0, limit)}\n\n[truncated: ${value.length} characters total]`,
     truncated: true,
+  };
+}
+
+/**
+ * Cap a step's model output for pipeline handoff. The stored text stays clean; the flag lets
+ * task results and prompt templates tell the reader that later content was dropped.
+ */
+function capturePipelineStepOutput(output: string, sourceTruncated = false): { output: string; outputTruncated?: boolean } {
+  const outputTruncated = sourceTruncated || output.length > PIPELINE_STEP_OUTPUT_LIMIT;
+  return {
+    output: output.slice(0, PIPELINE_STEP_OUTPUT_LIMIT),
+    ...(outputTruncated ? { outputTruncated: true } : {}),
   };
 }
 
@@ -1491,7 +1507,7 @@ export class KernelStore {
   private pipelineStepInstruction(pipeline: TaskPipeline, index: number, step: TaskPipelineStep): string {
     const snapshots = new Map<string, PipelineTemplateSnapshot>();
     for (const result of pipeline.results) {
-      if (result.status === 'completed') snapshots.set(result.stepId, { output: result.output, commitSha: result.commitSha });
+      if (result.status === 'completed') snapshots.set(result.stepId, { output: result.output, outputTruncated: result.outputTruncated, commitSha: result.commitSha });
     }
     const previousId = index > 0 ? pipeline.steps[index - 1]?.id : undefined;
     const prompt = step.prompt ? expandPipelineTemplate(step.prompt, { previous: previousId ? snapshots.get(previousId) : undefined, steps: snapshots }) : '';
@@ -1697,12 +1713,13 @@ export class KernelStore {
           return pipeline;
         }
 
+        const captured = capturePipelineStepOutput(executed.artifacts.output, executed.artifacts.outputTruncated);
         if (step.requiresApproval) {
           updateResult({
             stepId: step.id,
             status: 'awaiting_approval',
             runId,
-            output: executed.artifacts.output.slice(0, 2000),
+            ...captured,
             startedAt,
             completedAt: new Date().toISOString(),
           });
@@ -1723,7 +1740,7 @@ export class KernelStore {
           runId,
           commitSha: accepted.commitSha,
           changedFiles,
-          output: executed.artifacts.output.slice(0, 2000),
+          ...captured,
           startedAt,
           completedAt: new Date().toISOString(),
         });
@@ -2593,8 +2610,6 @@ export class KernelStore {
       };
 
       const results = new Map<string, DagStepResult>();
-      // Completed steps' outputs, kept aside so later prompts can template them in.
-      const outputs = new Map<string, string>();
       const warnings: string[] = [];
       await this.updateTaskStatus(taskId, 'running');
       const taskCancelled = () => this.cancelRequestedTasks.has(taskId) || this.getTask(taskId)?.status === 'cancelled';
@@ -2629,7 +2644,9 @@ export class KernelStore {
           const agentId = await this.resolvePipelineStepAgent(step);
           const snapshots = new Map<string, PipelineTemplateSnapshot>();
           for (const [id, result] of results) {
-            if (result.status === 'completed') snapshots.set(id, { output: outputs.get(id), commitSha: result.commitSha });
+            if (result.status === 'completed') {
+              snapshots.set(id, { output: result.output, outputTruncated: result.outputTruncated, commitSha: result.commitSha });
+            }
           }
           const previousId = dependencies[dependencies.length - 1];
           const prompt = step.prompt
@@ -2647,9 +2664,19 @@ export class KernelStore {
             results.set(step.id, { stepId: step.id, name: step.name, status: 'failed', runId, commitSha: null, worktreePath: lanePath, changedFiles: executed.artifacts.changedFiles, error: `Run ended in ${executed.status}.` });
             return;
           }
+          const captured = capturePipelineStepOutput(executed.artifacts.output, executed.artifacts.outputTruncated);
           const accepted = await this.acceptRun(run.id);
-          outputs.set(step.id, executed.artifacts.output.slice(0, 2000));
-          results.set(step.id, { stepId: step.id, name: step.name, status: 'completed', runId, commitSha: accepted.commitSha, worktreePath: lanePath, changedFiles: accepted.artifacts.changedFiles, error: null });
+          results.set(step.id, {
+            stepId: step.id,
+            name: step.name,
+            status: 'completed',
+            runId,
+            commitSha: accepted.commitSha,
+            worktreePath: lanePath,
+            changedFiles: accepted.artifacts.changedFiles,
+            ...captured,
+            error: null,
+          });
         } catch (error) {
           results.set(step.id, {
             stepId: step.id,
@@ -2730,6 +2757,9 @@ export class KernelStore {
           status: step.status === 'completed' ? 'completed' as const : step.status === 'cancelled' ? 'cancelled' as const : 'failed' as const,
           ...(step.runId ? { runId: step.runId } : {}),
           ...(step.commitSha ? { commitSha: step.commitSha } : {}),
+          ...(step.changedFiles.length > 0 ? { changedFiles: step.changedFiles } : {}),
+          ...(step.output ? { output: step.output } : {}),
+          ...(step.outputTruncated ? { outputTruncated: true } : {}),
           ...(step.error ? { error: step.error } : {}),
           startedAt,
           completedAt,
