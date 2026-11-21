@@ -182,6 +182,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_submit_acceptance',
       'agent_ops_test_role',
       'agent_ops_update_role',
+      'agent_ops_update_task',
       'agent_ops_update_team',
     ]);
     // Acceptance submissions are exposed by design; the approval acts never are.
@@ -650,6 +651,18 @@ describe('agent-ops MCP bridge', () => {
     expect(task.priority).toBe('high');
     expect(task.pipeline?.status).toBe('idle');
     expect(task.pipeline?.steps[0]).toMatchObject({ id: 'mcp-step', name: 'MCP step', roleId: role.role.id });
+
+    const rebound = await client.callTool({ name: 'agent_ops_update_task', arguments: { taskId: task.id, roleId: role.role.id } });
+    expect(rebound.isError).toBeUndefined();
+    expect((JSON.parse(textOf(rebound)) as { roleId: string | null }).roleId).toBe(role.role.id);
+
+    const cleared = await client.callTool({ name: 'agent_ops_update_task', arguments: { taskId: task.id, roleId: null } });
+    expect(cleared.isError).toBeUndefined();
+    expect((JSON.parse(textOf(cleared)) as { roleId: string | null }).roleId).toBeNull();
+
+    const restored = await client.callTool({ name: 'agent_ops_update_task', arguments: { taskId: task.id, roleId: role.role.id } });
+    expect(restored.isError).toBeUndefined();
+    expect((JSON.parse(textOf(restored)) as { roleId: string | null }).roleId).toBe(role.role.id);
 
     const listed = await client.callTool({ name: 'agent_ops_list_tasks', arguments: {} });
     const tasks = JSON.parse(textOf(listed)) as { id: string }[];
