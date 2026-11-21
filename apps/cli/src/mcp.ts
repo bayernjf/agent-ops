@@ -534,6 +534,13 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: READ_ONLY,
   }, args => callDaemon('GET', `/api/tasks/${encodeURIComponent(args.taskId)}`).then(toResult));
 
+  server.registerTool('agent_ops_delete_task', {
+    title: 'Delete task',
+    description: 'Delete a task that has no runs, removing its worktree too. A task with runs is refused because its runs and audits are evidence.',
+    inputSchema: taskIdSchema,
+    annotations: ADDITIVE,
+  }, args => callDaemon('DELETE', `/api/tasks/${encodeURIComponent(args.taskId)}`).then(toResult));
+
   server.registerTool('agent_ops_get_budget', {
     title: 'Get task budget',
     description: 'Report a task\'s Role and Team spending against their budgets, based only on the usage runs actually reported. An unreported dimension never blocks on its own.',

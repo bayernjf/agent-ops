@@ -132,6 +132,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_create_task',
       'agent_ops_create_team',
       'agent_ops_delete_role',
+      'agent_ops_delete_task',
       'agent_ops_delete_team',
       'agent_ops_doctor',
       'agent_ops_dry_run',
