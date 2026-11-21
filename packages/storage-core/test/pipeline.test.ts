@@ -501,3 +501,45 @@ describe('KernelStore pipeline', () => {
     }
   });
 });
+
+describe('KernelStore pipeline step templates', () => {
+  it('expands previous output and commit into the next step prompt', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-pipeline-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const task = await store.createTask({
+        repo,
+        baseRef: 'main',
+        title: 'Template task',
+        pipeline: {
+          steps: [
+            { id: 'architecture', name: 'Architect', agentId: 'codex', prompt: 'Write the architecture.' },
+            { id: 'implementation', name: 'Implement', agentId: 'codex', prompt: 'Implement it.\nPlan: {{previous.output}}\nBase: {{previous.commit}}\nAgain: {{step:architecture.commit}}' },
+          ],
+        },
+      });
+      await store.provisionTask(task.id);
+
+      const prompts: string[] = [];
+      const runner: CodexProcessRunner = async (_command, arguments_) => {
+        const prompt = arguments_[arguments_.length - 1] ?? '';
+        prompts.push(prompt);
+        return success(prompt.includes('Pipeline step 1/2') ? 'Use a queue.' : 'done');
+      };
+
+      const pipeline = await store.executeTaskPipeline(task.id, runner);
+      expect(pipeline.status).toBe('completed');
+      expect(prompts[1]).toContain('Plan: Use a queue.');
+      expect(prompts[1]).not.toContain('{{previous.output}}');
+      expect(prompts[1]).not.toContain('{{previous.commit}}');
+      expect(prompts[1]).not.toContain('{{step:architecture.commit}}');
+      expect(prompts[1]).toContain(`Base: ${pipeline.results[0]?.commitSha}`);
+      expect(prompts[1]).toContain(`Again: ${pipeline.results[0]?.commitSha}`);
+      expect(store.listRuns(task.id)[1]?.instruction).toContain('Plan: Use a queue.');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+});
