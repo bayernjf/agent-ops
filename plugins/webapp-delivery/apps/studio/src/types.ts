@@ -560,6 +560,25 @@ export type RoleRuntimePolicy = {
   approvalMode: RoleApprovalMode;
 };
 
+/** One Runtime's answer to `POST /api/policy/evaluate`; mirrors `UnifiedPolicyVerdict`. */
+export type PolicyVerdict = {
+  runtimeId: string;
+  capability: 'native' | 'wrapper' | 'unsupported';
+  readOnly: boolean;
+  enforcement: 'exact' | 'coarse' | 'unsupported';
+  allowedTools: string[];
+  blockedTools: string[];
+  decisions: Array<{ tool: string; decision: 'allow' | 'deny'; reason: string | null }>;
+  approval: { mode: RoleApprovalMode; humanGate: boolean };
+  warnings: string[];
+  unsupportedReason: string | null;
+};
+
+export type PolicyPreviewResponse = {
+  policy: RoleRuntimePolicy;
+  verdicts: PolicyVerdict[];
+};
+
 /** Mirrors `AgentRole` in `@agent-ops/agent-runtime/roles` for the browser. */
 export type AgentRole = {
   id: string;
