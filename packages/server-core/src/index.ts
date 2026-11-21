@@ -128,7 +128,7 @@ function errorResponse(context: Context, error: unknown) {
   if (message.includes('is not assigned to a Team') || message.includes('produced an empty plan')) {
     return context.json({ error: message }, 400);
   }
-  if (message.includes('cannot be') || message.includes('no worktree') || message.includes('nothing is awaiting approval') || message.includes('can only be applied') || message.includes('parallel execution starts from')) {
+  if (message.includes('cannot be') || message.includes('no worktree') || message.includes('nothing is awaiting approval') || message.includes('can only be applied') || message.includes('parallel execution starts from') || message.includes('only a task without runs') || message.includes('has a running pipeline')) {
     return context.json({ error: message }, 409);
   }
   return context.json({ error: message }, 500);
@@ -429,6 +429,15 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
   });
 
   app.get('/api/tasks', (c) => c.json(store.listTasks()));
+
+  app.delete('/api/tasks/:id', async (c) => {
+    try {
+      const deleted = await store.deleteTask(c.req.param('id'));
+      return deleted ? c.json({ deleted: true }) : c.json({ error: 'Task not found.' }, 404);
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
 
   app.get('/api/tasks/:id', (c) => {
     const task = store.getTask(c.req.param('id'));

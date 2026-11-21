@@ -1197,6 +1197,30 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('deletes a task without runs and refuses one with runs', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const task = await store.createTask({ repo: '/tmp/repo', baseRef: 'main', title: 'Probe' });
+      const deleted = await app.request(`/api/tasks/${task.id}`, { method: 'DELETE' });
+      expect(deleted.status).toBe(200);
+      expect((await deleted.json()) as object).toMatchObject({ deleted: true });
+      expect(store.getTask(task.id)).toBeUndefined();
+
+      const missing = await app.request(`/api/tasks/${task.id}`, { method: 'DELETE' });
+      expect(missing.status).toBe(404);
+
+      const busy = await store.createTask({ repo: '/tmp/repo', baseRef: 'main', title: 'Busy' });
+      await store.createRun(busy.id, 'codex');
+      const refused = await app.request(`/api/tasks/${busy.id}`, { method: 'DELETE' });
+      expect(refused.status).toBe(409);
+      expect(store.getTask(busy.id)?.title).toBe('Busy');
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('rejects accepting a run that is not in review', async () => {
     const { store, directory } = await openStore();
     try {
