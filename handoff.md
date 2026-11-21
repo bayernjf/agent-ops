@@ -29,6 +29,7 @@
 - [x] **Task Role 创建后改绑** — 已完成（2026-11-22）。新增 `KernelStore.updateTask` 与 `PATCH /api/tasks/:id`：可改绑 Role，传 `null` 清空；新 Role 必须存在、启用且在该 Task 的 Team 花名册内，成功写 `task.updated` 审计；MCP 新增 `agent_ops_update_task`，Studio 审计筛选项补 `task.updated`。新增 storage 1 例、HTTP 1 例，MCP 补改绑/清空/恢复断言；全仓 68 文件 / 784 tests 绿，typecheck 0，Studio build 1661 modules 成功。
 - [x] **CLI export --summary 自动化测试** — 已完成（2026-11-22）。把 `export` 逻辑抽到 `apps/cli/src/export-command.ts`：`formatSummary` / `formatDuration` / `runExportCommand`，fetch、文件写入和输出流可注入；测试覆盖上报/缺失 totals、`--summary` 输出、`--out` 文件与字节数、缺 taskId、daemon 错误。新增 5 例；全仓 69 文件 / 789 tests 绿，typecheck 0。
 - [x] **Pipeline 重跑对比视图** — 已完成（2026-11-22）。completed pipeline 重跑时把旧 results / 状态 / 起止时间存入 `pipeline.previousRun`（只保留最近一次，`rerunAt` 记本次重跑时间），`parseTaskPipeline` 白名单保留该快照，daemon 重启后仍可读；Studio 任务 Pipeline 面板新增可折叠“上一轮结果”，逐步骤对比上一轮与当前状态、commit 短 SHA。storage 测试补快照字段、旧 results 全等、关闭重开后的持久化；全仓 69 文件 / 789 tests 绿，typecheck 0，Studio build 1661 modules 成功。真实 CodeBuddy 2.142.0 在隔离 DB + 临时 git 仓完成首次执行（commit `51d06339fe`，12.9 s）与 completed 重跑（commit `99ca2105a5`，15.5 s），`previousRun.results` 与首轮全等，旧 commit pin ref 可解析；Studio 中英文均实测显示“上一轮结果 · 已完成 / Previous run · Completed”、`51d06339fe → 99ca2105a5` 与上一轮 / 当前状态。浏览器验收发现 1011 宽视口下 4 列行右侧被裁且两个状态缺少标签，已改为纵向布局复验通过。
+- [x] **DAG 审批门真实浏览器 E2E** — 已完成（2026-11-22）。隔离 DB + 临时 git 仓建两步 DAG（`gate` 需审批、`tail` 依赖 `gate`），真实 CodeBuddy 2.142.0 先写 `APPROVAL_A.md` 后停在 `awaiting_approval`（persisted results 只有 gate）；Studio 点“通过该步”后自动续跑 `tail`，写 `APPROVAL_B.md` 并完成。最终 pipeline `completed`、`task` 保持 `review` 等待最终接受，提交 `cd79acb307` → `fb5c1e051e`，两步 Run 均 `done`；审计含 `pipeline.dag.paused` / `resumed` / `executed`。证据截图 `/tmp/agent-ops-dag-approval-verify/dag-approval-evidence.png`。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -499,7 +500,7 @@
 - [x] Studio 移除“含 requiresApproval 就隐藏 Run as DAG”的旧限制；`DagStepResult.status` 接受 `awaiting_approval`，fanout 状态文案中英文补齐。
 - [x] 测试：`dag.test.ts` 8 例，新增批准续跑（publish 只在 approve 后运行、prompt 拿到 review output、审计三类事件）、连续两道门（两次 pause / resume，最终一次 executed）、驳回（gated 与下游 failed、task failed）；原有 DAG 并发、多依赖 merge、冲突、失败跳过、模板、环校验回归通过。
 - [x] 门禁：全仓 typecheck 0；68 文件 / 776 tests 绿；Studio build 1661 modules 成功。
-- [ ] 未做：本轮未做真实浏览器端到端审批；Studio 只在类型与构建层验证，审批按钮复用既有 `pipeline.status === 'awaiting_approval'` 分支。
+- [x] 真实浏览器验收（2026-11-22）：隔离 DB `/tmp/agent-ops-dag-approval-verify` + 临时 git 仓，两步 DAG（`gate` 需审批 / `tail` 依赖 `gate`）。首步真实 CodeBuddy 2.142.0 写 `APPROVAL_A.md` 后停在 `awaiting_approval`，Persisted results 只有 gate，且 `tail` 在审批前未启动；Studio 点“通过该步”后自动接受 gate Run 并续跑 `tail`，写 `APPROVAL_B.md`。最终 pipeline `completed`、`task` 保持 `review` 等待最终接受，提交 `cd79acb307` → `fb5c1e051e`，两步 Run 均 `done`；审计 `pipeline.dag.paused` / `resumed` / `executed` 依次存在。截图 `/tmp/agent-ops-dag-approval-verify/dag-approval-evidence.png`。
 
 ## Studio 任务看板 — 已完成（2026-11-21）
 
