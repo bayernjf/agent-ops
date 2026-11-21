@@ -188,7 +188,7 @@
 - [x] MCP 新增 `agent_ops_retry_pipeline`；Studio failed 状态的按钮从错误的 execute 改为 Retry failed step，并沿用 busy/错误处理。
 - [x] 测试：三步 Pipeline 首步保留、第二步失败后重试成功、失败文件被清掉、首步 runner 不重复执行、首步 commit 不变、最终 4 个 commit 且 worktree clean；驳回第二步时保留第一步 commit 与文件；server HTTP 重试与 completed 再重试 409；全仓 typecheck 0，49 文件 / 652 tests 绿。
 - [x] 本轮提交：`20d707a feat(storage-core): retry failed pipelines`、`4ec87aa feat(server-core): expose pipeline retry`、`53687f3 feat(studio): retry failed pipeline steps`、`28e4e5a test(storage-core): cover pipeline retry`。
-- [ ] F6-05 只支持 failed pipeline 的重试；completed pipeline 仍不支持 reset 后重跑。step 间 output 模板替换已在 F6-01 模板补做（见下节）。F6-06 并行 DAG 已在后续完成，F7-05 Run 详情扩展也在后续完成。
+- [ ] F6-05 的 failed 重试已完成；completed pipeline 的重跑已在后续补齐（见下节）。step 间 output 模板替换已在 F6-01 模板补做。F6-06 并行 DAG 已在后续完成，F7-05 Run 详情扩展也在后续完成。
 
 ## F6-01 Pipeline 提示词模板 — 已完成（2026-11-21）
 
@@ -198,6 +198,15 @@
 - [x] 测试：模板纯函数 4 例（previous / 按 id / 未知与缺失保持原样 / 无占位符原样返回）；两步串行端到端断言第二步 prompt 与 Run instruction 含第一步 output 和 commit；DAG 端到端断言 join 步骤拿到 last dependency 的 output 与 commit；全仓 typecheck 0，63 文件 / 743 tests 绿。
 - [x] 本轮提交见 git log（`feat(storage-core): expand pipeline step templates`）。
 - [ ] 未做：模板只支持 output / commit 两种字段，没有加密或转义处理（上游 output 会按原文进入下游 prompt）；没有模板语法校验，拼写错的 token 会原样保留；单次 output 仍受 2000 字符截断。
+
+## F6-05 completed pipeline 重跑 — 已完成（2026-11-21）
+
+- [x] `rerunTaskPipeline` 只接受 `completed`：worktree 重置到任务 base commit（`baseCommit || baseRef`），清空旧 step results，从第一步重新执行，并写 `pipeline.rerun` 审计（steps / previousResults）。旧 commits 仍在 git 历史里，但不再挂在这条 worktree 分支上。
+- [x] 修复真实缺陷：`resetWorktree`（`git reset --hard` + `git clean -fdx`）会删掉 worktree 里链接的 `node_modules`。失败 Run 的 auto hygiene 与 `retryTaskPipeline` 现在 reset 后重新 `linkNodeModules`。
+- [x] server 新增 `POST /api/tasks/:id/pipeline/rerun`（非 completed 返回 409）；MCP 新增 `agent_ops_rerun_pipeline`；Studio completed pipeline 显示 Rerun pipeline 按钮，点击前 `window.confirm`。
+- [x] 测试：storage-core 两步 pipeline 重跑产生全新 commit 且 HEAD 只含 init + 2（worktree clean）、idle pipeline 拒绝重跑、retry 后 `node_modules` 仍可访问；server HTTP 200/409；MCP 工具清单更新；全仓 typecheck 0，63 文件 / 747 tests 绿。
+- [x] 本轮提交见 git log。
+- [ ] 未做：重跑会清空旧 results（旧 commit 只留 git 历史，不做 ref pin），没有“保留旧结果用于对比”的模式；真实模型下的 completed 重跑未跑。
 
 ## M1 退出验收 — 4 步串行完整组合 — 已完成（2026-11-20）
 
