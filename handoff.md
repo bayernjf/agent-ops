@@ -28,6 +28,7 @@
 - [x] **Run 自动继承 Role profileId** — 已完成（2026-11-22）。`createRun(taskId, undefined)` 显式 `agentId` 优先，否则使用 Role 的 `profileId`，无 Profile 时回退 Role 的 `baseAgentId`；Role 绑定 Profile 时仍校验 base 兼容。HTTP `POST /api/tasks/:id/runs` 的 `agentId` 改为可选，缺失身份返回 400；MCP `agent_ops_create_run` 同步可省略。新增 storage 1 例、HTTP 1 例，MCP `create_run` 补继承断言；全仓 68 文件 / 782 tests 绿，typecheck 0。
 - [x] **Task Role 创建后改绑** — 已完成（2026-11-22）。新增 `KernelStore.updateTask` 与 `PATCH /api/tasks/:id`：可改绑 Role，传 `null` 清空；新 Role 必须存在、启用且在该 Task 的 Team 花名册内，成功写 `task.updated` 审计；MCP 新增 `agent_ops_update_task`，Studio 审计筛选项补 `task.updated`。新增 storage 1 例、HTTP 1 例，MCP 补改绑/清空/恢复断言；全仓 68 文件 / 784 tests 绿，typecheck 0，Studio build 1661 modules 成功。
 - [x] **CLI export --summary 自动化测试** — 已完成（2026-11-22）。把 `export` 逻辑抽到 `apps/cli/src/export-command.ts`：`formatSummary` / `formatDuration` / `runExportCommand`，fetch、文件写入和输出流可注入；测试覆盖上报/缺失 totals、`--summary` 输出、`--out` 文件与字节数、缺 taskId、daemon 错误。新增 5 例；全仓 69 文件 / 789 tests 绿，typecheck 0。
+- [x] **Pipeline 重跑对比视图** — 已完成（2026-11-22）。completed pipeline 重跑时把旧 results / 状态 / 起止时间存入 `pipeline.previousRun`（只保留最近一次，`rerunAt` 记本次重跑时间），`parseTaskPipeline` 白名单保留该快照，daemon 重启后仍可读；Studio 任务 Pipeline 面板新增可折叠“上一轮结果”，逐步骤对比上一轮与当前状态、commit 短 SHA。storage 测试补快照字段、旧 results 全等、关闭重开后的持久化；全仓 69 文件 / 789 tests 绿，typecheck 0，Studio build 1661 modules 成功。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -224,12 +225,13 @@
 
 ## F6-05 completed pipeline 重跑 — 已完成（2026-11-21）
 
-- [x] `rerunTaskPipeline` 只接受 `completed`：先为每个旧 step commit 写 `refs/agent-ops/pipelines/<taskId>/<runId>`，再把 worktree 重置到任务 base commit（`baseCommit || baseRef`），清空旧 step results，从第一步重新执行，并写 `pipeline.rerun` 审计（steps / previousResults / pinnedCommits）。旧 commits 由 ref 保持可达，不会因 `git gc` 被回收。
+- [x] `rerunTaskPipeline` 只接受 `completed`：先为每个旧 step commit 写 `refs/agent-ops/pipelines/<taskId>/<runId>`，再把 worktree 重置到任务 base commit（`baseCommit || baseRef`），把旧 results 存入 `previousRun` 快照后清空当前 results，从第一步重新执行，并写 `pipeline.rerun` 审计（steps / previousResults / pinnedCommits）。旧 commits 由 ref 保持可达，不会因 `git gc` 被回收。
 - [x] 修复真实缺陷：`resetWorktree`（`git reset --hard` + `git clean -fdx`）会删掉 worktree 里链接的 `node_modules`。失败 Run 的 auto hygiene 与 `retryTaskPipeline` 现在 reset 后重新 `linkNodeModules`。
 - [x] server 新增 `POST /api/tasks/:id/pipeline/rerun`（非 completed 返回 409）；MCP 新增 `agent_ops_rerun_pipeline`；Studio completed pipeline 显示 Rerun pipeline 按钮，点击前 `window.confirm`。
 - [x] 测试：storage-core 两步 pipeline 重跑产生全新 commit 且 HEAD 只含 init + 2（worktree clean）、idle pipeline 拒绝重跑、retry 后 `node_modules` 仍可访问；重跑后旧 run 的 ref 指向旧 commit，`git gc --prune=now` 后仍可 `cat-file -e`，审计含 2 条 pinnedCommits；server HTTP 200/409；MCP 工具清单更新；全仓 typecheck 0，63 文件 / 747 tests 绿。
 - [x] 本轮提交见 git log。
-- [ ] 未做：重跑会清空旧 results（旧 commit 已 pin，但旧 results 只保留在 `pipeline.rerun` 审计，不在任务 Pipeline 里做对比视图）；真实模型下的 completed 重跑未跑。
+- [x] 2026-11-22 补对比视图：旧 results 不再只留在 `pipeline.rerun` 审计，重跑时同步写入 `pipeline.previousRun` 快照（旧 results / status / startedAt / completedAt / rerunAt），`parseTaskPipeline` 持久化该字段；Studio 任务 Pipeline 面板显示可折叠的“上一轮结果”，逐步骤对比上一轮与当前状态及 commit 短 SHA。storage 测试补快照与重启持久化断言；全仓 69 文件 / 789 tests 绿，typecheck 0，Studio build 1661 modules 成功。
+- [ ] 未做：真实模型下的 completed 重跑未跑；`previousRun` 只保留最近一轮，多轮历史仍由 `pipeline.rerun` 审计承担，不提供无限 history 数组。
 
 ## Studio DAG / 并行入口 + 任务删除 — 已完成（2026-11-21）
 
