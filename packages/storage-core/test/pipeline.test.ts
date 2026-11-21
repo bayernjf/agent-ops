@@ -29,6 +29,35 @@ const success = (output = 'ok') => ({
 });
 
 describe('KernelStore pipeline', () => {
+  it('rejects a pipeline prompt with an unknown template step', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-pipeline-'));
+    try {
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      await expect(store.createTask({
+        repo: '/r',
+        baseRef: 'main',
+        title: 'Bad template',
+        pipeline: { steps: [{ name: 'Implement', agentId: 'codex', prompt: 'Use {{step:missing.output}}.' }] },
+      })).rejects.toThrow(/references unknown step missing/i);
+
+      const accepted = await store.createTask({
+        repo: '/r',
+        baseRef: 'main',
+        title: 'Good template',
+        pipeline: {
+          steps: [
+            { id: 'architecture', name: 'Architecture', agentId: 'codex', prompt: 'Plan.' },
+            { id: 'implement', name: 'Implement', agentId: 'codex', prompt: 'Use {{ step:architecture.output }}.' },
+          ],
+        },
+      });
+      expect(accepted.pipeline?.steps[1]?.prompt).toContain('{{ step:architecture.output }}');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   it('persists pipeline steps and assigns generated ids', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-pipeline-'));
     try {
