@@ -40,6 +40,33 @@ describe('KernelStore pipeline', () => {
         pipeline: { steps: [{ name: 'Implement', agentId: 'codex', prompt: 'Use {{step:missing.output}}.' }] },
       })).rejects.toThrow(/references unknown step missing/i);
 
+      await expect(store.createTask({
+        repo: '/r',
+        baseRef: 'main',
+        title: 'Forward template',
+        pipeline: {
+          steps: [
+            { id: 'architecture', name: 'Architecture', agentId: 'codex', prompt: 'Plan.' },
+            { id: 'review', name: 'Review', agentId: 'codex', prompt: 'Check {{step:implement.output}}.' },
+            { id: 'implement', name: 'Implement', agentId: 'codex', prompt: 'Do the work.' },
+          ],
+        },
+      })).rejects.toThrow(/not guaranteed to complete/i);
+
+      const dag = await store.createTask({
+        repo: '/r',
+        baseRef: 'main',
+        title: 'Ancestor template',
+        pipeline: {
+          steps: [
+            { id: 'left', name: 'Left', agentId: 'codex', dependsOn: [] },
+            { id: 'right', name: 'Right', agentId: 'codex', dependsOn: [] },
+            { id: 'join', name: 'Join', agentId: 'codex', dependsOn: ['left', 'right'], prompt: 'Use {{step:left.output}} and {{step:right.commit}}.' },
+          ],
+        },
+      });
+      expect(dag.pipeline?.steps[2]?.dependsOn).toEqual(['left', 'right']);
+
       const accepted = await store.createTask({
         repo: '/r',
         baseRef: 'main',

@@ -155,6 +155,25 @@ describe('createKernelApp', () => {
       });
       expect(response.status).toBe(400);
       expect(await response.json()).toMatchObject({ error: expect.stringContaining('unknown step missing') });
+
+      const forward = await app.request('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repo: '/tmp/repo',
+          baseRef: 'main',
+          title: 'Forward template',
+          pipeline: {
+            steps: [
+              { id: 'architecture', name: 'Architecture', agentId: 'codex', prompt: 'Plan.' },
+              { id: 'review', name: 'Review', agentId: 'codex', prompt: 'Check {{step:implement.output}}.' },
+              { id: 'implement', name: 'Implement', agentId: 'codex', prompt: 'Do the work.' },
+            ],
+          },
+        }),
+      });
+      expect(forward.status).toBe(400);
+      expect(await forward.json()).toMatchObject({ error: expect.stringContaining('not guaranteed to complete') });
     } finally {
       await store.close();
       await rm(directory, { recursive: true, force: true });
