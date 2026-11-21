@@ -10,6 +10,7 @@
 - [x] **真实模型 UI E2E** — 已完成（2026-11-20）。UI 里新建 CodeBuddy 角色与一步 Pipeline 任务，点 `Run pipeline` 由真实 CodeBuddy 2.185.0 执行，任务 done、Run 可见（commit `ea4553f7d2`）。Claude Code / Codex 仍受 CC Switch `base_url` 阻塞，但不影响 CodeBuddy 路径；真实模型 API 路径与 UI 路径均已有证据。
 - [x] **3–5 个本仓 dogfood** — 已完成 3 条真实任务 + 4 次团队运行（2026-11-21）：单任务接受率 3/3、检查通过率 3/3、返工 1 次人工小修；五角色串行 5 步完成（首轮暴露落盘 owner 缺口）；owner 机制补齐并实测落盘；带 owner 的五角色交付重跑成功；依赖链接后五角色完成**真实代码交付**（`listTasksByTeam` + 单测，含 reviewer→owner 修正）。详见下方 “F10-01/F10-02 Dogfood” 章节。
 - [x] **Studio 浏览器复查** — 2026-11-21：Role/Team 表单预算输入（创建 / 编辑回填与探针清理）、completed pipeline 的 Rerun 按钮、Metrics 页（23 runs / 11 tasks 聚合）与 Teams 详情（花名册 / 交接边 / 队列 / 用量）均在真实浏览器查看；Teams 计划预览因缺少带团队的 queued 任务未点击。
+- [ ] **Studio 分支入口浏览器验收** — 代码已完成（DAG / 并行按钮 + 结果面板 + 任务删除），但 DAG / 并行按钮实际点击与 Teams 计划预览尚未在浏览器验证；下一步：创建带 Team + Pipeline 的 queued 探针，展开任务确认按钮，Teams 点 Plan 后删除探针。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -208,6 +209,15 @@
 - [x] 测试：storage-core 两步 pipeline 重跑产生全新 commit 且 HEAD 只含 init + 2（worktree clean）、idle pipeline 拒绝重跑、retry 后 `node_modules` 仍可访问；server HTTP 200/409；MCP 工具清单更新；全仓 typecheck 0，63 文件 / 747 tests 绿。
 - [x] 本轮提交见 git log。
 - [ ] 未做：重跑会清空旧 results（旧 commit 只留 git 历史，不做 ref pin），没有“保留旧结果用于对比”的模式；真实模型下的 completed 重跑未跑。
+
+## Studio DAG / 并行入口 + 任务删除 — 代码完成，浏览器验证部分待补（2026-11-21）
+
+- [x] Studio 任务展开面板新增两个分支动作：**Run as DAG**（`POST /api/tasks/:id/pipeline/dag`）与 **Run parallel team**（`POST /api/tasks/:id/parallel/execute`）。两者都会在缺 worktree 时先 provision、执行前 `window.confirm`，完成后刷新任务与 Run 列表。
+- [x] 结果面板：DAG 展示每步状态 / commit / 未合并依赖 warning / 冲突；并行展示 lane 状态 / 变更文件数 / 冲突。类型定义在 `studio/src/types.ts`，文案 en/zh 同步。
+- [x] 任务删除：内核 `deleteTask` 只允许没有 Run 的任务，删除 worktree 与任务行并写 `task.deleted` 审计；server `DELETE /api/tasks/:id`（404 / 409）与 MCP `agent_ops_delete_task`；Studio 对 `queued` 且无 Run 的任务显示删除入口。
+- [x] 测试：`task-delete.test.ts` 覆盖删除与拒绝有 Run 的任务；server HTTP 200/404/409；MCP 工具清单更新；全仓 typecheck 0，64 文件 / 750 tests 绿；Studio 14 文件 / 257 tests 绿。
+- [ ] 浏览器验证现状：已创建并删除一条带 Team + Pipeline 的临时 queued 任务（通过本机 daemon 的 DELETE），确认任务列表能刷新；但 **DAG / 并行按钮的实际渲染与点击**、**Teams 计划预览**均未完成，因为本轮已暂停。
+- [ ] 未做：真实模型下的 DAG / 并行运行仍未验证；并行 lane 的接受/驳回仍走普通 Run 操作；Studio 团队任务队列仍用客户端过滤，未改用 `GET /api/teams/:teamId/tasks`。
 
 ## M1 退出验收 — 4 步串行完整组合 — 已完成（2026-11-20）
 

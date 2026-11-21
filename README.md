@@ -19,9 +19,9 @@
 | Roles | 角色绑定 Profile / base agent、系统提示、验收标准、工具策略与成本预算；内置 architect / implementer / reviewer / tester / researcher 模板 |
 | Teams + Handoff | 团队 = 花名册 + 交接边 + 可选 owner（落盘角色，必须最后一步且不再交接）；Pipeline 每跨一条边写一条交接收据（上游 commit + changedFiles） |
 | 串行 Pipeline | 每步独立 Run，成功后自动提交并交接；支持每步审批门、失败重跑、从失败 step 重试、completed 后从第一步重跑；后续 step 的 prompt 可模板引用上游 output / commit |
-| 并行 DAG | 步骤可写 `dependsOn`（`[]` 为根）；ready steps 在各自 worktree 内有界并发，失败依赖跳过下游，文件冲突只报告、不合并 |
+| 并行 DAG | 步骤可写 `dependsOn`（`[]` 为根）；ready steps 在各自 worktree 内有界并发，失败依赖跳过下游，文件冲突只报告、不合并；Studio 任务面板可触发并展示每步结果 |
 | Coordinator | 按团队花名册与交接边推导 Pipeline（确定性拓扑序），预览后由人点击应用；owner 置末并标记 `ownsDeliverable`，完成后若没改动任何文件会在 summary 里告警 |
-| 并行 lanes | 每角色独立 worktree，有界并发；lane 结束后统一任务状态；文件级冲突只报告、不自动合并；接受 / 驳回按 lane 独立提交与 pin |
+| 并行 lanes | 每角色独立 worktree，有界并发；lane 结束后统一任务状态；文件级冲突只报告、不自动合并；接受 / 驳回按 lane 独立提交与 pin；Studio 任务面板可触发并展示 lane 结果 |
 | 证据与审计 | Run 证据（含实际工具调用与被拒原因，拿不到标 unknown）；append-only 审计可回放；单任务 JSON 导出；成功率 / 返工 / 用量 / 耗时指标 |
 | 成本预算 | Role / Team 可设 cost / token 上限，按任务已上报用量检查，超限阻断 createRun 与 executeRun |
 | 重跑 hygiene | 失败 Run 默认 reset 到 base commit；可选 keep 保留残留或 fresh 重建 worktree |
@@ -33,6 +33,15 @@
 ### Pipeline 重跑
 
 completed pipeline 通过 `POST /api/tasks/:id/pipeline/rerun` 从第一步重跑：worktree 重置到任务 base commit、旧 step results 清空，旧 commit 退到 git 历史；failed pipeline 仍走 retry，保留已完成的 step 前缀。Studio 的 Rerun pipeline 按钮执行前会二次确认。
+
+### DAG 与并行 lanes 的运行入口
+
+Studio 任务展开面板在任务处于 `queued` / `review` 时提供两个分支动作：
+
+- **Run as DAG**：调用 `POST /api/tasks/:id/pipeline/dag`，按步骤的 `dependsOn` 在独立 worktree 内有界并发；DAG 不支持 `requiresApproval`。结果面板展示每步状态、commit 与未自动合并的依赖 warning。
+- **Run parallel team**：仅对绑定了 Team 的任务显示，调用 `POST /api/tasks/:id/parallel/execute`，按团队花名册每角色一条 lane；结果面板展示 lane 状态、变更文件数和文件冲突。
+
+两个动作都不会自动合并产物；lane/step 的 commit 仍要人工接受。任务没有运行记录且状态为 `queued` 时，面板还提供删除入口（`DELETE /api/tasks/:id`）：删除任务及其 worktree；任何已有 Run 的任务会被拒绝，因为 Run 与审计是证据。
 
 ## 报告指标
 
