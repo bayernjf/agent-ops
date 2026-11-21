@@ -443,6 +443,14 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
     }
   });
 
+  app.post('/api/tasks/:id/cancel', async (c) => {
+    try {
+      return c.json(await store.cancelTask(c.req.param('id')));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
+
   app.get('/api/tasks/:id', (c) => {
     const task = store.getTask(c.req.param('id'));
     return task ? c.json(task) : c.json({ error: `Task ${c.req.param('id')} was not found.` }, 404);
