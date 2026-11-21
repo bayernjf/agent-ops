@@ -696,6 +696,13 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: ADDITIVE,
   }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/pipeline/retry`).then(toResult));
 
+  server.registerTool('agent_ops_rerun_pipeline', {
+    title: 'Rerun pipeline',
+    description: 'Start a completed task pipeline over from its first step. The worktree resets to the task base commit and prior step results are cleared; previous commits stay in git history. Synchronous and may take minutes.',
+    inputSchema: taskIdSchema,
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/pipeline/rerun`).then(toResult));
+
   server.registerTool('agent_ops_release_task', {
     title: 'Release task',
     description: 'Remove the isolated worktree for a task, discarding any uncommitted changes it holds.',
