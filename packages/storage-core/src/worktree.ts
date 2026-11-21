@@ -121,3 +121,15 @@ export async function pinWorktreeCommit(repo: string, taskId: string, sha: strin
   const ref = laneId ? `refs/agent-ops/tasks/${taskId}/lanes/${laneId}` : `refs/agent-ops/tasks/${taskId}`;
   await execFileAsync('git', ['update-ref', ref, sha], { cwd: repo });
 }
+
+/**
+ * Keep an accepted pipeline step commit reachable after a completed pipeline is rerun and its
+ * worktree is reset back to the task base. The ref is keyed by the old run id, so repeated
+ * reruns add history instead of overwriting a single main-task ref.
+ */
+export async function pinPipelineCommit(repo: string, taskId: string, sha: string, runId: string): Promise<void> {
+  // Keep this out of refs/agent-ops/tasks/<id>: the default accept ref is a file at that path,
+  // so nested refs under it would collide with the existing loose ref on disk.
+  const ref = `refs/agent-ops/pipelines/${taskId}/${runId}`;
+  await execFileAsync('git', ['update-ref', ref, sha], { cwd: repo });
+}
