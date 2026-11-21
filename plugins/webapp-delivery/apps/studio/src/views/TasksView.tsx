@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, GitFork, ListTodo, Play, Plus, RefreshCw, RotateCcw, Square, Trash2, Users, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Columns3, GitFork, List as ListIcon, ListTodo, Play, Plus, RefreshCw, RotateCcw, Square, Trash2, Users, X } from 'lucide-react';
 import { useI18n, type KeyPath } from '../i18n/i18n';
 import type { AgentRole, BudgetStatus, DagPipelineResult, KernelRun, KernelTask, KernelTaskState, ParallelTeamResult, TaskBudgetStatus, TaskPipeline, TaskPipelineStep, TaskPipelineStepResult } from '../types';
 import { apiFetch, apiStreamFetch } from '../lib/api';
+import { TaskBoard } from './TaskBoard';
 
 type RunAction = 'execute' | 'accept' | 'reject';
 type WorktreePolicy = 'keep' | 'fresh';
@@ -78,6 +79,7 @@ export function TasksView() {
   const [tasks, setTasks] = useState<KernelTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [viewMode, setViewMode] = useState<'list' | 'board'>('list');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [runsByTask, setRunsByTask] = useState<Record<string, KernelRun[]>>({});
   const [budgetByTask, setBudgetByTask] = useState<Record<string, TaskBudgetStatus>>({});
@@ -615,6 +617,14 @@ export function TasksView() {
   const configuredBudgetScopes = (status: TaskBudgetStatus): BudgetStatus[] =>
     [status.role, status.team].filter((scope): scope is BudgetStatus => Boolean(scope?.configured));
 
+  const openTaskInList = (task: KernelTask) => {
+    setExpandedId(task.id);
+    setViewMode('list');
+    window.setTimeout(() => {
+      document.getElementById(`task-row-${task.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 0);
+  };
+
   const formatBudgetCost = (value: number | null | undefined, limit = false) =>
     value == null ? '—' : (limit ? `$${value}` : `$${value.toFixed(4)}`);
   const formatBudgetTokens = (value: number | null | undefined) =>
@@ -635,6 +645,14 @@ export function TasksView() {
             <p>{t('tasks.description')}</p>
           </div>
           <div className="tasks-actions">
+            <div className="task-view-toggle" role="group" aria-label={t('tasks.viewMode')}>
+              <button className={`task-view-button${viewMode === 'list' ? ' active' : ''}`} type="button" onClick={() => setViewMode('list')} aria-pressed={viewMode === 'list'}>
+                <ListIcon size={14} aria-hidden="true" /> {t('tasks.viewList')}
+              </button>
+              <button className={`task-view-button${viewMode === 'board' ? ' active' : ''}`} type="button" onClick={() => setViewMode('board')} aria-pressed={viewMode === 'board'}>
+                <Columns3 size={14} aria-hidden="true" /> {t('tasks.viewBoard')}
+              </button>
+            </div>
             <button className="icon-button" type="button" onClick={() => void refreshTasks()} aria-label={t('common.refresh')} title={t('common.refresh')}>
               <RefreshCw size={18} />
             </button>
@@ -710,6 +728,11 @@ export function TasksView() {
           </div>
         )}
 
+        {viewMode === 'board' && (
+          <TaskBoard tasks={tasks} loading={loading} onOpenTask={openTaskInList} />
+        )}
+
+        {viewMode === 'list' && (
         <div className="task-table" role="table" aria-label={t('tasks.title')}>
           <div className="task-head" role="row">
             <span aria-hidden="true" />
@@ -726,6 +749,7 @@ export function TasksView() {
             tasks.map(task => (
               <div key={task.id}>
                 <button
+                  id={`task-row-${task.id}`}
                   className={`task-row ${expandedId === task.id ? 'expanded' : ''}`}
                   role="row"
                   type="button"
@@ -1083,6 +1107,7 @@ export function TasksView() {
             ))
           )}
         </div>
+        )}
       </div>
     </section>
   );
