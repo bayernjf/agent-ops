@@ -121,6 +121,11 @@ export type CreateTaskInput = {
   pipeline?: TaskPipelineInput;
 };
 
+export type UpdateTaskInput = {
+  /** Omit to leave the binding unchanged; null clears it. */
+  roleId?: string | null;
+};
+
 export type TaskRecord = {
   id: string;
   repo: string;
@@ -388,6 +393,7 @@ export type KernelAuditEventType =
   | 'team.updated'
   | 'team.deleted'
   | 'task.created'
+  | 'task.updated'
   | 'task.deleted'
   | 'task.cancelled'
   | 'task.final_lane.selected'
@@ -923,6 +929,37 @@ export class KernelStore {
       data: { roleId: record.roleId, teamId: record.teamId, pipelineSteps: record.pipeline?.steps.length ?? 0 },
     });
     return record;
+  }
+
+  async updateTask(id: string, input: UpdateTaskInput): Promise<TaskRecord> {
+    const task = this.getTask(id);
+    if (!task) throw new Error(`Task ${id} was not found.`);
+    if (input.roleId === undefined) return task;
+
+    const linkedRoleId = input.roleId?.trim() || null;
+    if (linkedRoleId) {
+      const role = await this.roles.getRole(linkedRoleId);
+      if (!role) throw new Error(`Role ${linkedRoleId} was not found.`);
+      if (!role.enabled) throw new Error(`Role ${linkedRoleId} is disabled.`);
+      // A task that belongs to a Team must keep its Role on that roster. A deleted Team is a
+      // pre-existing dangling reference; do not block a role change on that old data.
+      const team = task.teamId ? await this.teams.getTeam(task.teamId) : null;
+      if (team && !team.roleIds.includes(linkedRoleId)) {
+        throw new Error(`Role ${linkedRoleId} is not on team ${task.teamId}.`);
+      }
+    }
+    if (linkedRoleId === task.roleId) return task;
+
+    const updatedAt = new Date().toISOString();
+    this.kernelOrm.update(tasks).set({ roleId: linkedRoleId ?? '', updatedAt }).where(eq(tasks.id, id)).run();
+    await this.persist();
+    await this.recordAudit({
+      type: 'task.updated',
+      taskId: id,
+      teamId: task.teamId,
+      data: { roleId: linkedRoleId, previousRoleId: task.roleId },
+    });
+    return this.getTask(id) as TaskRecord;
   }
 
   getTask(id: string): TaskRecord | undefined {

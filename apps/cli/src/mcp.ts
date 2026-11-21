@@ -97,7 +97,7 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? 30_000;
 
-  const callDaemon = async (method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<DaemonResponse> => {
+  const callDaemon = async (method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<DaemonResponse> => {
     let response: Response;
     try {
       response = await fetchImpl(`${options.daemonBaseUrl}${path}`, {
@@ -646,6 +646,18 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     ...(args.roleId ? { roleId: args.roleId } : {}),
     ...(args.teamId ? { teamId: args.teamId } : {}),
     ...(args.pipeline ? { pipeline: args.pipeline } : {}),
+  }).then(toResult));
+
+  server.registerTool('agent_ops_update_task', {
+    title: 'Update task',
+    description: 'Change a task\'s Role binding after creation. Pass a Role id to assign it, or null to clear it; future runs inherit the new Role.',
+    inputSchema: {
+      ...taskIdSchema,
+      roleId: z.string().trim().min(1).max(100).nullable().describe('Role id to assign, or null to clear the binding.'),
+    },
+    annotations: ADDITIVE,
+  }, args => callDaemon('PATCH', `/api/tasks/${encodeURIComponent(args.taskId)}`, {
+    roleId: args.roleId,
   }).then(toResult));
 
   server.registerTool('agent_ops_provision_task', {
