@@ -26,6 +26,7 @@
 - [x] **记录 DAG merge commit** — 已完成（2026-11-21）。多依赖 join 实际生成 merge commit 时，把 SHA 写入 `DagStepResult.mergeCommitSha` 与 `pipeline.results`，并在 `pipeline.dag.executed` / `paused` 审计的 `mergeCommits` 中列出；根步骤与单依赖 step 不写。测试断言 SHA 可解析、有两个父提交、单依赖为空，并检查持久化与审计；全仓 68 文件 / 776 tests 绿，typecheck 0，Studio build 1661 modules 成功。
 - [x] **模板引用执行顺序校验** — 已完成（2026-11-22）。`validatePipelineTemplates` 按 `dependsOn`（未写回退串行上一步）计算传递祖先；`{{step:<id>.*}}` 引用非确定上游、`{{previous.*}}` 无上游都会在 createTask 时拒绝并映射 400。新增纯函数 4 例、createTask 与 HTTP 各 1 例；全仓 68 文件 / 780 tests 绿，typecheck 0，Studio build 1661 modules 成功。
 - [x] **Run 自动继承 Role profileId** — 已完成（2026-11-22）。`createRun(taskId, undefined)` 显式 `agentId` 优先，否则使用 Role 的 `profileId`，无 Profile 时回退 Role 的 `baseAgentId`；Role 绑定 Profile 时仍校验 base 兼容。HTTP `POST /api/tasks/:id/runs` 的 `agentId` 改为可选，缺失身份返回 400；MCP `agent_ops_create_run` 同步可省略。新增 storage 1 例、HTTP 1 例，MCP `create_run` 补继承断言；全仓 68 文件 / 782 tests 绿，typecheck 0。
+- [x] **Task Role 创建后改绑** — 已完成（2026-11-22）。新增 `KernelStore.updateTask` 与 `PATCH /api/tasks/:id`：可改绑 Role，传 `null` 清空；新 Role 必须存在、启用且在该 Task 的 Team 花名册内，成功写 `task.updated` 审计；MCP 新增 `agent_ops_update_task`，Studio 审计筛选项补 `task.updated`。新增 storage 1 例、HTTP 1 例，MCP 补改绑/清空/恢复断言；全仓 68 文件 / 784 tests 绿，typecheck 0，Studio build 1661 modules 成功。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -132,7 +133,7 @@
 ## F4 Task/Run Role 绑定 + prompt 注入 — 已完成（2026-11-20）
 
 - [x] migration `0012_task_role`：`tasks` 增加 `role_id`，默认空字符串；旧 Task 读取为 `null`，不破坏历史数据。
-- [x] `createTask` 接受 `roleId`，校验 Role 存在且 `enabled`；`PATCH` 未做，Task 的 Role 目前只能在创建时指定。
+- [x] `createTask` 接受 `roleId`，校验 Role 存在且 `enabled`；2026-11-22 补齐 `updateTask` / `PATCH /api/tasks/:id`，可在创建后改绑或清空 Role。
 - [x] `createRun` 默认继承 `task.roleId`，显式 `roleId` 可覆盖；Role 缺失、禁用或与 run agent 不匹配时明确抛错。
 - [x] Agent 匹配：Role 的 baseAgent 与 `local-*` 前缀、Profile 的 baseAgent 统一比较；Role 绑定 Profile 时，Run 的 agent 必须落在同一 base 上。
 - [x] `buildAgentExecutionPlan` 接收完整 Role：prompt 追加 `Acting Role`、职责/`systemPrompt`、Role 验收标准、allowed/blocked tools、approval mode；Profile prompt 仍在其后。
