@@ -465,14 +465,25 @@ export type TaskPipelineStepResult = {
   completedAt?: string;
 };
 
+export type TaskPipelineStatus = 'idle' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
+
+export type TaskPipelineSnapshot = {
+  results: TaskPipelineStepResult[];
+  status: TaskPipelineStatus;
+  startedAt?: string;
+  completedAt?: string;
+  rerunAt: string;
+};
+
 export type TaskPipeline = {
   steps: TaskPipelineStep[];
   results: TaskPipelineStepResult[];
-  status: 'idle' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
+  status: TaskPipelineStatus;
   executionMode?: 'serial' | 'dag';
   maxConcurrency?: number;
   startedAt?: string;
   completedAt?: string;
+  previousRun?: TaskPipelineSnapshot;
 };
 
 export type KernelRunArtifacts = {

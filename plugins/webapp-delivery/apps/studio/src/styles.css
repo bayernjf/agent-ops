@@ -2708,6 +2708,45 @@ select option {
   font-size: 11px;
 }
 
+.pipeline-previous {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+
+.pipeline-previous summary {
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.pipeline-previous .pipeline-steps { margin-top: 8px; }
+
+.pipeline-previous-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.pipeline-previous-row:last-child { border-bottom: 0; }
+
+.pipeline-previous-row strong { color: var(--text-1); }
+
+.pipeline-previous-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pipeline-previous-label {
+  min-width: 64px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
 .pipeline-step-approval { display: flex !important; align-items: center; gap: 8px; margin-top: 8px; }
 .pipeline-step-approval input { width: auto !important; margin-top: 0 !important; }
 

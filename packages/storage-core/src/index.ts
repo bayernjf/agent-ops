@@ -90,16 +90,29 @@ export type TaskPipelineStepResult = {
   completedAt?: string;
 };
 
+export type TaskPipelineStatus = 'idle' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
+
+export type TaskPipelineSnapshot = {
+  results: TaskPipelineStepResult[];
+  status: TaskPipelineStatus;
+  startedAt?: string;
+  completedAt?: string;
+  /** When this snapshot was pushed aside by a completed-pipeline rerun. */
+  rerunAt: string;
+};
+
 export type TaskPipeline = {
   steps: TaskPipelineStep[];
   results: TaskPipelineStepResult[];
-  status: 'idle' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
+  status: TaskPipelineStatus;
   /** How this pipeline was dispatched. Missing means a legacy/serial pipeline. */
   executionMode?: 'serial' | 'dag';
   /** DAG concurrency persisted so an approval resume keeps the original fan-out width. */
   maxConcurrency?: number;
   startedAt?: string;
   completedAt?: string;
+  /** Results from the previous completed run, kept for the task-level comparison view. */
+  previousRun?: TaskPipelineSnapshot;
 };
 
 export type TaskPipelineInput = {
@@ -155,12 +168,16 @@ type TaskRow = Omit<TaskRecord, 'acceptanceCriteria' | 'roleId' | 'teamId' | 'pi
   pipeline: string;
 };
 
+function isPipelineStatus(value: unknown): value is TaskPipelineStatus {
+  return value === 'idle' || value === 'running' || value === 'awaiting_approval' || value === 'completed' || value === 'failed' || value === 'cancelled';
+}
+
 function parseTaskPipeline(raw: string): TaskPipeline | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as TaskPipeline;
     if (!parsed || !Array.isArray(parsed.steps)) return null;
-    const status = parsed.status === 'running' || parsed.status === 'awaiting_approval' || parsed.status === 'completed' || parsed.status === 'failed' || parsed.status === 'cancelled' ? parsed.status : 'idle';
+    const status = isPipelineStatus(parsed.status) ? parsed.status : 'idle';
     return {
       steps: parsed.steps,
       results: Array.isArray(parsed.results) ? parsed.results : [],
@@ -169,6 +186,15 @@ function parseTaskPipeline(raw: string): TaskPipeline | null {
       ...(typeof parsed.maxConcurrency === 'number' && Number.isFinite(parsed.maxConcurrency) ? { maxConcurrency: parsed.maxConcurrency } : {}),
       startedAt: parsed.startedAt,
       completedAt: parsed.completedAt,
+      ...(parsed.previousRun && Array.isArray(parsed.previousRun.results) && typeof parsed.previousRun.rerunAt === 'string' ? {
+        previousRun: {
+          results: parsed.previousRun.results,
+          status: isPipelineStatus(parsed.previousRun.status) ? parsed.previousRun.status : 'completed',
+          startedAt: parsed.previousRun.startedAt,
+          completedAt: parsed.previousRun.completedAt,
+          rerunAt: parsed.previousRun.rerunAt,
+        },
+      } : {}),
     };
   } catch {
     return null;
@@ -1661,12 +1687,20 @@ export class KernelStore {
       }
       await resetWorktree(task.worktreePath, task.baseCommit || task.baseRef);
       await linkNodeModules(task.repo, task.worktreePath);
+      const rerunAt = new Date().toISOString();
       const restarted: TaskPipeline = {
         steps: pipeline.steps,
         results: [],
         status: 'running',
         executionMode: 'serial',
-        startedAt: new Date().toISOString(),
+        startedAt: rerunAt,
+        previousRun: {
+          results: pipeline.results,
+          status: pipeline.status,
+          startedAt: pipeline.startedAt,
+          completedAt: pipeline.completedAt,
+          rerunAt,
+        },
       };
       await this.saveTaskPipeline(id, restarted);
       await this.updateTaskStatus(id, 'running');

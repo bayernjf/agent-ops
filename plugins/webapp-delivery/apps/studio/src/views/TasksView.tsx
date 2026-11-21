@@ -426,6 +426,9 @@ export function TasksView() {
   const pipelineStepResult = (pipeline: TaskPipeline, stepId: string): TaskPipelineStepResult | undefined =>
     pipeline.results.find(result => result.stepId === stepId);
 
+  const previousPipelineStepResult = (pipeline: TaskPipeline, stepId: string): TaskPipelineStepResult | undefined =>
+    pipeline.previousRun?.results.find(result => result.stepId === stepId);
+
   // The header refresh button is the only manual recovery when an SSE stream misses a
   // terminal frame. Reloading the task list alone left an expanded task showing its old
   // Run status forever, so the expanded Run list has to be refreshed too.
@@ -844,6 +847,39 @@ export function TasksView() {
                               );
                             })}
                           </div>
+                          {pipeline.previousRun && (
+                            <details className="pipeline-previous">
+                              <summary>
+                                {t('tasks.pipelinePreviousRun')} · {t(`tasks.pipelineStatus.${pipeline.previousRun.status}` as KeyPath)}
+                              </summary>
+                              <div className="pipeline-steps">
+                                {pipeline.steps.map(step => {
+                                  const previous = previousPipelineStepResult(pipeline, step.id);
+                                  const current = pipelineStepResult(pipeline, step.id);
+                                  return (
+                                    <div className="pipeline-previous-row" key={step.id}>
+                                      <strong>{step.name}</strong>
+                                      <span className="pipeline-step-commit">
+                                        {previous?.commitSha ? previous.commitSha.slice(0, 10) : '—'} → {current?.commitSha ? current.commitSha.slice(0, 10) : '—'}
+                                      </span>
+                                      <div className="pipeline-previous-line">
+                                        <span className="pipeline-previous-label">{t('tasks.pipelinePreviousLabel')}</span>
+                                        <span className={`state ${previous?.status ?? 'pending'}`}>
+                                          {t(`tasks.pipelineStepStatus.${previous?.status ?? 'pending'}` as KeyPath)}
+                                        </span>
+                                      </div>
+                                      <div className="pipeline-previous-line">
+                                        <span className="pipeline-previous-label">{t('tasks.pipelineCurrentLabel')}</span>
+                                        <span className={`state ${current?.status ?? 'pending'}`}>
+                                          {t(`tasks.pipelineStepStatus.${current?.status ?? 'pending'}` as KeyPath)}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </details>
+                          )}
                         </div>
                       );
                     })()}
