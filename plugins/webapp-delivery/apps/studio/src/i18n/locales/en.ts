@@ -1061,6 +1061,8 @@ export const en = {
     emptyRoster: 'This team has no roles.',
     handoffTitle: 'Handoff edges',
     taskQueue: 'Task queue',
+    tasksLoading: 'Loading team tasks…',
+    tasksLoad: 'Unable to load the team task queue.',
     noTasks: 'No tasks assigned to this team.',
     gate: 'Approval gate',
     plan: 'Plan from team',

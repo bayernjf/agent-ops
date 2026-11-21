@@ -1043,6 +1043,8 @@ export const zh = {
     emptyRoster: '该团队还没有角色。',
     handoffTitle: '交接边',
     taskQueue: '任务队列',
+    tasksLoading: '正在加载团队任务…',
+    tasksLoad: '无法加载团队任务队列。',
     noTasks: '该团队还没有任务。',
     gate: '审批卡点',
     plan: '生成计划',
