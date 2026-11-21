@@ -42,6 +42,11 @@ const emptyTaskForm: TaskForm = {
   steps: [],
 };
 
+// Pipeline and fan-out endpoints run synchronously until the model finishes. The shared
+// apiFetch default is 15s, which aborts a real model run and leaves the daemon working on a
+// request the UI has already abandoned. Give these the same budget as a long dogfood run.
+const PIPELINE_REQUEST_TIMEOUT_MS = 10 * 60_000;
+
 const splitLines = (value: string) => value.split('\n').map(line => line.trim()).filter(Boolean);
 
 function formatDuration(durationMs: number): string {
@@ -252,7 +257,7 @@ export function TasksView() {
     setError('');
     try {
       await ensureProvisioned(task, 'tasks.pipelineExecute');
-      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/execute`, { method: 'POST' });
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/execute`, { method: 'POST' }, PIPELINE_REQUEST_TIMEOUT_MS);
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineExecute'));
       await loadTasks();
@@ -270,7 +275,7 @@ export function TasksView() {
     setPipelineBusyId(task.id);
     setError('');
     try {
-      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/retry`, { method: 'POST' });
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/retry`, { method: 'POST' }, PIPELINE_REQUEST_TIMEOUT_MS);
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineRetry'));
       await loadTasks();
@@ -287,7 +292,7 @@ export function TasksView() {
     setPipelineBusyId(task.id);
     setError('');
     try {
-      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/rerun`, { method: 'POST' });
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/rerun`, { method: 'POST' }, PIPELINE_REQUEST_TIMEOUT_MS);
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineRerun'));
       await loadTasks();
@@ -310,7 +315,7 @@ export function TasksView() {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({}),
-      });
+      }, PIPELINE_REQUEST_TIMEOUT_MS);
       const body = (await response.json().catch(() => null)) as (DagPipelineResult & { error?: string }) | null;
       if (!response.ok || !body) throw new Error(body?.error ?? t('tasks.dagRun'));
       setDagResultByTask(previous => ({ ...previous, [task.id]: body }));
@@ -334,7 +339,7 @@ export function TasksView() {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({}),
-      });
+      }, PIPELINE_REQUEST_TIMEOUT_MS);
       const body = (await response.json().catch(() => null)) as (ParallelTeamResult & { error?: string }) | null;
       if (!response.ok || !body) throw new Error(body?.error ?? t('tasks.parallelRun'));
       setParallelResultByTask(previous => ({ ...previous, [task.id]: body }));
@@ -368,7 +373,7 @@ export function TasksView() {
     setPipelineBusyId(task.id);
     setError('');
     try {
-      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/approve`, { method: 'POST' });
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/pipeline/approve`, { method: 'POST' }, PIPELINE_REQUEST_TIMEOUT_MS);
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(body?.error ?? t('tasks.pipelineApprove'));
       await loadTasks();
