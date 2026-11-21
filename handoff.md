@@ -12,6 +12,7 @@
 - [x] **Studio 浏览器复查** — 2026-11-21：Role/Team 表单预算输入（创建 / 编辑回填与探针清理）、completed pipeline 的 Rerun 按钮、Metrics 页（23 runs / 11 tasks 聚合）与 Teams 详情（花名册 / 交接边 / 队列 / 用量）均在真实浏览器查看；Teams 计划预览当时因缺少带团队的 queued 任务未点击，已由下方“Studio 分支入口浏览器验收”补验。
 - [x] **Studio 分支入口浏览器验收** — 已完成（2026-11-21）。隔离数据库 + 临时 git 仓实测：DAG 先验 `aider` candidate 失败面板，再用真实 CodeBuddy 跑通成功路径（pipeline completed、commit `b976ee0`、输出 `PROBE_OK`）；并行 lane 先验失败面板，再用真实 CodeBuddy 跑通 `review` lane（0 文件、`PROBE_OK`）；Teams 计划预演在带 Team 的 queued 任务上点开并取消；`Delete probe` 从 Studio 删除后后端列表确认消失。过程中发现并修复 Studio 长请求沿用 15 秒默认超时的问题（commit `d7dd834`）。
 - [x] **并行 lane 决策入口** — 已完成（2026-11-21）。并行结果面板直接提供 Accept lane / Reject lane；已接受的 lane 可 Set as final，持久化 `finalRunId` / `finalCommitSha` 并写 `task.final_lane.selected` 审计。真实 CodeBuddy 两条 lane 已在浏览器走通接受、驳回和最终选择；选择只是指向已 pin 的 lane commit，不合并到任务 worktree。提交 `2ed1adb` / `6b51497` / `9750a83` / `88cd6bd`。
+- [x] **Studio 审计面板与导出** — 已完成（2026-11-21）。新增独立 Audit 导航，`GET /api/audit` 支持任务 / 团队 / 类型 / 条数筛选；事件可展开查看 actor、task/team 与 data；`Export audit JSON` 导出当前筛选切片，`Export task evidence` 调用 `GET /api/tasks/:id/export` 下载单任务证据包。真实浏览器已验证 6 条事件、两层过滤、详情展开和两种下载；全仓 65 文件 / 752 tests 绿，Studio build 1659 modules 成功。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -401,6 +402,17 @@
 - [x] 测试：storage-core 并行 6 例；server API 200/400/404；MCP 工具清单；全仓 typecheck 0，64 文件 / 751 tests 绿；Studio 1658 modules 构建成功。
 - [x] 浏览器验收：隔离 DB `/tmp/agent-ops-lane-verify/agent-ops.sqlite` + 临时 git 仓，真实 CodeBuddy 2.142.0 两条 lane 各写 `PROBE_LANE.txt`；点 Accept lane 后第一条 done、第二条仍 review；点 Set as final 后第一条显示“最终交付”；点 Reject lane 后第二条 queued，任务保持 review。后端确认 `finalRunId=75e4cf8c-…`、`finalCommitSha=ced58f34…`；主 worktree clean 且没有 `PROBE_LANE.txt`；审计表存在 `task.final_lane.selected`。
 - [x] 本轮提交：`2ed1adb feat(storage-core): select the final parallel lane`、`6b51497 feat(server-core): expose final lane selection`、`9750a83 feat(cli): add final lane selection`、`88cd6bd feat(studio): decide parallel lanes inline`。
+
+## Studio 审计面板与导出 — 已完成（2026-11-21）
+
+- [x] Studio 新增独立 **Audit / 审计** 导航与 `AuditView`，没有替换既有的 **Activity / 活动** 页：活动页记录项目创建、Blueprint 修订、Baseline 批准等前端事件，审计页只回放内核 `audit_events`。
+- [x] `AuditView` 通过 `GET /api/audit` 读取 append-only 事件，筛选任务 ID、团队 ID、事件类型与最多条数（50 / 200 / 500 / 1000）；表单提交后才应用筛选，避免每次输入都请求。事件以 `<details>` 展开，显示 `seq` / 类型 / 时间、actor / task / team 与格式化 JSON data。
+- [x] **Export audit JSON** 把已应用筛选与当前事件导出为 `agent-ops-audit-YYYY-MM-DD.json`；**Export task evidence** 要求任务 ID，调用 `GET /api/tasks/:id/export`，从 `content-disposition` 解析文件名并下载单任务证据包。下载 helper 先挂载 anchor，再在 `setTimeout(0)` 里 revoke blob URL，避免立即 revoke 取消下载。
+- [x] 安全边界：审计页只调用已有的只读 API；导出在浏览器侧组装，不新增服务端权限面；任务证据仍走内核既有导出端点。
+- [x] 测试：新增 `audit-view.test.tsx` SSR 冒烟，断言筛选与两个导出入口在事件加载前已渲染；全仓 typecheck 0，65 文件 / 752 tests 绿；Studio build 1659 modules 成功，主 chunk 288.60 kB。
+- [x] 浏览器验收：隔离 DB `/tmp/agent-ops-audit-verify/agent-ops.sqlite` + 临时 git 仓，造 6 条真实角色 / 团队 / 任务审计。页面显示 `#1`–`#6`；按任务过滤后剩 2 条，再按 `task.created` 过滤后剩 1 条；展开可见 data。任务证据下载 `agent-ops-task-897204a3-….json`（1 KB，task 与 totals 正确）；审计 JSON 下载 `agent-ops-audit-2026-11-21.json`（3.2 KB，`count=7`，filters 与事件类型正确）。第二次下载触发浏览器多文件下载权限，重载后用 CDP 允许下载完成验证。
+- [x] 本轮提交：`e85e4c4 feat(studio): add the kernel audit panel`。
+- [ ] 未做：事件类型下拉是固定 21 项清单，不能从内核类型动态派生；没有自动轮询或实时追加，只有手动 Refresh；没有按时间范围或 actor 过滤。
 
 ## F7-06 团队看板 — 已完成（2026-11-20）
 
