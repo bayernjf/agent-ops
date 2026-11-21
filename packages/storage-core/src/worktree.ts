@@ -118,7 +118,12 @@ export async function mergeDependencyCommits(worktreePath: string, commits: stri
  * under its own ref so accepting a second lane cannot overwrite the first.
  */
 export async function pinWorktreeCommit(repo: string, taskId: string, sha: string, laneId?: string): Promise<void> {
-  const ref = laneId ? `refs/agent-ops/tasks/${taskId}/lanes/${laneId}` : `refs/agent-ops/tasks/${taskId}`;
+  // Both refs must be nested: git cannot store refs/agent-ops/tasks/<id> as a loose ref file
+  // and refs/agent-ops/tasks/<id>/lanes/<lane> as a directory at the same time. A serial accept
+  // followed by a lane accept used to fail with "cannot lock ref" for that reason.
+  const ref = laneId
+    ? `refs/agent-ops/tasks/${taskId}/lanes/${laneId}`
+    : `refs/agent-ops/tasks/${taskId}/accepts/latest`;
   await execFileAsync('git', ['update-ref', ref, sha], { cwd: repo });
 }
 
