@@ -417,6 +417,8 @@ export type DagStepResult = {
   commitSha: string | null;
   worktreePath: string | null;
   changedFiles: string[];
+  output?: string;
+  outputTruncated?: boolean;
   error: string | null;
 };
 
@@ -453,7 +455,9 @@ export type TaskPipelineStepResult = {
   status: 'pending' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
   runId?: string;
   commitSha?: string;
+  changedFiles?: string[];
   output?: string;
+  outputTruncated?: boolean;
   error?: string;
   startedAt?: string;
   completedAt?: string;

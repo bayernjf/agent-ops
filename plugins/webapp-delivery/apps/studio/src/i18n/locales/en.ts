@@ -921,6 +921,7 @@ export const en = {
     fullDiff: 'Full diff',
     noDiff: 'No diff captured.',
     outputTruncated: 'Output was truncated before persistence.',
+    outputTruncatedShort: 'Output truncated',
     diffTruncated: 'Diff was truncated before persistence.',
     team: 'Team',
     budgetTitle: 'Budget',

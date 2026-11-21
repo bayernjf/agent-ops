@@ -903,6 +903,7 @@ export const zh = {
     fullDiff: '完整 Diff',
     noDiff: '没有捕获到 Diff。',
     outputTruncated: '输出在持久化前已截断。',
+    outputTruncatedShort: '输出已截断',
     diffTruncated: 'Diff 在持久化前已截断。',
     team: '团队',
     budgetTitle: '预算',
