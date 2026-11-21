@@ -771,10 +771,20 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
 
   server.registerTool('agent_ops_accept_run', {
     title: 'Accept run',
-    description: 'Accept a reviewed run, marking the task done.',
+    description: 'Accept a reviewed run. An ordinary run closes the task; a parallel lane stays open until every lane is decided.',
     inputSchema: runIdSchema,
     annotations: ADDITIVE,
   }, args => callDaemon('POST', `/api/runs/${encodeURIComponent(args.runId)}/accept`).then(toResult));
+
+  server.registerTool('agent_ops_select_final_lane', {
+    title: 'Select final lane',
+    description: 'Mark an accepted parallel lane as the task\'s final deliverable. This records a pointer to the pinned lane commit; it does not merge the lane into the task worktree.',
+    inputSchema: {
+      ...taskIdSchema,
+      ...runIdSchema,
+    },
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/final-lane`, { runId: args.runId }).then(toResult));
 
   server.registerTool('agent_ops_reject_run', {
     title: 'Reject run',

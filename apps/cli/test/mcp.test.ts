@@ -177,6 +177,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_rerun_pipeline',
       'agent_ops_retry_pipeline',
       'agent_ops_revise_blueprint',
+      'agent_ops_select_final_lane',
       'agent_ops_submit_acceptance',
       'agent_ops_test_role',
       'agent_ops_update_role',
