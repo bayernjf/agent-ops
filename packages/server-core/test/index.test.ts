@@ -139,6 +139,66 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('rebinds a task Role over PATCH and validates the team roster', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const architect = await store.roles.createRole({ name: 'Architect', baseAgentId: 'codex' });
+      const reviewer = await store.roles.createRole({ name: 'Reviewer', baseAgentId: 'codex' });
+      const outsider = await store.roles.createRole({ name: 'Outsider', baseAgentId: 'codex' });
+      const team = await store.teams.createTeam({ name: 'Patch Team', roleIds: [architect.id, reviewer.id] });
+      const task = await store.createTask({
+        repo: '/r',
+        baseRef: 'main',
+        title: 'Patch role',
+        roleId: architect.id,
+        teamId: team.id,
+      });
+
+      const patched = await app.request(`/api/tasks/${task.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roleId: reviewer.id }),
+      });
+      expect(patched.status).toBe(200);
+      expect((await patched.json()) as object).toMatchObject({ roleId: reviewer.id, teamId: team.id });
+
+      const outsiderPatch = await app.request(`/api/tasks/${task.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roleId: outsider.id }),
+      });
+      expect(outsiderPatch.status).toBe(400);
+      expect(await outsiderPatch.text()).toContain(`Role ${outsider.id} is not on team ${team.id}.`);
+
+      const missingRole = await app.request(`/api/tasks/${task.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roleId: 'missing-role' }),
+      });
+      expect(missingRole.status).toBe(404);
+
+      const emptyPatch = await app.request(`/api/tasks/${task.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(emptyPatch.status).toBe(400);
+
+      const cleared = await app.request(`/api/tasks/${task.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roleId: null }),
+      });
+      expect(cleared.status).toBe(200);
+      expect((await cleared.json()) as object).toMatchObject({ roleId: null });
+      expect(store.listAudit({ taskId: task.id, type: 'task.updated' })).toHaveLength(2);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('returns 400 for a pipeline prompt with a bad template token', async () => {
     const { store, directory } = await openStore();
     try {
@@ -1004,6 +1064,40 @@ describe('createKernelApp', () => {
       });
       expect(missingProfile.status).toBe(400);
       expect(await missingProfile.text()).toContain('was not found');
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('creates a run from the task Role profile when agentId is omitted', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const { profile } = await store.profiles.createProfile({ name: 'Profile Runner', baseAgentId: 'codex' });
+      const role = await store.roles.createRole({ name: 'Profile Runner Role', profileId: profile.id });
+      const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Profile task', roleId: role.id });
+
+      const response = await app.request(`/api/tasks/${task.id}/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roleId: role.id }),
+      });
+      expect(response.status).toBe(201);
+      expect((await response.json()) as object).toMatchObject({
+        agentId: profile.id,
+        roleId: role.id,
+        runtimeId: null,
+      });
+
+      const bareTask = await store.createTask({ repo: '/r', baseRef: 'main', title: 'No identity' });
+      const missingIdentity = await app.request(`/api/tasks/${bareTask.id}/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(missingIdentity.status).toBe(400);
+      expect(await missingIdentity.text()).toContain('A run needs an agentId or a Role');
     } finally {
       await store.close();
       await rm(directory, { recursive: true, force: true });

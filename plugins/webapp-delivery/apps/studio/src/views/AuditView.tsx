@@ -7,7 +7,7 @@ import type { KernelAuditEvent } from '../types';
 const EVENT_TYPES = [
   'role.created', 'role.updated', 'role.deleted',
   'team.created', 'team.updated', 'team.deleted',
-  'task.created', 'task.deleted', 'task.final_lane.selected',
+  'task.created', 'task.updated', 'task.deleted', 'task.final_lane.selected',
   'run.accepted', 'run.rejected', 'run.rerun',
   'pipeline.step.approved', 'pipeline.step.rejected', 'pipeline.retried', 'pipeline.rerun',
   'pipeline.planned', 'pipeline.dag.executed', 'pipeline.dag.paused', 'pipeline.dag.resumed', 'parallel.executed',

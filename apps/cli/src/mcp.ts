@@ -97,7 +97,7 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? 30_000;
 
-  const callDaemon = async (method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<DaemonResponse> => {
+  const callDaemon = async (method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<DaemonResponse> => {
     let response: Response;
     try {
       response = await fetchImpl(`${options.daemonBaseUrl}${path}`, {
@@ -648,6 +648,18 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     ...(args.pipeline ? { pipeline: args.pipeline } : {}),
   }).then(toResult));
 
+  server.registerTool('agent_ops_update_task', {
+    title: 'Update task',
+    description: 'Change a task\'s Role binding after creation. Pass a Role id to assign it, or null to clear it; future runs inherit the new Role.',
+    inputSchema: {
+      ...taskIdSchema,
+      roleId: z.string().trim().min(1).max(100).nullable().describe('Role id to assign, or null to clear the binding.'),
+    },
+    annotations: ADDITIVE,
+  }, args => callDaemon('PATCH', `/api/tasks/${encodeURIComponent(args.taskId)}`, {
+    roleId: args.roleId,
+  }).then(toResult));
+
   server.registerTool('agent_ops_provision_task', {
     title: 'Provision task',
     description: 'Create an isolated git worktree for a task so an agent can work in it.',
@@ -733,15 +745,15 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
 
   server.registerTool('agent_ops_create_run', {
     title: 'Create run',
-    description: 'Create a run for a task with a chosen agent (e.g. codex). The task must be provisioned first.',
+    description: 'Create a run for a task. Omit agentId to use the task Role\'s profileId or baseAgentId; pass agentId to override. The task must be provisioned first.',
     inputSchema: {
       ...taskIdSchema,
-      agentId: z.string().trim().min(1).describe('Agent id, e.g. "codex" or "claude-code"; see agent_ops_get_runtime.'),
-      roleId: z.string().trim().min(1).optional().describe('Optional Role id to record on the run; see agent_ops_list_roles.'),
+      agentId: z.string().trim().min(1).optional().describe('Optional agent override, e.g. "codex" or "claude-code"; omit to inherit the task Role. See agent_ops_get_runtime.'),
+      roleId: z.string().trim().min(1).optional().describe('Optional Role id to record on the run; defaults to the task Role. See agent_ops_list_roles.'),
     },
     annotations: ADDITIVE,
   }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/runs`, {
-    agentId: args.agentId,
+    ...(args.agentId ? { agentId: args.agentId } : {}),
     ...(args.roleId ? { roleId: args.roleId } : {}),
   }).then(toResult));
 

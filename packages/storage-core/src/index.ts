@@ -121,6 +121,11 @@ export type CreateTaskInput = {
   pipeline?: TaskPipelineInput;
 };
 
+export type UpdateTaskInput = {
+  /** Omit to leave the binding unchanged; null clears it. */
+  roleId?: string | null;
+};
+
 export type TaskRecord = {
   id: string;
   repo: string;
@@ -388,6 +393,7 @@ export type KernelAuditEventType =
   | 'team.updated'
   | 'team.deleted'
   | 'task.created'
+  | 'task.updated'
   | 'task.deleted'
   | 'task.cancelled'
   | 'task.final_lane.selected'
@@ -925,6 +931,37 @@ export class KernelStore {
     return record;
   }
 
+  async updateTask(id: string, input: UpdateTaskInput): Promise<TaskRecord> {
+    const task = this.getTask(id);
+    if (!task) throw new Error(`Task ${id} was not found.`);
+    if (input.roleId === undefined) return task;
+
+    const linkedRoleId = input.roleId?.trim() || null;
+    if (linkedRoleId) {
+      const role = await this.roles.getRole(linkedRoleId);
+      if (!role) throw new Error(`Role ${linkedRoleId} was not found.`);
+      if (!role.enabled) throw new Error(`Role ${linkedRoleId} is disabled.`);
+      // A task that belongs to a Team must keep its Role on that roster. A deleted Team is a
+      // pre-existing dangling reference; do not block a role change on that old data.
+      const team = task.teamId ? await this.teams.getTeam(task.teamId) : null;
+      if (team && !team.roleIds.includes(linkedRoleId)) {
+        throw new Error(`Role ${linkedRoleId} is not on team ${task.teamId}.`);
+      }
+    }
+    if (linkedRoleId === task.roleId) return task;
+
+    const updatedAt = new Date().toISOString();
+    this.kernelOrm.update(tasks).set({ roleId: linkedRoleId ?? '', updatedAt }).where(eq(tasks.id, id)).run();
+    await this.persist();
+    await this.recordAudit({
+      type: 'task.updated',
+      taskId: id,
+      teamId: task.teamId,
+      data: { roleId: linkedRoleId, previousRoleId: task.roleId },
+    });
+    return this.getTask(id) as TaskRecord;
+  }
+
   getTask(id: string): TaskRecord | undefined {
     const row = this.kernelOrm.select().from(tasks).where(eq(tasks.id, id)).get() as TaskRow | undefined;
     return row ? toTaskRecord(row) : undefined;
@@ -1078,44 +1115,61 @@ export class KernelStore {
     return { ...existing, worktreePath: '', updatedAt: now };
   }
 
-  private async resolveRunRole(task: TaskRecord, requestedRoleId: string | undefined, agentId: string): Promise<AgentRole | null> {
+  private async resolveRunIdentity(
+    task: TaskRecord,
+    requestedRoleId: string | undefined,
+    requestedAgentId: string | undefined,
+  ): Promise<{ role: AgentRole | null; agentId: string }> {
     const linkedRoleId = requestedRoleId?.trim() || task.roleId || undefined;
-    if (!linkedRoleId) return null;
-    const role = await this.roles.getRole(linkedRoleId);
-    if (!role) throw new Error(`Role ${linkedRoleId} was not found.`);
-    if (!role.enabled) throw new Error(`Role ${linkedRoleId} is disabled.`);
+    let role: AgentRole | null = null;
+    if (linkedRoleId) {
+      role = await this.roles.getRole(linkedRoleId);
+      if (!role) throw new Error(`Role ${linkedRoleId} was not found.`);
+      if (!role.enabled) throw new Error(`Role ${linkedRoleId} is disabled.`);
+    }
 
-    const agentProfile = await this.profiles.getProfile(agentId);
-    const agentBaseId = agentProfile?.baseAgentId ?? runtimeProviderAgentId(agentId);
+    const explicitAgentId = requestedAgentId?.trim();
+    // A Role bound to a Profile is already a complete execution identity. Only fall back to
+    // the explicit agent when the caller intentionally overrides it; otherwise task-level
+    // runs would silently lose the Profile and its overrides.
+    const effectiveAgentId = explicitAgentId || role?.profileId || role?.baseAgentId;
+    if (!effectiveAgentId) {
+      throw new Error('A run needs an agentId or a Role with a profileId or baseAgentId.');
+    }
+    if (!role) return { role: null, agentId: effectiveAgentId };
+
+    const agentProfile = await this.profiles.getProfile(effectiveAgentId);
+    const agentBaseId = agentProfile?.baseAgentId ?? runtimeProviderAgentId(effectiveAgentId);
 
     if (role.profileId) {
       const profile = await this.profiles.getProfile(role.profileId);
       if (!profile) throw new Error(`Role ${role.id} profile ${role.profileId} was not found.`);
       if (agentBaseId !== profile.baseAgentId) {
-        throw new Error(`Role ${role.id} targets ${role.profileId} (${profile.baseAgentId}), not run agent ${agentId}.`);
+        throw new Error(`Role ${role.id} targets ${role.profileId} (${profile.baseAgentId}), not run agent ${effectiveAgentId}.`);
       }
-      return role;
+      return { role, agentId: effectiveAgentId };
     }
 
     const baseAgentId = role.baseAgentId;
     if (!baseAgentId) throw new Error(`Role ${role.id} has no base agent.`);
     if (agentBaseId !== baseAgentId) {
-      throw new Error(`Role ${role.id} targets ${baseAgentId}, not run agent ${agentId}.`);
+      throw new Error(`Role ${role.id} targets ${baseAgentId}, not run agent ${effectiveAgentId}.`);
     }
-    return role;
+    return { role, agentId: effectiveAgentId };
   }
 
-  async createRun(taskId: string, agentId: string, roleId?: string, instruction?: string): Promise<RunRecord> {
+  async createRun(taskId: string, agentId: string | undefined, roleId?: string, instruction?: string): Promise<RunRecord> {
     const task = this.getTask(taskId);
     if (!task) throw new Error(`Task ${taskId} was not found.`);
-    const role = await this.resolveRunRole(task, roleId, agentId);
+    const identity = await this.resolveRunIdentity(task, roleId, agentId);
+    const role = identity.role;
     await this.assertBudget(task, role?.id, 'create-run');
     const now = new Date().toISOString();
     const artifacts = emptyRunArtifacts();
     const record: RunRecord = {
       id: randomUUID(),
       taskId,
-      agentId,
+      agentId: identity.agentId,
       status: 'queued',
       diffStat: '',
       artifacts,

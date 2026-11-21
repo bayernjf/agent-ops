@@ -63,8 +63,12 @@ const createTaskSchema = z.object({
   pipeline: pipelineSchema.optional(),
 });
 
+const updateTaskSchema = z.object({
+  roleId: z.string().trim().min(1).max(100).nullable().optional(),
+}).refine(input => input.roleId !== undefined, 'At least one task field must be provided.');
+
 const createRunSchema = z.object({
-  agentId: z.string().trim().min(1),
+  agentId: z.string().trim().min(1).optional(),
   roleId: z.string().trim().min(1).optional(),
 });
 
@@ -125,10 +129,11 @@ export type KernelAppOptions = {
 function errorResponse(context: Context, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes('was not found')) return context.json({ error: message }, 404);
-  if (message.includes('not part of run') || message.includes('Select at least one changed file') || message.includes('invalid worktree path') || message.includes('template token')) {
+  if (message.includes('not part of run') || message.includes('Select at least one changed file') || message.includes('invalid worktree path') || message.includes('template token') || message.includes('A run needs an agentId')) {
     return context.json({ error: message }, 400);
   }
   if (message.includes('is disabled')) return context.json({ error: message }, 400);
+  if (message.includes('is not on team')) return context.json({ error: message }, 400);
   if (message.includes('is not assigned to a Team') || message.includes('produced an empty plan')) {
     return context.json({ error: message }, 400);
   }
@@ -433,6 +438,16 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
   });
 
   app.get('/api/tasks', (c) => c.json(store.listTasks()));
+
+  app.patch('/api/tasks/:id', async (c) => {
+    const parsed = updateTaskSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'Invalid task payload.', details: parsed.error.issues }, 400);
+    try {
+      return c.json(await store.updateTask(c.req.param('id'), parsed.data));
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  });
 
   app.delete('/api/tasks/:id', async (c) => {
     try {

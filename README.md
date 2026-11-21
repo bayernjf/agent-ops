@@ -7,7 +7,7 @@
 - 内核 **5 个 package**：`agent-runtime` / `workflow` / `policy` / `storage-core` / `server-core`；内核 **2 个 app**：`cli` / `daemon`。
 - `daemon` **双模**：默认只挂载内核 Task/Run 控制面（`server-core`）；`AGENT_OPS_ENABLE_WEBAPP=1` 时懒加载 webapp-delivery 云链路（Project / Blueprint / Apply / Release）。
 - webapp-delivery 的 7 个 package 与 1 个 app（`studio`）隔离在 `plugins/webapp-delivery/`，内核不反向依赖插件。
-- 全仓 `npm run typecheck` 通过，`npm test` 62 文件 / 737 tests 全绿。
+- 全仓 `npm run typecheck` 通过，`npm test` 68 文件 / 784 tests 全绿。
 - **真实模型验收已完成（2026-11-20）**：CodeBuddy v2.185.0（registry 中的 `verified` adapter）通过内核 API 完成 1 条真实任务，随后在 Studio UI 里用“角色 + 一步 Pipeline + Run pipeline”跑通第二条（commit `ea4553f7d2`）。Claude Code / Codex 仍受 CC Switch `base_url` 阻塞，不影响 CodeBuddy 路径。
 - **真实 dogfood 已完成 3 条 + 4 次团队运行（2026-11-21）**：3 条单任务（Studio 重跑策略、Studio 预算面板、CLI `export --summary`）接受率 3/3、检查通过 3/3、返工 1 次小修；五角色团队串行完成（首轮暴露“落盘 owner 未指派”），owner 机制补齐后重跑成功；带依赖链接的 worktree 让五角色跑通了一个**真实代码任务**（新增 `listTasksByTeam` + 单测，reviewer→owner 修正了恒真断言）。详见 `handoff.md`。
 
@@ -16,6 +16,8 @@
 | 能力 | 说明 |
 |---|---|
 | Task / Run | 每任务一个 worktree（自动链接仓库 `node_modules`，`AGENT_OPS_LINK_NODE_MODULES=0` 关闭）；Run 持久化 stdout/stderr、完整 diff（含未跟踪 patch）、exit code、耗时、usage；SSE 实时输出与取消 |
+| Run 身份 | `POST /api/tasks/:id/runs` 的 `agentId` 可省略：显式值优先，否则继承 Task Role 的 `profileId`，无 Profile 时回退 Role 的 `baseAgentId`；Role 绑定 Profile 时仍校验 base 兼容，无 Role 且无 `agentId` 返回 400 |
+| Task Role 改绑 | `PATCH /api/tasks/:id` 可在创建后改绑或清空 Task Role（传 `null`）；新 Role 必须存在、启用且在该 Task 的 Team 花名册内，成功写 `task.updated` 审计；后续 Run 按新 Role 继承身份 |
 | 任务视图 | Studio 任务页提供 List / Board 切换；看板按 `queued` / `running` / `review` / `done` / `failed` / `cancelled` 六状态分列，列头带计数，卡片展示 `repo@baseRef`、Pipeline 状态与 Team/Role chip；点卡片回到列表定位并展开该任务 |
 | 任务取消 | `POST /api/tasks/:id/cancel` 取消 `queued` / `running` / `review` 任务：终止活动 Run，串行 Pipeline、DAG、并行 lane 都停止后续步骤，任务与 Run 证据保留；终态任务返回 409 |
 | Roles | 角色绑定 Profile / base agent、系统提示、验收标准、工具策略与成本预算；内置 architect / implementer / reviewer / tester / researcher 模板 |
