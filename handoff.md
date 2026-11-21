@@ -15,6 +15,7 @@
 - [x] **Studio 审计面板与导出** — 已完成（2026-11-21）。新增独立 Audit 导航，`GET /api/audit` 支持任务 / 团队 / 类型 / 条数筛选；事件可展开查看 actor、task/team 与 data；`Export audit JSON` 导出当前筛选切片，`Export task evidence` 调用 `GET /api/tasks/:id/export` 下载单任务证据包。真实浏览器已验证 6 条事件、两层过滤、详情展开和两种下载；全仓 65 文件 / 752 tests 绿，Studio build 1659 modules 成功。
 - [x] **Studio 策略预览面板** — 已完成（2026-11-21）。角色创建 / 编辑表单接入 `POST /api/policy/evaluate`，保存前逐 Runtime 展示 capability、enforcement、只读、人工门与 allow/deny 判定；策略字段变更立即清空旧结果，空策略显示默认工具集提示。真实浏览器已验证 7 个 Runtime、20 条判定、unsupported 原因与中英文文案；全仓 66 文件 / 753 tests 绿，Studio build 1660 modules 成功。
 - [x] **Teams 任务队列服务端过滤** — 已完成（2026-11-21）。`TeamsView` 不再拉取全量 `/api/tasks` 后按 `teamId` 过滤，改为对选中团队调用 `GET /api/teams/:teamId/tasks`；切换团队立即清空旧队列并带取消标记，队列与卡点面板分别有加载态和错误态，计划预览对团队切换做了响应隔离。真实浏览器已验证 Alpha 2 条 / Beta 1 条、未归属任务不出现，切换与刷新只请求当前团队队列；全仓 66 文件 / 753 tests 绿，Studio build 1660 modules 成功。
+- [x] **Studio 任务看板分列** — 已完成（2026-11-21）。Tasks 页新增 List / Board 切换，看板按六种任务状态分列、列头计数，卡片显示 `repo@baseRef`、Pipeline 徽标与 Team/Role chip；点卡片切回列表并展开、滚动定位该任务。真实浏览器已验证六列各 1 条、计数、Team/Role/Pipeline 标记、卡片跳转展开与中英文；全仓 67 文件 / 755 tests 绿，Studio build 1661 modules 成功。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -441,6 +442,19 @@
 - [x] 本轮提交：`1636843 feat(studio): load team tasks from the team queue`。
 - [ ] 未做：团队队列接口没有分页或状态过滤；任务数量大时仍会一次返回该团队全部任务。
 
+## Studio 任务看板 — 已完成（2026-11-21）
+
+- [x] 新增 `TaskBoard.tsx`：按 `TASK_BOARD_STATES`（`queued` / `running` / `review` / `done` / `failed` / `cancelled`）分列；每列显示状态标签、任务计数、空列 `No tasks`；卡片展示标题、`repo@baseRef`、Pipeline 状态徽标、Team 或 Role chip。
+- [x] `TasksView` 增加 `viewMode: 'list' | 'board'` 与 List / Board 分段切换；看板与列表按条件分支渲染，列表原有行为保持不变。
+- [x] 卡片点击走 `openTaskInList`：切回列表、设置 `expandedId`、按 `task-row-<id>` 滚动定位。看板不复制 Run/Pipeline 详情操作面，避免两套详情维护。
+- [x] 看板横向滚动，列最小宽 220px、列体最高 `65vh`；六种状态列头用不同 `border-top-color`；空列与加载态单独样式。
+- [x] 中英文新增 `tasks.viewMode` / `viewList` / `viewBoard` / `boardTitle` / `boardHint` / `boardEmpty` / `openDetails`。
+- [x] 测试：`task-board.test.tsx` 覆盖六列标签、六条任务、`Awaiting approval`、`alpha-team`、`reviewer`、`Open in list`、loading 不渲染列；SSR 文本节点分隔问题按独立值断言处理。
+- [x] 真实浏览器验收（2026-11-21，隔离 DB + 临时 git 仓）：造 `Board queued/running/review/done/failed/cancelled` 六条任务，看板六列各 1 条，计数、Team/Role、Pipeline `Idle` 均正确；点击 `Board review` 卡片切回列表并展开，`Implement / codex / Pending` 可见；中文下六列显示“排队中 / 运行中 / 待审核 / 已完成 / 失败 / 已取消”。发现隔离 DB 直接改状态后 daemon 内存缓存仍返回旧值，重启 daemon 后验收通过；这是测试环境的缓存行为，不是看板缺陷。
+- [x] 门禁：全仓 typecheck 0；67 文件 / 755 tests 全部通过；Studio build 1661 modules 成功，主 chunk 298.39 kB，CSS 67.59 kB。
+- [x] 本轮提交：`796bf52 feat(studio): add a task status board`。
+- [ ] 未做：看板没有分页/虚拟滚动，任务量很大时仍会一次渲染当前任务全集；卡片不提供独立详情抽屉，详情统一回列表；看板内不能直接执行/取消任务。
+
 ## F7-06 团队看板 — 已完成（2026-11-20）
 
 - [x] `getMetrics` 增加 `teamId` 过滤：只统计指派给该团队的任务及其 Run；返回值新增 `teamId: string | null` 标明范围。
@@ -452,7 +466,7 @@
 - [x] 格式化函数抽到 `src/lib/format.ts`，MetricsView 与 TeamsView 共用。
 - [x] 测试：两个团队时全量 metrics 统计 2、按 `teamId` 只统计 1 且 `teamId` 字段正确；server `?teamId=` 透传；全仓 typecheck 0，58 文件 / 701 tests 绿；Studio 14 文件 / 257 tests 绿、`vite build` 通过。
 - [x] 本轮提交：`38ca138 feat(storage-core): scope metrics to a team`、`be6b3ed feat(server-core): accept a teamId on metrics`、`05639c5 feat(cli): filter metrics by team`、`ed285bb feat(studio): show team blockers and usage`。
-- [ ] 未做：看板仍是列表式，没有按状态分列的看板视图；成本只有上报 usage 时才有数字；卡点不含“被驳回的 lane 等待重跑”这类更细的状态；Studio 未在真实浏览器点击。
+- [ ] 未做：成本只有上报 usage 时才有数字；卡点不含“被驳回的 lane 等待重跑”这类更细的状态。原“看板仍是列表式”的缺口已由上方 `Studio 任务看板`（2026-11-21）关闭。
 
 ## F3-04 工具审计 — 已完成（2026-11-20）
 
