@@ -31,7 +31,7 @@
 
 ### Pipeline 提示词模板
 
-后续 step 的 prompt 可以引用已完成上游 step 的结果：`{{previous.output}}` / `{{previous.commit}}`（串行上一步；DAG 步骤取最后一个依赖），以及 `{{step:<id>.output}}` / `{{step:<id>.commit}}`（任意已完成 step，按 step id）；花括号内允许空白（如 `{{ previous.output }}`）。创建任务时会校验 token：未知 step id、字段拼错、引用自己的 output/commit 或未闭合 `{{` 会返回 400。运行期只在目标 step 已完成且字段有值时替换；未完成 step、或没有记录 output/commit 时保留原 token，不静默清空。output 用的是内核记录值（当前每条 step result 上限 2000 字符）。实现与测试见 `packages/storage-core/src/pipeline-template.ts`、`test/pipeline-template.test.ts`。
+后续 step 的 prompt 可以引用已完成上游 step 的结果：`{{previous.output}}` / `{{previous.commit}}`（串行上一步；DAG 步骤取最后一个依赖），以及 `{{step:<id>.output}}` / `{{step:<id>.commit}}`（任意已完成 step，按 step id）；花括号内允许空白（如 `{{ previous.output }}`）。创建任务时会校验 token：未知 step id、字段拼错、引用自己的 output/commit 或未闭合 `{{` 会返回 400。运行期只在目标 step 已完成且字段有值时替换；未完成 step、或没有记录 output/commit 时保留原 token，不静默清空。output 用的是内核记录值（当前每条 step result 上限 2000 字符）。截断时结果落 `outputTruncated: true`，存储文本保持原样；后续 step 展开 `output` 会追加 `[The output above was truncated to 2000 characters.]`，Studio 在步骤状态后显示“输出已截断”。实现与测试见 `packages/storage-core/src/pipeline-template.ts`、`test/pipeline-template.test.ts`。
 
 ### Pipeline 重跑
 
