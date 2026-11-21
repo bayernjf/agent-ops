@@ -541,6 +541,13 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
     annotations: ADDITIVE,
   }, args => callDaemon('DELETE', `/api/tasks/${encodeURIComponent(args.taskId)}`).then(toResult));
 
+  server.registerTool('agent_ops_cancel_task', {
+    title: 'Cancel task',
+    description: 'Cancel a queued, running, or review task. Active runs are aborted and a running pipeline is marked cancelled; the task row and its evidence are kept.',
+    inputSchema: taskIdSchema,
+    annotations: ADDITIVE,
+  }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/cancel`).then(toResult));
+
   server.registerTool('agent_ops_get_budget', {
     title: 'Get task budget',
     description: 'Report a task\'s Role and Team spending against their budgets, based only on the usage runs actually reported. An unreported dimension never blocks on its own.',

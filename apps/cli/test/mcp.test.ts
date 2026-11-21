@@ -123,6 +123,7 @@ describe('agent-ops MCP bridge', () => {
       'agent_ops_accept_run',
       'agent_ops_apply_team_plan',
       'agent_ops_cancel_run',
+      'agent_ops_cancel_task',
       'agent_ops_coordinator_summary',
       'agent_ops_create_feature_task',
       'agent_ops_create_project',
