@@ -614,3 +614,4 @@ npm --workspace @agent-ops/studio run build
 | 2026-11-21 | Team owner 机制完成：ownerRoleId 校验、计划置末并标记 ownsDeliverable、summary 暴露 owner；Dogfood 5 以 2 步团队实测落盘 |
 | 2026-11-21 | Dogfood 6：带 owner 的五角色交付跑通，owner 写出 `05-final.md`（`4065cca`）；M2 的 5 角色退出标准满足（交付物为文档） |
 | 2026-11-21 | owner 事后校验：pipeline step 记录自身变更集，summary 对“无 owner / 未运行 / 完成但 0 改动”告警 |
+| 2026-11-21 | worktree 依赖策略：provision/lane/DAG 自动链接 `node_modules`，`info/exclude` 防止计为改动；CodeBuddy 在 worktree 实跑 5 个测试通过 |

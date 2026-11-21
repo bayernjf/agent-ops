@@ -491,7 +491,14 @@
 - 落盘：owner 真的写出 `05-final.md`（5.5 KB，按 reviewer 修订后的 README-ready「报告指标」小节）并附 `05-summary.md`；6 个文件共 440 行，应用为 `4065cca`。
 - 对比 Dogfood 4（未配 owner、只产笔记）：本轮满足 M2 退出标准「5 角色团队完成一个真实仓库任务（架构→实现→审查→测试→汇总）」——交付物是真实仓库文档而非代码；owner 也自己列出贴入 README 前仍需处理的缺口（`--summary` 未进 README 命令节、Team 预算证据映射缺一项、SSE 仅源码引用无运行时验证）。
 - [x] `05-final.md` 已贴入 README「报告指标」小节（运行证据 / 工具审计 / 成本预算三张表），并按 owner 列出的缺口做了三处修正：命令节补 `--summary`；预算来源指向 `roles.ts` / `teams.ts`；SSE 措辞改为 stdout/stderr 以事件落库（每 Run 最近 500 条）可回放，并在 README「已知限制」补上未做压测的说明。
-- [ ] 未做：交付物是文档，五角色跑真实代码改动仍未尝试（worktree 无 node_modules）。
+- [ ] 未做：交付物是文档；worktree 依赖已可链接（见 Dogfood 7），但“五角色产出真实代码”本身仍未试。
+
+### Dogfood 7：worktree 依赖与测试执行（2026-11-21）
+
+- 任务 `d71b8b62`（角色 `cb-test-runner` → CodeBuddy），objective 只要求“在 workspace 里跑 `npx vitest run packages/storage-core/test/worktree.test.ts` 并报告结果，不改文件”。
+- 结果：11.4 s、exit 0、**`Tests 5 passed (5)`**、`changedFiles = []`；accept 后 commitSha 回写为当前 HEAD（无改动不伪造提交）。
+- 意义：worktree 里真的有依赖可用，agent 能在隔离环境跑项目检查——这是把 dogfood 从“文档任务”升级成“代码任务”的前提。
+- 首轮（`2162cc26` / `0418b424`）暴露缺陷：`node_modules` 符号链接不被目录式 `.gitignore` 匹配，被计成 changedFiles；已修复并 reject 该轮，复跑得到干净证据。
 
 ## Coordinator 落盘 owner — 已完成（2026-11-21）
 
@@ -504,3 +511,12 @@
 - [x] 本轮提交：`f3aea53 feat(teams): name a team owner role`、`e0b115b feat(storage-core): mark the owner step in a team plan`、`c1b0f93 test(server-core): cover team owners over HTTP`、`6038f0d feat(cli): accept a team owner field`、`640faa1 feat(studio): set a team owner`、`80c1f33 feat(storage-core): verify the owner wrote something`。
 - [ ] 未做：校验是启发式的（只看该步改动文件数，不校验内容与路径）；历史五角色运行（Dogfood 4）没有 owner，要重跑才能产出可验收的落盘。
 - [x] Studio 表单已在真实浏览器验证：`CB Owner Team` 的 owner 下拉只列花名册角色，并正确显示 `cb-writer`，提示文案也在。
+
+## Worktree 依赖策略 — 已完成（2026-11-21）
+
+- [x] `linkNodeModules(repo, worktreePath)`：把主仓 `node_modules` 以符号链接放进新 worktree；接入 `provisionTask`、并行 lane、DAG step 与 fresh 重跑的重建路径。`AGENT_OPS_LINK_NODE_MODULES=0` 关闭；仓库无依赖或 worktree 已有 `node_modules` 时 no-op。
+- [x] 防止污染证据：符号链接不会被目录式 `node_modules/` 匹配，所以同时向仓库共享 `info/exclude` 写一条无斜杠的 `node_modules` 规则（用 `git rev-parse --path-format=absolute --git-common-dir` 定位）。
+- [x] 真实模型验收见 Dogfood 7：CodeBuddy 在链接后的 worktree 实跑 5 个测试通过，`changedFiles = []`。
+- [x] 测试：链接一次生效、二次 no-op；无依赖与 opt-out 均不链接；链接后 `git status --porcelain` 为空；`provisionTask` 自动链接。全仓 typecheck 0，62 文件 / 736 tests 绿。
+- [x] 本轮提交：`6321055 feat(storage-core): link dependencies into worktrees`。
+- [ ] 未做：只链接根 `node_modules`（npm workspaces 的 `@agent-ops/*` 由 worktree 自己的 vitest alias 解析，tsc 跨包类型仍可能指回主仓源码）；仓库本身没装依赖时仍需先 `npm ci`；策略生效前创建的旧 worktree 不会自动补链。
