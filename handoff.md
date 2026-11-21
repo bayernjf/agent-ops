@@ -27,6 +27,7 @@
 - [x] **模板引用执行顺序校验** — 已完成（2026-11-22）。`validatePipelineTemplates` 按 `dependsOn`（未写回退串行上一步）计算传递祖先；`{{step:<id>.*}}` 引用非确定上游、`{{previous.*}}` 无上游都会在 createTask 时拒绝并映射 400。新增纯函数 4 例、createTask 与 HTTP 各 1 例；全仓 68 文件 / 780 tests 绿，typecheck 0，Studio build 1661 modules 成功。
 - [x] **Run 自动继承 Role profileId** — 已完成（2026-11-22）。`createRun(taskId, undefined)` 显式 `agentId` 优先，否则使用 Role 的 `profileId`，无 Profile 时回退 Role 的 `baseAgentId`；Role 绑定 Profile 时仍校验 base 兼容。HTTP `POST /api/tasks/:id/runs` 的 `agentId` 改为可选，缺失身份返回 400；MCP `agent_ops_create_run` 同步可省略。新增 storage 1 例、HTTP 1 例，MCP `create_run` 补继承断言；全仓 68 文件 / 782 tests 绿，typecheck 0。
 - [x] **Task Role 创建后改绑** — 已完成（2026-11-22）。新增 `KernelStore.updateTask` 与 `PATCH /api/tasks/:id`：可改绑 Role，传 `null` 清空；新 Role 必须存在、启用且在该 Task 的 Team 花名册内，成功写 `task.updated` 审计；MCP 新增 `agent_ops_update_task`，Studio 审计筛选项补 `task.updated`。新增 storage 1 例、HTTP 1 例，MCP 补改绑/清空/恢复断言；全仓 68 文件 / 784 tests 绿，typecheck 0，Studio build 1661 modules 成功。
+- [x] **CLI export --summary 自动化测试** — 已完成（2026-11-22）。把 `export` 逻辑抽到 `apps/cli/src/export-command.ts`：`formatSummary` / `formatDuration` / `runExportCommand`，fetch、文件写入和输出流可注入；测试覆盖上报/缺失 totals、`--summary` 输出、`--out` 文件与字节数、缺 taskId、daemon 错误。新增 5 例；全仓 69 文件 / 789 tests 绿，typecheck 0。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -329,7 +330,7 @@
 - [x] totals：runs、acceptedCommits（有 commit 的 Run）、changedFiles（去重）、inputTokens/outputTokens/costUsd、reportingRuns、durationMs；**没有任何 Run 上报 usage 时三个 usage 字段为 `null`**，不写 0。
 - [x] server：`GET /api/tasks/:id/export`（`content-disposition: attachment; filename="agent-ops-task-<id>.json"`），未知任务 404。
 - [x] MCP：新增 `agent_ops_export_task`。
-- [x] CLI：`agent-ops export <taskId> [--out <file>]`，默认打到 stdout；连接信息取 `AGENT_OPS_DAEMON_URL` / `AGENT_OPS_DAEMON_TOKEN`（或 `~/.agent-ops/daemon-token`）；`--out` 时打印写入字节数。
+- [x] CLI：`agent-ops export <taskId> [--out <file>]`，默认打到 stdout；连接信息取 `AGENT_OPS_DAEMON_URL` / `AGENT_OPS_DAEMON_TOKEN`（或 `~/.agent-ops/daemon-token`）；`--out` 时打印写入字节数。2026-11-22 抽出 `export-command.ts` 并补 `--summary` / `--out` / 错误路径测试。
 - [x] 测试：两步 Pipeline 的导出含 2 个 Run（第二个带 handoff、diff/output 可读）、审计 4 条、totals `runs=2 / acceptedCommits=2 / changedFiles=2 / reportingRuns=0 / usage=null / durationMs>0`；空任务 totals 归零且 costUsd 为 null；server 附件头与 404；MCP 导出返回 task id 与 totals。全仓 typecheck 0，52 文件 / 673 tests 绿。
 - [x] 本轮提交：`ef4c752 feat(storage-core): export a task's evidence`、`4be9c5b feat(server-core): serve task evidence exports`、`810ff5a feat(cli): add the task export surface`。
 - [ ] 未做：导出只有 JSON，没有打包 zip/tar，也不含 worktree 里的二进制产物；artifacts 沿用采集时的截断版本，导出不再二次限长；F8-04 指标聚合未做。
