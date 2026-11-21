@@ -380,6 +380,8 @@ export type KernelTask = {
   roleId?: string | null;
   teamId?: string | null;
   pipeline?: TaskPipeline | null;
+  finalRunId?: string;
+  finalCommitSha?: string;
   createdAt: string;
   updatedAt: string;
 };

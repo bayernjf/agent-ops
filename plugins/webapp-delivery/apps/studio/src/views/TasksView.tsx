@@ -505,7 +505,7 @@ export function TasksView() {
     }));
   };
 
-  const runAction = async (run: KernelRun, action: RunAction, files?: string[], worktree?: WorktreePolicy) => {
+  const runAction = async (run: KernelRun, action: RunAction, files?: string[], worktree?: WorktreePolicy): Promise<boolean> => {
     const isExecute = action === 'execute';
     if (isExecute) {
       setExecutingRunId(run.id);
@@ -537,9 +537,11 @@ export function TasksView() {
       if (!response.ok) throw new Error(payload?.error ?? t(`tasks.${action}Run` as KeyPath));
       await loadRuns(run.taskId);
       await loadTasks();
+      return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t(`tasks.${action}Run` as KeyPath));
       if (isExecute) await loadRuns(run.taskId);
+      return false;
     } finally {
       if (isExecute) {
         stopRunStream();
@@ -567,6 +569,48 @@ export function TasksView() {
   };
 
   const taskRuns = (taskId: string) => runsByTask[taskId] ?? [];
+
+  const updateParallelLaneStatus = (taskId: string, runId: string, status: string) => {
+    setParallelResultByTask(previous => {
+      const result = previous[taskId];
+      if (!result) return previous;
+      return {
+        ...previous,
+        [taskId]: {
+          ...result,
+          lanes: result.lanes.map(lane => lane.runId === runId ? { ...lane, status } : lane),
+        },
+      };
+    });
+  };
+
+  const laneAction = async (task: KernelTask, lane: ParallelTeamResult['lanes'][number], action: 'accept' | 'reject') => {
+    const run = taskRuns(task.id).find(candidate => candidate.id === lane.runId);
+    if (!run) return;
+    const changed = await runAction(run, action);
+    if (changed) updateParallelLaneStatus(task.id, run.id, action === 'accept' ? 'done' : 'queued');
+  };
+
+  const selectFinalLane = async (task: KernelTask, lane: ParallelTeamResult['lanes'][number]) => {
+    const run = taskRuns(task.id).find(candidate => candidate.id === lane.runId);
+    if (!run) return;
+    setBusyRunId(run.id);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/final-lane`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ runId: run.id }),
+      });
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(payload?.error ?? t('tasks.selectFinalLaneFailed'));
+      await loadTasks();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('tasks.selectFinalLaneFailed'));
+    } finally {
+      setBusyRunId(null);
+    }
+  };
 
   const configuredBudgetScopes = (status: TaskBudgetStatus): BudgetStatus[] =>
     [status.role, status.team].filter((scope): scope is BudgetStatus => Boolean(scope?.configured));
@@ -805,14 +849,35 @@ export function TasksView() {
                             <span>{t('tasks.fanoutConcurrency', { count: result.maxConcurrency })}</span>
                           </div>
                           <div className="fanout-rows">
-                            {result.lanes.map(lane => (
-                              <div className="fanout-row" key={lane.roleId}>
-                                <span>{lane.roleName}</span>
-                                <span className={`state ${lane.status}`}>{stateLabel(lane.status as KernelTaskState)}</span>
-                                <span className="pipeline-step-commit">{t('tasks.changedFileCount', { count: lane.changedFiles.length })}</span>
-                                {lane.error ? <small>{lane.error}</small> : null}
-                              </div>
-                            ))}
+                            {result.lanes.map(lane => {
+                              const laneRun = taskRuns(task.id).find(candidate => candidate.id === lane.runId);
+                              const finalLane = task.finalRunId === lane.runId;
+                              return (
+                                <div className="fanout-row fanout-row-decision" key={lane.roleId}>
+                                  <span>{lane.roleName}{finalLane ? <span className="final-lane-badge">{t('tasks.finalLane')}</span> : null}</span>
+                                  <span className={`state ${lane.status}`}>{stateLabel(lane.status as KernelTaskState)}</span>
+                                  <span className="pipeline-step-commit">{t('tasks.changedFileCount', { count: lane.changedFiles.length })}</span>
+                                  <span className="fanout-lane-actions">
+                                    {lane.status === 'review' && laneRun ? (
+                                      <>
+                                        <button className="secondary-button" type="button" onClick={() => void laneAction(task, lane, 'accept')} disabled={busyRunId === laneRun.id}>
+                                          <Check size={14} aria-hidden="true" /> {t('tasks.acceptLane')}
+                                        </button>
+                                        <button className="secondary-button" type="button" onClick={() => void laneAction(task, lane, 'reject')} disabled={busyRunId === laneRun.id}>
+                                          <X size={14} aria-hidden="true" /> {t('tasks.rejectLane')}
+                                        </button>
+                                      </>
+                                    ) : null}
+                                    {lane.status === 'done' && !finalLane && laneRun ? (
+                                      <button className="secondary-button" type="button" title={t('tasks.finalLaneHint')} onClick={() => void selectFinalLane(task, lane)} disabled={busyRunId === laneRun.id}>
+                                        {t('tasks.selectFinalLane')}
+                                      </button>
+                                    ) : null}
+                                  </span>
+                                  {lane.error ? <small>{lane.error}</small> : null}
+                                </div>
+                              );
+                            })}
                           </div>
                           {result.conflicts.length > 0 && (
                             <div className="fanout-notes">
