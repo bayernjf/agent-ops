@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { KernelStore } from '../src/index.js';
-import { addWorktree, linkNodeModules, mergeDependencyCommits, removeWorktree } from '../src/worktree.js';
+import { addWorktree, linkNodeModules, mergeDependencyCommits, pinWorktreeCommit, removeWorktree } from '../src/worktree.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -67,6 +67,27 @@ describe('worktree', () => {
       expect(merged).toBe(head);
       const count = Number((await execFileAsync('git', ['rev-list', '--count', 'main..HEAD'], { cwd: worktreePath })).stdout.trim());
       expect(count).toBe(2);
+
+      await removeWorktree(repo, worktreePath);
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it('pins the default accept and a lane ref side by side', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-worktree-'));
+    try {
+      const repo = await initRepo(join(directory, 'repo'));
+      const worktreePath = join(directory, 'wt');
+      const { headCommit } = await addWorktree(repo, 'main', worktreePath);
+
+      await pinWorktreeCommit(repo, 'task-one', headCommit);
+      await pinWorktreeCommit(repo, 'task-one', headCommit, 'left');
+
+      const defaultRef = (await execFileAsync('git', ['rev-parse', 'refs/agent-ops/tasks/task-one/accepts/latest'], { cwd: repo })).stdout.trim();
+      const laneRef = (await execFileAsync('git', ['rev-parse', 'refs/agent-ops/tasks/task-one/lanes/left'], { cwd: repo })).stdout.trim();
+      expect(defaultRef).toBe(headCommit);
+      expect(laneRef).toBe(headCommit);
 
       await removeWorktree(repo, worktreePath);
     } finally {

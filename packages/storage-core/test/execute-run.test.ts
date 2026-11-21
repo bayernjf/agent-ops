@@ -521,7 +521,7 @@ describe('KernelStore executeRun', () => {
       expect(accepted.commitSha).toBe(head);
       expect((await execFileAsync('git', ['status', '--porcelain'], { cwd: task.worktreePath })).stdout.trim()).toBe('');
       expect(
-        (await execFileAsync('git', ['rev-parse', `refs/agent-ops/tasks/${task.id}`], { cwd: repo })).stdout.trim(),
+        (await execFileAsync('git', ['rev-parse', `refs/agent-ops/tasks/${task.id}/accepts/latest`], { cwd: repo })).stdout.trim(),
       ).toBe(accepted.commitSha);
 
       await store.releaseTask(task.id);
