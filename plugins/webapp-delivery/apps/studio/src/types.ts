@@ -419,6 +419,7 @@ export type DagStepResult = {
   changedFiles: string[];
   output?: string;
   outputTruncated?: boolean;
+  mergeCommitSha?: string;
   error: string | null;
 };
 
@@ -458,6 +459,7 @@ export type TaskPipelineStepResult = {
   changedFiles?: string[];
   output?: string;
   outputTruncated?: boolean;
+  mergeCommitSha?: string;
   error?: string;
   startedAt?: string;
   completedAt?: string;

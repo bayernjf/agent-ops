@@ -868,6 +868,7 @@ export function TasksView() {
                                 <span>{step.name}</span>
                                 <span className={`state ${step.status}`}>{t(`tasks.fanoutStatus.${step.status}` as KeyPath)}{step.outputTruncated ? ` · ${t('tasks.outputTruncatedShort')}` : ''}</span>
                                 <span className="pipeline-step-commit">{step.commitSha ? step.commitSha.slice(0, 10) : '—'}</span>
+                                {step.mergeCommitSha ? <small>{t('tasks.dagMergeCommit', { sha: step.mergeCommitSha.slice(0, 10) })}</small> : null}
                                 {step.error ? <small>{step.error}</small> : null}
                               </div>
                             ))}

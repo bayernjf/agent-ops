@@ -816,6 +816,7 @@ export const zh = {
     parallelRun: '并行运行团队',
     parallelConfirm: '让团队每个角色在自己的 worktree 里并行执行？各 lane 不会自动合并。',
     dagResultTitle: 'DAG 结果',
+    dagMergeCommit: '合并 {sha}',
     parallelResultTitle: '并行运行结果',
     acceptLane: '接受 lane',
     rejectLane: '驳回 lane',
