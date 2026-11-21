@@ -106,6 +106,38 @@ describe('KernelStore task/run', () => {
     }
   });
 
+  it('inherits the Role profile as the run agent when agentId is omitted', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-ops-task-'));
+    try {
+      const store = await KernelStore.open(join(directory, 'agent-ops.sqlite'));
+      const { profile } = await store.profiles.createProfile({ name: 'Profile Runner', baseAgentId: 'codex' });
+      const role = await store.roles.createRole({ name: 'Profile Runner Role', profileId: profile.id });
+      const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'T', roleId: role.id });
+
+      const inherited = await store.createRun(task.id, undefined);
+      expect(inherited).toMatchObject({ agentId: profile.id, roleId: role.id });
+      expect(inherited.agentId).not.toBe('codex');
+
+      const explicit = await store.createRun(task.id, profile.id, role.id);
+      expect(explicit).toMatchObject({ agentId: profile.id, roleId: role.id });
+
+      await expect(store.createRun(task.id, 'hermes', role.id))
+        .rejects.toThrow(`Role ${role.id} targets ${profile.id} (codex), not run agent hermes.`);
+
+      const baseRole = await store.roles.createRole({ name: 'Base Agent Role', baseAgentId: 'codex' });
+      const baseTask = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Base', roleId: baseRole.id });
+      const inheritedBase = await store.createRun(baseTask.id, undefined);
+      expect(inheritedBase.agentId).toBe('codex');
+
+      const bareTask = await store.createTask({ repo: '/r', baseRef: 'main', title: 'No identity' });
+      await expect(store.createRun(bareTask.id, undefined))
+        .rejects.toThrow('A run needs an agentId or a Role with a profileId or baseAgentId.');
+      await store.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   it('records the assigned team on a task and validates its roster', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-task-'));
     try {

@@ -1010,6 +1010,40 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('creates a run from the task Role profile when agentId is omitted', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const { profile } = await store.profiles.createProfile({ name: 'Profile Runner', baseAgentId: 'codex' });
+      const role = await store.roles.createRole({ name: 'Profile Runner Role', profileId: profile.id });
+      const task = await store.createTask({ repo: '/r', baseRef: 'main', title: 'Profile task', roleId: role.id });
+
+      const response = await app.request(`/api/tasks/${task.id}/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roleId: role.id }),
+      });
+      expect(response.status).toBe(201);
+      expect((await response.json()) as object).toMatchObject({
+        agentId: profile.id,
+        roleId: role.id,
+        runtimeId: null,
+      });
+
+      const bareTask = await store.createTask({ repo: '/r', baseRef: 'main', title: 'No identity' });
+      const missingIdentity = await app.request(`/api/tasks/${bareTask.id}/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(missingIdentity.status).toBe(400);
+      expect(await missingIdentity.text()).toContain('A run needs an agentId or a Role');
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('provisions, executes, and accepts a run end to end', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'agent-ops-server-'));
     try {

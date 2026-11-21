@@ -668,6 +668,13 @@ describe('agent-ops MCP bridge', () => {
     expect(run.roleId).toBe(role.role.id);
     expect(run.runtimeId).toBeNull();
 
+    const inheritedRunCreated = await client.callTool({ name: 'agent_ops_create_run', arguments: { taskId: task.id } });
+    expect(inheritedRunCreated.isError).toBeUndefined();
+    const inheritedRun = JSON.parse(textOf(inheritedRunCreated)) as { id: string; agentId: string; roleId: string | null };
+    expect(inheritedRun.id).toBeTruthy();
+    expect(inheritedRun.agentId).toBe('codex');
+    expect(inheritedRun.roleId).toBe(role.role.id);
+
     const runs = await client.callTool({ name: 'agent_ops_list_runs', arguments: { taskId: task.id } });
     const runList = JSON.parse(textOf(runs)) as { id: string }[];
     expect(Array.isArray(runList)).toBe(true);
