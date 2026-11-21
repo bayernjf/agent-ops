@@ -18,6 +18,7 @@
 - [x] **Studio 任务看板分列** — 已完成（2026-11-21）。Tasks 页新增 List / Board 切换，看板按六种任务状态分列、列头计数，卡片显示 `repo@baseRef`、Pipeline 徽标与 Team/Role chip；点卡片切回列表并展开、滚动定位该任务。真实浏览器已验证六列各 1 条、计数、Team/Role/Pipeline 标记、卡片跳转展开与中英文；全仓 67 文件 / 755 tests 绿，Studio build 1661 modules 成功。
 - [x] **Task 级取消** — 已完成（2026-11-21）。新增 `cancelTask` / `POST /api/tasks/:id/cancel` / `agent_ops_cancel_task` / Studio“取消任务”：`queued` / `running` / `review` 可取消，abort 活动 Run，串行 Pipeline、DAG 与并行 lane 都停止后续步骤，Pipeline 与步骤变 `cancelled`，终态拒绝；真实浏览器已验证排队任务取消、状态与 Pipeline 步骤变“已取消”、审计 `task.cancelled`；全仓 68 文件 / 760 tests 绿，Studio build 1661 modules 成功。
 - [x] **DAG 多依赖合并** — 已完成（2026-11-21）。`executeDagPipeline` 不再只取最后一个依赖 commit：join step 先 checkout 最后一个依赖，再把其余依赖逐个 `--no-ff` merge 成真实 merge commit 作为 `evidenceBase`；合并冲突则 abort 该次 merge、step 标 failed 并列出冲突文件。新增依赖合并冲突与已包含依赖不重复 merge 用例；全仓 68 文件 / 762 tests 绿，typecheck 0。
+- [x] **重跑前 pin 旧 pipeline commit** — 已完成（2026-11-21）。completed pipeline 重跑前把每个旧 step commit pin 到 `refs/agent-ops/pipelines/<taskId>/<runId>`，再 reset worktree、清空旧 results；`pipeline.rerun` 审计记录 `pinnedCommits`。测试覆盖 `git gc --prune=now` 后旧 commit 仍可解析；全仓 68 文件 / 762 tests 绿。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -210,12 +211,12 @@
 
 ## F6-05 completed pipeline 重跑 — 已完成（2026-11-21）
 
-- [x] `rerunTaskPipeline` 只接受 `completed`：worktree 重置到任务 base commit（`baseCommit || baseRef`），清空旧 step results，从第一步重新执行，并写 `pipeline.rerun` 审计（steps / previousResults）。旧 commits 仍在 git 历史里，但不再挂在这条 worktree 分支上。
+- [x] `rerunTaskPipeline` 只接受 `completed`：先为每个旧 step commit 写 `refs/agent-ops/pipelines/<taskId>/<runId>`，再把 worktree 重置到任务 base commit（`baseCommit || baseRef`），清空旧 step results，从第一步重新执行，并写 `pipeline.rerun` 审计（steps / previousResults / pinnedCommits）。旧 commits 由 ref 保持可达，不会因 `git gc` 被回收。
 - [x] 修复真实缺陷：`resetWorktree`（`git reset --hard` + `git clean -fdx`）会删掉 worktree 里链接的 `node_modules`。失败 Run 的 auto hygiene 与 `retryTaskPipeline` 现在 reset 后重新 `linkNodeModules`。
 - [x] server 新增 `POST /api/tasks/:id/pipeline/rerun`（非 completed 返回 409）；MCP 新增 `agent_ops_rerun_pipeline`；Studio completed pipeline 显示 Rerun pipeline 按钮，点击前 `window.confirm`。
-- [x] 测试：storage-core 两步 pipeline 重跑产生全新 commit 且 HEAD 只含 init + 2（worktree clean）、idle pipeline 拒绝重跑、retry 后 `node_modules` 仍可访问；server HTTP 200/409；MCP 工具清单更新；全仓 typecheck 0，63 文件 / 747 tests 绿。
+- [x] 测试：storage-core 两步 pipeline 重跑产生全新 commit 且 HEAD 只含 init + 2（worktree clean）、idle pipeline 拒绝重跑、retry 后 `node_modules` 仍可访问；重跑后旧 run 的 ref 指向旧 commit，`git gc --prune=now` 后仍可 `cat-file -e`，审计含 2 条 pinnedCommits；server HTTP 200/409；MCP 工具清单更新；全仓 typecheck 0，63 文件 / 747 tests 绿。
 - [x] 本轮提交见 git log。
-- [ ] 未做：重跑会清空旧 results（旧 commit 只留 git 历史，不做 ref pin），没有“保留旧结果用于对比”的模式；真实模型下的 completed 重跑未跑。
+- [ ] 未做：重跑会清空旧 results（旧 commit 已 pin，但旧 results 只保留在 `pipeline.rerun` 审计，不在任务 Pipeline 里做对比视图）；真实模型下的 completed 重跑未跑。
 
 ## Studio DAG / 并行入口 + 任务删除 — 已完成（2026-11-21）
 

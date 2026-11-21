@@ -35,7 +35,7 @@
 
 ### Pipeline 重跑
 
-completed pipeline 通过 `POST /api/tasks/:id/pipeline/rerun` 从第一步重跑：worktree 重置到任务 base commit、旧 step results 清空，旧 commit 退到 git 历史；failed pipeline 仍走 retry，保留已完成的 step 前缀。Studio 的 Rerun pipeline 按钮执行前会二次确认。
+completed pipeline 通过 `POST /api/tasks/:id/pipeline/rerun` 从第一步重跑：先把旧 step commit 逐个 pin 到 `refs/agent-ops/pipelines/<taskId>/<runId>`，再把 worktree 重置到任务 base commit、清空旧 step results；旧 commit 不会因 `git gc` 变成不可达对象。failed pipeline 仍走 retry，保留已完成的 step 前缀。Studio 的 Rerun pipeline 按钮执行前会二次确认。
 
 ### DAG 与并行 lanes 的运行入口
 
