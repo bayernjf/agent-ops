@@ -77,6 +77,8 @@ export type TaskPipelineStepResult = {
   status: 'pending' | 'running' | 'awaiting_approval' | 'completed' | 'failed';
   runId?: string;
   commitSha?: string;
+  /** Files this step's own commit changed (base of the step vs its commit), not the task-wide diff. */
+  changedFiles?: string[];
   output?: string;
   error?: string;
   startedAt?: string;
@@ -417,8 +419,13 @@ export type CoordinatorSummary = {
   awaiting: number;
   handoffs: number;
   blockers: Array<{ stepId: string; status: string }>;
-  /** The step that owns the final write, and its current status (both null when none is marked). */
-  owner: { stepId: string | null; status: string | null };
+  /**
+   * The step that owns the final write and what it actually produced. `changedFiles` is the
+   * number of files its run touched; zero after completion means the final write may be missing.
+   */
+  owner: { stepId: string | null; status: string | null; changedFiles: number | null };
+  /** Findings that need a human look, e.g. an owner that finished without changing anything. */
+  warnings: string[];
 };
 
 /** One step of a DAG run: it executed in its own worktree branched from its dependencies. */
@@ -1442,6 +1449,8 @@ export class KernelStore {
   }
 
   private async runPipelineSteps(id: string, initial: TaskPipeline, startIndex: number, runner?: CodexProcessRunner): Promise<TaskPipeline> {
+    const task = this.getTask(id);
+    if (!task) throw new Error(`Task ${id} was not found.`);
     let pipeline = initial;
     for (let index = startIndex; index < pipeline.steps.length; index++) {
       const step = pipeline.steps[index];
@@ -1495,11 +1504,17 @@ export class KernelStore {
         }
 
         const accepted = await this.acceptRun(run.id);
+        // Record this step's own change set: the diff against its base commit, not task.baseRef.
+        const baseCommit = this.pipelineStepBaseCommit(task, pipeline, index);
+        const changedFiles = task.worktreePath
+          ? splitLines(await this.gitOutput(task.worktreePath, ['diff', '--name-only', baseCommit, accepted.commitSha]))
+          : [];
         updateResult({
           stepId: step.id,
           status: 'completed',
           runId,
           commitSha: accepted.commitSha,
+          changedFiles,
           output: executed.artifacts.output.slice(0, 2000),
           startedAt,
           completedAt: new Date().toISOString(),
@@ -1545,7 +1560,11 @@ export class KernelStore {
     this.activePipelines.add(id);
     try {
       const { task, pipeline, index, runId, stepId } = await this.awaitingPipelineStep(id);
+      const baseCommit = this.pipelineStepBaseCommit(task, pipeline, index);
       const accepted = await this.acceptRun(runId);
+      const changedFiles = task.worktreePath
+        ? splitLines(await this.gitOutput(task.worktreePath, ['diff', '--name-only', baseCommit, accepted.commitSha]))
+        : [];
       await this.recordAudit({
         type: 'pipeline.step.approved',
         taskId: id,
@@ -1555,7 +1574,7 @@ export class KernelStore {
       const resumed: TaskPipeline = {
         ...pipeline,
         results: pipeline.results.map(result => (
-          result.stepId === stepId ? { ...result, status: 'completed' as const, commitSha: accepted.commitSha } : result
+          result.stepId === stepId ? { ...result, status: 'completed' as const, commitSha: accepted.commitSha, changedFiles } : result
         )),
         status: 'running',
       };
@@ -2067,13 +2086,24 @@ export class KernelStore {
         roleId: step.roleId ?? null,
         status: result?.status ?? 'pending',
         commitSha: result?.commitSha ?? null,
-        changedFiles: run?.artifacts.changedFiles.length ?? 0,
+        changedFiles: result?.changedFiles?.length ?? run?.artifacts.changedFiles.length ?? 0,
       };
     });
     const blockers = steps
       .filter(step => step.status === 'failed' || step.status === 'awaiting_approval')
       .map(step => ({ stepId: step.stepId, status: step.status }));
     const ownerStep = pipeline?.steps.find(step => step.ownsDeliverable);
+    const ownerSummaryStep = ownerStep ? steps.find(step => step.stepId === ownerStep.id) : undefined;
+    const warnings: string[] = [];
+    if (!ownerStep) {
+      warnings.push('No step owns the final write; nothing verifies a landed deliverable.');
+    } else if (!ownerSummaryStep || ownerSummaryStep.status === 'pending') {
+      warnings.push(`Owner step ${ownerStep.id} has not run yet.`);
+    } else if (ownerSummaryStep.status === 'completed' && ownerSummaryStep.changedFiles === 0) {
+      warnings.push(`Owner step ${ownerStep.id} completed without changing any file; the final write may be missing.`);
+    } else if (ownerSummaryStep.status !== 'completed') {
+      warnings.push(`Owner step ${ownerStep.id} ended ${ownerSummaryStep.status}.`);
+    }
     return {
       taskId,
       teamId: task.teamId,
@@ -2086,8 +2116,10 @@ export class KernelStore {
       blockers,
       owner: {
         stepId: ownerStep?.id ?? null,
-        status: ownerStep ? (steps.find(step => step.stepId === ownerStep.id)?.status ?? 'pending') : null,
+        status: ownerStep ? (ownerSummaryStep?.status ?? 'pending') : null,
+        changedFiles: ownerSummaryStep?.changedFiles ?? null,
       },
+      warnings,
     };
   }
 
