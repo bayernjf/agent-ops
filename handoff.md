@@ -13,6 +13,7 @@
 - [x] **Studio 分支入口浏览器验收** — 已完成（2026-11-21）。隔离数据库 + 临时 git 仓实测：DAG 先验 `aider` candidate 失败面板，再用真实 CodeBuddy 跑通成功路径（pipeline completed、commit `b976ee0`、输出 `PROBE_OK`）；并行 lane 先验失败面板，再用真实 CodeBuddy 跑通 `review` lane（0 文件、`PROBE_OK`）；Teams 计划预演在带 Team 的 queued 任务上点开并取消；`Delete probe` 从 Studio 删除后后端列表确认消失。过程中发现并修复 Studio 长请求沿用 15 秒默认超时的问题（commit `d7dd834`）。
 - [x] **并行 lane 决策入口** — 已完成（2026-11-21）。并行结果面板直接提供 Accept lane / Reject lane；已接受的 lane 可 Set as final，持久化 `finalRunId` / `finalCommitSha` 并写 `task.final_lane.selected` 审计。真实 CodeBuddy 两条 lane 已在浏览器走通接受、驳回和最终选择；选择只是指向已 pin 的 lane commit，不合并到任务 worktree。提交 `2ed1adb` / `6b51497` / `9750a83` / `88cd6bd`。
 - [x] **Studio 审计面板与导出** — 已完成（2026-11-21）。新增独立 Audit 导航，`GET /api/audit` 支持任务 / 团队 / 类型 / 条数筛选；事件可展开查看 actor、task/team 与 data；`Export audit JSON` 导出当前筛选切片，`Export task evidence` 调用 `GET /api/tasks/:id/export` 下载单任务证据包。真实浏览器已验证 6 条事件、两层过滤、详情展开和两种下载；全仓 65 文件 / 752 tests 绿，Studio build 1659 modules 成功。
+- [x] **Studio 策略预览面板** — 已完成（2026-11-21）。角色创建 / 编辑表单接入 `POST /api/policy/evaluate`，保存前逐 Runtime 展示 capability、enforcement、只读、人工门与 allow/deny 判定；策略字段变更立即清空旧结果，空策略显示默认工具集提示。真实浏览器已验证 7 个 Runtime、20 条判定、unsupported 原因与中英文文案；全仓 66 文件 / 753 tests 绿，Studio build 1660 modules 成功。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -413,6 +414,19 @@
 - [x] 浏览器验收：隔离 DB `/tmp/agent-ops-audit-verify/agent-ops.sqlite` + 临时 git 仓，造 6 条真实角色 / 团队 / 任务审计。页面显示 `#1`–`#6`；按任务过滤后剩 2 条，再按 `task.created` 过滤后剩 1 条；展开可见 data。任务证据下载 `agent-ops-task-897204a3-….json`（1 KB，task 与 totals 正确）；审计 JSON 下载 `agent-ops-audit-2026-11-21.json`（3.2 KB，`count=7`，filters 与事件类型正确）。第二次下载触发浏览器多文件下载权限，重载后用 CDP 允许下载完成验证。
 - [x] 本轮提交：`e85e4c4 feat(studio): add the kernel audit panel`。
 - [ ] 未做：事件类型下拉是固定 21 项清单，不能从内核类型动态派生；没有自动轮询或实时追加，只有手动 Refresh；没有按时间范围或 actor 过滤。
+
+## Studio 策略预览面板 — 已完成（2026-11-21）
+
+- [x] 角色创建 / 编辑表单新增 `PolicyPreview`，位置在白名单、黑名单、审批模式之后、预算之前；点击 **Preview policy / 预览策略** 调用 `POST /api/policy/evaluate`，不新增服务端路由。
+- [x] 结果表逐 Runtime 展示 `capability`、`enforcement`、只读、人工门与判定条数；每行可展开，列出逐工具 allow / deny、原因、warnings 与 `unsupportedReason`，并显示已评估 Runtime 数与当前审批模式。
+- [x] 防止过期结果：以 `JSON.stringify(policy)` 作为签名，任一策略字段变化即清空旧结果；请求返回时若签名已变，丢弃响应，不会把旧策略的判定写回。
+- [x] 空策略语义明确：没有白名单 / 黑名单时，页面提示各 Runtime 使用自身默认工具集；表格显示 0 条判定、`readOnly=false`，`enforcement=exact`（没有限制可执行，所以不存在不支持）。
+- [x] 类型：`types.ts` 新增 `PolicyVerdict` 与 `PolicyPreviewResponse`，镜像内核 `UnifiedPolicyVerdict`；中英文文案补齐 `policy` 块。
+- [x] 样式：新增 `.policy-preview`、`.policy-table`、`.policy-enforcement`、`.policy-decision`、`.policy-warnings` 等；预览按钮覆盖 `.secondary-button` 的 100% 宽度，改为自适应，避免挤占标题。
+- [x] 测试：新增 `policy-preview.test.tsx` SSR 冒烟，断言标题、预览入口与空态；全仓 typecheck 0，66 文件 / 753 tests 绿；Studio build 1660 modules 成功，主 chunk 294.55 kB。
+- [x] 浏览器验收：隔离 DB `/tmp/agent-ops-policy-verify/agent-ops.sqlite`，在 Roles → New role 填 `Read, Grep` + `Bash`，点预览得到 7 个 Runtime；`codex` / `claude-code` 为 native + exact，其余 5 个为 unsupported；每个 Runtime 20 条判定，`Read` / `Grep` allow、`Bash` 按黑名单 deny、其他已知工具按 allowlist deny；展开 aider 看到 warning 与 unsupportedReason。改动白名单后结果立即清空；空策略显示 7 个 Runtime、0 decisions 和默认工具集提示；中英文文案均正常。daemon 停止后再预览显示 `Unable to evaluate the policy.`，旧结果不保留。
+- [x] 本轮提交：`babbb80 feat(studio): preview role policy across runtimes`。
+- [ ] 未做：预览结果只用于人工查看，不会自动写入角色；没有“把判定导出 JSON”按钮；不支持原因与 warnings 仍显示服务端英文原文；没有独立于角色表单的全局策略沙盒页。
 
 ## F7-06 团队看板 — 已完成（2026-11-20）
 

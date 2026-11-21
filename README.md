@@ -17,6 +17,7 @@
 |---|---|
 | Task / Run | 每任务一个 worktree（自动链接仓库 `node_modules`，`AGENT_OPS_LINK_NODE_MODULES=0` 关闭）；Run 持久化 stdout/stderr、完整 diff（含未跟踪 patch）、exit code、耗时、usage；SSE 实时输出与取消 |
 | Roles | 角色绑定 Profile / base agent、系统提示、验收标准、工具策略与成本预算；内置 architect / implementer / reviewer / tester / researcher 模板 |
+| 策略预览 | 角色表单保存前调用 `POST /api/policy/evaluate`，逐 Runtime 展示只读、执行精度、人工门、allow/deny 判定与不支持原因；策略一改，旧结果立即清空 |
 | Teams + Handoff | 团队 = 花名册 + 交接边 + 可选 owner（落盘角色，必须最后一步且不再交接）；Pipeline 每跨一条边写一条交接收据（上游 commit + changedFiles） |
 | 串行 Pipeline | 每步独立 Run，成功后自动提交并交接；支持每步审批门、失败重跑、从失败 step 重试、completed 后从第一步重跑；后续 step 的 prompt 可模板引用上游 output / commit |
 | 并行 DAG | 步骤可写 `dependsOn`（`[]` 为根）；ready steps 在各自 worktree 内有界并发，失败依赖跳过下游，文件冲突只报告、不合并；Studio 任务面板可触发并展示每步结果 |
@@ -53,6 +54,18 @@ Studio 侧边栏的 **Audit（审计）** 是内核 append-only 事件流的只�
 - 审计页目前需要手动 **Refresh**，没有自动轮询或实时追加；事件类型下拉是固定清单，暂未从内核类型动态派生。
 
 真实浏览器验收（2026-11-21，隔离 DB + 临时 git 仓）：审计页显示 6 条角色 / 团队 / 任务事件；任务过滤后剩 2 条（`task.created` / `task.deleted`），再按 `task.created` 过滤后剩 1 条；事件展开显示 data。`Export task evidence` 下载 `agent-ops-task-897204a3-….json`（1 KB，任务、totals 正确）；`Export audit JSON` 下载 `agent-ops-audit-2026-11-21.json`（3.2 KB，`count=7`，filters 与事件类型正确）。
+
+### Studio 策略预览
+
+角色创建 / 编辑表单里有 **Cross-runtime policy preview（跨 Runtime 策略预览）**。它把当前表单里的 `allowedTools` / `blockedTools` / `approvalMode` 发给 `POST /api/policy/evaluate`，在保存角色前返回每个注册 Runtime 的同一份策略判定：
+
+- Runtime 的 `capability`（native / wrapper / unsupported）与 `enforcement`（exact / coarse / unsupported）；
+- 是否只读、是否需要人工门；
+- 展开后显示逐工具 allow / deny、原因、warnings 与 `unsupportedReason`。
+
+策略字段一改，旧预览结果立即清空，避免把过期判定当成当前策略。空策略（没有白名单和黑名单）也会返回 7 个 Runtime 的“0 条判定”，页面会明确提示各 Runtime 使用自身默认工具集。
+
+真实浏览器验收（2026-11-21，隔离 DB）：填 `Read, Grep` + `Bash` 后预览，7 个 Runtime 全部返回；`codex` / `claude-code` 为 native + exact，其他 5 个 Runtime 为 unsupported（展开可见 warning 与不支持原因）；每个 Runtime 20 条判定，`Read` / `Grep` 允许、`Bash` 因黑名单拒绝、其他已知工具因不在白名单拒绝。修改白名单后旧结果立即清空；空策略显示 7 个 Runtime、0 条判定和默认工具集提示；中英文文案均正常。
 
 ## 报告指标
 
