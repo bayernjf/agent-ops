@@ -1221,6 +1221,9 @@ export class KernelStore {
         await linkNodeModules(task.repo, targetPath);
       } else {
         await resetWorktree(targetPath, base || undefined);
+        // reset --hard plus clean -fdx drops the linked node_modules too; put it back so a
+        // retried step can still run the repository's tests.
+        await linkNodeModules(task.repo, targetPath);
       }
       await this.recordAudit({
         type: 'run.rerun',
@@ -1400,6 +1403,7 @@ export class KernelStore {
       if (index < 0) throw new Error(`Task ${id} pipeline cannot be retried because it has no failed step.`);
       const baseCommit = this.pipelineStepBaseCommit(task, pipeline, index);
       await resetWorktree(task.worktreePath, baseCommit || undefined);
+      await linkNodeModules(task.repo, task.worktreePath);
 
       const completed: TaskPipelineStepResult[] = [];
       for (const step of pipeline.steps.slice(0, index)) {
