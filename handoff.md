@@ -137,7 +137,7 @@
 - [x] 测试：pipeline 持久化/自动 id/重开 DB、两步串行成功（每步不同文件、第二步可见第一步文件、两个不同 commit SHA、Role 分别正确、Task done、worktree clean）、第一步失败即停（仅 1 个 Run、pipeline failed、Task failed）、server pipeline 读取与执行、MCP create_task pipeline 透传；全仓 typecheck 0，49 文件 / 643 tests 绿。
 - [x] 本轮提交：`79644d3 feat(storage-core): add serial task pipelines`、`dffa9db test(storage-core): cover pipeline execution`。
 - [ ] F6 只覆盖 F6-01/F6-02/F6-03；每步审批/暂停恢复（F6-04）、失败重跑与 step base reset（F6-05）、并行 DAG（F6-06）在后续完成（见 F6-04/F6-05/F6-06 章节）。
-- [ ] Pipeline 当前只允许 `idle` 启动，completed/failed 不能直接重跑；step 间不替换 output 模板，下游只依赖上一步 commit 的 worktree 状态。
+- [ ] Pipeline 当前只允许 `idle` 启动，completed/failed 不能直接重跑；step 间 output 模板已在 F6-01 模板补做（2026-11-21），下游仍基于上一步 commit 的 worktree 状态。
 
 ## 技术债 — 已完成
 
@@ -188,7 +188,16 @@
 - [x] MCP 新增 `agent_ops_retry_pipeline`；Studio failed 状态的按钮从错误的 execute 改为 Retry failed step，并沿用 busy/错误处理。
 - [x] 测试：三步 Pipeline 首步保留、第二步失败后重试成功、失败文件被清掉、首步 runner 不重复执行、首步 commit 不变、最终 4 个 commit 且 worktree clean；驳回第二步时保留第一步 commit 与文件；server HTTP 重试与 completed 再重试 409；全仓 typecheck 0，49 文件 / 652 tests 绿。
 - [x] 本轮提交：`20d707a feat(storage-core): retry failed pipelines`、`4ec87aa feat(server-core): expose pipeline retry`、`53687f3 feat(studio): retry failed pipeline steps`、`28e4e5a test(storage-core): cover pipeline retry`。
-- [ ] F6-05 只支持 failed pipeline 的重试；completed pipeline 仍不支持 reset 后重跑，step 间 output 模板替换也未做。F6-06 并行 DAG 已在后续完成，F7-05 Run 详情扩展也在后续完成。
+- [ ] F6-05 只支持 failed pipeline 的重试；completed pipeline 仍不支持 reset 后重跑。step 间 output 模板替换已在 F6-01 模板补做（见下节）。F6-06 并行 DAG 已在后续完成，F7-05 Run 详情扩展也在后续完成。
+
+## F6-01 Pipeline 提示词模板 — 已完成（2026-11-21）
+
+- [x] 新增 `packages/storage-core/src/pipeline-template.ts`：后续 step 的 prompt 支持 `{{previous.output}}` / `{{previous.commit}}`（串行上一步；DAG 取最后一个依赖）与 `{{step:<id>.output}}` / `{{step:<id>.commit}}`（任意已完成 step）。
+- [x] 只在目标 step 已完成且字段有值时才替换；未知 id、未完成 step、或没有记录 output/commit 时保留原 token，不静默清空；output 使用内核记录的 2000 字符截断值。
+- [x] 串行执行（`pipelineStepInstruction`）与 DAG 执行（`executeDagPipeline`）都在创建 Run 前展开模板；DAG 并发下只使用该 step 的已完成依赖快照。
+- [x] 测试：模板纯函数 4 例（previous / 按 id / 未知与缺失保持原样 / 无占位符原样返回）；两步串行端到端断言第二步 prompt 与 Run instruction 含第一步 output 和 commit；DAG 端到端断言 join 步骤拿到 last dependency 的 output 与 commit；全仓 typecheck 0，63 文件 / 743 tests 绿。
+- [x] 本轮提交见 git log（`feat(storage-core): expand pipeline step templates`）。
+- [ ] 未做：模板只支持 output / commit 两种字段，没有加密或转义处理（上游 output 会按原文进入下游 prompt）；没有模板语法校验，拼写错的 token 会原样保留；单次 output 仍受 2000 字符截断。
 
 ## M1 退出验收 — 4 步串行完整组合 — 已完成（2026-11-20）
 

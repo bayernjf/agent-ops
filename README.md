@@ -18,13 +18,17 @@
 | Task / Run | 每任务一个 worktree（自动链接仓库 `node_modules`，`AGENT_OPS_LINK_NODE_MODULES=0` 关闭）；Run 持久化 stdout/stderr、完整 diff（含未跟踪 patch）、exit code、耗时、usage；SSE 实时输出与取消 |
 | Roles | 角色绑定 Profile / base agent、系统提示、验收标准、工具策略与成本预算；内置 architect / implementer / reviewer / tester / researcher 模板 |
 | Teams + Handoff | 团队 = 花名册 + 交接边 + 可选 owner（落盘角色，必须最后一步且不再交接）；Pipeline 每跨一条边写一条交接收据（上游 commit + changedFiles） |
-| 串行 Pipeline | 每步独立 Run，成功后自动提交并交接；支持每步审批门、失败重跑、从失败 step 重试 |
+| 串行 Pipeline | 每步独立 Run，成功后自动提交并交接；支持每步审批门、失败重跑、从失败 step 重试；后续 step 的 prompt 可模板引用上游 output / commit |
 | 并行 DAG | 步骤可写 `dependsOn`（`[]` 为根）；ready steps 在各自 worktree 内有界并发，失败依赖跳过下游，文件冲突只报告、不合并 |
 | Coordinator | 按团队花名册与交接边推导 Pipeline（确定性拓扑序），预览后由人点击应用；owner 置末并标记 `ownsDeliverable`，完成后若没改动任何文件会在 summary 里告警 |
 | 并行 lanes | 每角色独立 worktree，有界并发；lane 结束后统一任务状态；文件级冲突只报告、不自动合并；接受 / 驳回按 lane 独立提交与 pin |
 | 证据与审计 | Run 证据（含实际工具调用与被拒原因，拿不到标 unknown）；append-only 审计可回放；单任务 JSON 导出；成功率 / 返工 / 用量 / 耗时指标 |
 | 成本预算 | Role / Team 可设 cost / token 上限，按任务已上报用量检查，超限阻断 createRun 与 executeRun |
 | 重跑 hygiene | 失败 Run 默认 reset 到 base commit；可选 keep 保留残留或 fresh 重建 worktree |
+
+### Pipeline 提示词模板
+
+后续 step 的 prompt 可以引用已完成上游 step 的结果：`{{previous.output}}` / `{{previous.commit}}`（串行上一步；DAG 步骤取最后一个依赖），以及 `{{step:<id>.output}}` / `{{step:<id>.commit}}`（任意已完成 step，按 step id）。只在目标 step 已完成且字段有值时替换；未知 id、未完成 step、或没有记录 output/commit 时保留原 token，不静默清空。output 用的是内核记录值（当前每条 step result 上限 2000 字符）。实现与测试见 `packages/storage-core/src/pipeline-template.ts`、`test/pipeline-template.test.ts`。
 
 ## 报告指标
 
