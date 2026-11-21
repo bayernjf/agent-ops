@@ -8,7 +8,7 @@
 > 产品规划（非活跃待办，不计入上方待办）：多 Agent 角色与团队 v0.2/v0.3，PRD 见 `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md`，实施拆解见 `docs/prd/Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md`；PD-1～PD-9 已于 2026-11-19 拍板；后续方向备忘（Tier 0 能力包 / 现有 Harness / Personal Agent）见 PRD §12.1–12.2。
 
 - [x] **真实模型 UI E2E** — 已完成（2026-11-20）。UI 里新建 CodeBuddy 角色与一步 Pipeline 任务，点 `Run pipeline` 由真实 CodeBuddy 2.185.0 执行，任务 done、Run 可见（commit `ea4553f7d2`）。Claude Code / Codex 仍受 CC Switch `base_url` 阻塞，但不影响 CodeBuddy 路径；真实模型 API 路径与 UI 路径均已有证据。
-- [x] **3–5 个本仓 dogfood** — 已完成 3 条真实任务 + 3 次团队运行（2026-11-21）：单任务接受率 3/3、检查通过率 3/3、返工 1 次人工小修；五角色串行 5 步完成（首轮暴露落盘 owner 缺口）；owner 机制补齐并实测落盘；带 owner 的五角色交付再次跑通并满足 M2 的 5 角色退出标准。详见下方 “F10-01/F10-02 Dogfood” 章节。
+- [x] **3–5 个本仓 dogfood** — 已完成 3 条真实任务 + 4 次团队运行（2026-11-21）：单任务接受率 3/3、检查通过率 3/3、返工 1 次人工小修；五角色串行 5 步完成（首轮暴露落盘 owner 缺口）；owner 机制补齐并实测落盘；带 owner 的五角色交付重跑成功；依赖链接后五角色完成**真实代码交付**（`listTasksByTeam` + 单测，含 reviewer→owner 修正）。详见下方 “F10-01/F10-02 Dogfood” 章节。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -499,6 +499,15 @@
 - 结果：11.4 s、exit 0、**`Tests 5 passed (5)`**、`changedFiles = []`；accept 后 commitSha 回写为当前 HEAD（无改动不伪造提交）。
 - 意义：worktree 里真的有依赖可用，agent 能在隔离环境跑项目检查——这是把 dogfood 从“文档任务”升级成“代码任务”的前提。
 - 首轮（`2162cc26` / `0418b424`）暴露缺陷：`node_modules` 符号链接不被目录式 `.gitignore` 匹配，被计成 changedFiles；已修复并 reject 该轮，复跑得到干净证据。
+
+### Dogfood 8：五角色真实代码交付（2026-11-21）
+
+- 团队 `CB Code Team`（architect → implementer → reviewer → tester → owner，owner 置末）；任务 “Dogfood 8: five-role code delivery”，目标为新增 `KernelStore.listTasksByTeam(teamId)` 与一条单测。
+- 结果：5 步全部 `completed`（`ae0bc9e` → `018ea48` → `1490bd5` → `3aa7738` → `d2c4f80`），320 s；`owner.changedFiles = 2`、`warnings = []`。
+- 交付：`packages/storage-core/src/index.ts` +5（复用 `eq` / `TaskRow` / `toTaskRecord`）；`task-run.test.ts` 新增用例覆盖两个 Team、未分配任务、未知 teamId。tester 在链接依赖的 worktree 实跑 `Tests 9 passed (9)`。
+- **真实链路价值**：reviewer 发现 implementer 的断言 `not.toContain('B1')` 恒真（拿标题字符串对比 UUID 列表），owner 在最终步把断言改成 `not.toContain(b1.id)` 并补充未分配任务断言——这是多角色链路里“审查 → 修正”第一次真实发生。
+- 验收：diff 应用进 `dev` 后 typecheck 0、全仓 **62 文件 / 737 tests 绿**；提交 `14125ef feat(storage-core): list tasks by team`、`0e5bb4a docs(dogfood): record the five-role code run`。
+- [ ] 未做：`listTasksByTeam` 尚未由 server-core 路由或 MCP 消费（纯内核查询）；未加显式排序（与 `listTasks` 一致，测试不依赖顺序）。
 
 ## Coordinator 落盘 owner — 已完成（2026-11-21）
 

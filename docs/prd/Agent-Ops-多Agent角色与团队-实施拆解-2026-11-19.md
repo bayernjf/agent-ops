@@ -312,7 +312,7 @@ E0 基础闭环修复
 - 3–5 个 dogfood 完成，记录接受率/测试通过率/返工率。
 - 无 P0 数据丢失/权限违规。
 
-**状态（2026-11-21）**：上表第 1–4、6 项已完成并有测试；第 5 项已用 CodeBuddy 完成 3 条真实 dogfood（接受率 3/3、检查通过 3/3、返工 1 次人工小修）。退出标准里的“5 角色团队完成真实仓库任务”首轮暴露“落盘 owner 未指派”缺口，owner 机制补齐后以 Dogfood 6 重跑成功：5 步全部完成、owner 写出 `05-final.md`（应用为 `4065cca`），该退出标准已满足；限制是交付物为文档而非代码改动。
+**状态（2026-11-21）**：上表第 1–4、6 项已完成并有测试；第 5 项已用 CodeBuddy 完成 3 条真实 dogfood（接受率 3/3、检查通过 3/3、返工 1 次人工小修）。退出标准里的“5 角色团队完成真实仓库任务”先以文档交付满足，随后在 worktree 依赖可链接后以 **Dogfood 8 完成真实代码交付**（`listTasksByTeam` + 单测，reviewer 发现恒真断言、owner 修正，应用后全仓 737 tests 绿）。
 
 ### M3 并行与扩展（2026-12-25 → 2027-01-14）
 
@@ -615,3 +615,4 @@ npm --workspace @agent-ops/studio run build
 | 2026-11-21 | Dogfood 6：带 owner 的五角色交付跑通，owner 写出 `05-final.md`（`4065cca`）；M2 的 5 角色退出标准满足（交付物为文档） |
 | 2026-11-21 | owner 事后校验：pipeline step 记录自身变更集，summary 对“无 owner / 未运行 / 完成但 0 改动”告警 |
 | 2026-11-21 | worktree 依赖策略：provision/lane/DAG 自动链接 `node_modules`，`info/exclude` 防止计为改动；CodeBuddy 在 worktree 实跑 5 个测试通过 |
+| 2026-11-21 | Dogfood 8：五角色真实代码交付（`listTasksByTeam` + 单测，reviewer 发现恒真断言、owner 修正）；应用后 737 tests 绿 |
