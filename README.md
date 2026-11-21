@@ -78,6 +78,8 @@ Role / Team 可设成本与 token 上限（`maxCostUsd` / `maxInputTokens` / `ma
 
 两条口径：预算为**任务内**口径，不跨任务累计，只在启动前阻断；Runtime 未上报用量时**不阻断**（`spend.costUsd = null`、`reportingRuns = 0`、`exceeded = false`）。
 
+Studio 的 Role / Team 表单可编辑这三项上限（留空即该维度不限），编辑时回填既有值；已实测创建与编辑回填。清空已配置的预算目前 API 不支持——表单留空只会省略 `budget` 字段，既有上限保留。
+
 实测记录见 `handoff.md`。
 
 ## 目录
@@ -134,6 +136,6 @@ npx tsx apps/cli/src/index.ts export <taskId> [--summary] [--out file]   # 导�
 - 真实模型的执行入口已可用（CodeBuddy）；token/cost 与工具审计仍取决于 Runtime 是否上报，CodeBuddy 当前不报。
 - 并行团队不自动合并，也没有“选哪条 lane 作为最终交付”的一等操作。
 - 预算为任务内口径，不跨任务累计；只在启动前阻断。
-- Studio 的 Metrics 页、任务预算面板与 Teams 计划预览尚未在真实浏览器逐项点击验证。
+- Studio 的 Metrics 页与 Teams 计划预览尚未在真实浏览器逐项点击验证（Role/Team 预算输入与任务预算面板已实测）。
 - worktree 只链接根 `node_modules`：仓库本身未安装依赖时仍需先 `npm ci`；跨包的 TypeScript 类型可能指回主仓源码。
 - SSE 实时投递在本地 UI 用过，终态回放与重启回放有测试覆盖，但未做长时间 / 并发压测。

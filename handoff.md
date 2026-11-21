@@ -3,7 +3,7 @@
 ## 待办登记（标准）
 
 > 本段是本产品唯一活跃待办入口；详细背景见下方原有章节。完成一项改 `[x]`，并在“最近变更 / Recently shipped”留证据。
-> 最近同步：2026-11-20
+> 最近同步：2026-11-21
 >
 > 产品规划（非活跃待办，不计入上方待办）：多 Agent 角色与团队 v0.2/v0.3，PRD 见 `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md`，实施拆解见 `docs/prd/Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md`；PD-1～PD-9 已于 2026-11-19 拍板；后续方向备忘（Tier 0 能力包 / 现有 Harness / Personal Agent）见 PRD §12.1–12.2。
 
@@ -401,7 +401,8 @@
 - [x] server：`GET /api/tasks/:id/budget?roleId=`；MCP：新增 `agent_ops_get_budget`。
 - [x] 测试：role 预算 $1 两笔 $0.6 后第三笔被阻断且审计含 `budget.blocked`；team 预算 100 input tokens 跨角色累计到 120 后，先建后执行的 queued Run 在 execute 时被阻断；未上报用量不阻断（spend null）；server 200/404；MCP 返回 null scope。全仓 typecheck 0，61 文件 / 723 tests 绿。
 - [x] 本轮提交：`4ac5021 feat(agent-runtime): add role and team budgets`、`81ca0a5 feat(storage-core): enforce role and team budgets`、`e4a7594 feat(server-core): serve task budget status`、`068a55b feat(cli): add the budget tool`。
-- [ ] 未做：预算是“任务内”口径（同一 Role/Team 在不同任务里各自计算，不跨任务累计）；只在 Run 启动前阻断，不中断正在跑的 Run；Studio 没有预算输入框或展示；真实 CLI 不报 usage 时预算实际不生效。
+- [x] Studio 预算输入（2026-11-21）：RolesView 与 TeamsView 的表单新增 Budget fieldset（USD / input tokens / output tokens），经 `lib/budget.ts` 合成 `CostBudget` 并随 create/update 提交；编辑时回填既有上限。浏览器实测：创建带 $1 的临时角色并回查 `/api/roles` 得到 `budget.maxCostUsd = 1`；创建/编辑临时团队 `$2 + 100000 input tokens` 回查一致、编辑表单回填正确，探针角色与团队均已删除。
+- [ ] 未做：预算是“任务内”口径（同一 Role/Team 在不同任务里各自计算，不跨任务累计）；只在 Run 启动前阻断，不中断正在跑的 Run；API 不支持清空已配置的预算（表单留空只会省略 `budget` 字段，已有上限保留）；真实 CLI 不报 usage 时预算实际不生效。
 
 ## F4-05 重跑 hygiene — 已完成（2026-11-20）
 

@@ -617,3 +617,4 @@ npm --workspace @agent-ops/studio run build
 | 2026-11-21 | worktree 依赖策略：provision/lane/DAG 自动链接 `node_modules`，`info/exclude` 防止计为改动；CodeBuddy 在 worktree 实跑 5 个测试通过 |
 | 2026-11-21 | Dogfood 8：五角色真实代码交付（`listTasksByTeam` + 单测，reviewer 发现恒真断言、owner 修正）；应用后 737 tests 绿 |
 | 2026-11-21 | `listTasksByTeam` 暴露为 `GET /api/teams/:teamId/tasks` 与 MCP `agent_ops_list_team_tasks` |
+| 2026-11-21 | Studio Role/Team 表单补预算输入（`lib/budget.ts` + 双语文案 + 三列栅格），浏览器实测创建/编辑回填与临时探针清理；清空既有预算的 API 未支持 |
