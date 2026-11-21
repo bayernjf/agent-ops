@@ -64,7 +64,7 @@ const createTaskSchema = z.object({
 });
 
 const createRunSchema = z.object({
-  agentId: z.string().trim().min(1),
+  agentId: z.string().trim().min(1).optional(),
   roleId: z.string().trim().min(1).optional(),
 });
 
@@ -125,7 +125,7 @@ export type KernelAppOptions = {
 function errorResponse(context: Context, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes('was not found')) return context.json({ error: message }, 404);
-  if (message.includes('not part of run') || message.includes('Select at least one changed file') || message.includes('invalid worktree path') || message.includes('template token')) {
+  if (message.includes('not part of run') || message.includes('Select at least one changed file') || message.includes('invalid worktree path') || message.includes('template token') || message.includes('A run needs an agentId')) {
     return context.json({ error: message }, 400);
   }
   if (message.includes('is disabled')) return context.json({ error: message }, 400);

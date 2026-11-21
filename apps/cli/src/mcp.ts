@@ -733,15 +733,15 @@ export function createAgentOpsMcpServer(options: McpBridgeOptions): McpServer {
 
   server.registerTool('agent_ops_create_run', {
     title: 'Create run',
-    description: 'Create a run for a task with a chosen agent (e.g. codex). The task must be provisioned first.',
+    description: 'Create a run for a task. Omit agentId to use the task Role\'s profileId or baseAgentId; pass agentId to override. The task must be provisioned first.',
     inputSchema: {
       ...taskIdSchema,
-      agentId: z.string().trim().min(1).describe('Agent id, e.g. "codex" or "claude-code"; see agent_ops_get_runtime.'),
-      roleId: z.string().trim().min(1).optional().describe('Optional Role id to record on the run; see agent_ops_list_roles.'),
+      agentId: z.string().trim().min(1).optional().describe('Optional agent override, e.g. "codex" or "claude-code"; omit to inherit the task Role. See agent_ops_get_runtime.'),
+      roleId: z.string().trim().min(1).optional().describe('Optional Role id to record on the run; defaults to the task Role. See agent_ops_list_roles.'),
     },
     annotations: ADDITIVE,
   }, args => callDaemon('POST', `/api/tasks/${encodeURIComponent(args.taskId)}/runs`, {
-    agentId: args.agentId,
+    ...(args.agentId ? { agentId: args.agentId } : {}),
     ...(args.roleId ? { roleId: args.roleId } : {}),
   }).then(toResult));
 
