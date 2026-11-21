@@ -826,6 +826,8 @@ export const en = {
     pipelineRerun: 'Rerun pipeline',
     pipelineRerunConfirm: 'Rerun this completed pipeline from the first step? The worktree resets to the task base commit and prior step results are cleared.',
     pipelinePreviousRun: 'Previous run',
+    pipelinePreviousLabel: 'Previous',
+    pipelineCurrentLabel: 'Current',
     pipelineRunning: 'Running…',
     pipelineApprove: 'Approve step',
     pipelineReject: 'Reject step',

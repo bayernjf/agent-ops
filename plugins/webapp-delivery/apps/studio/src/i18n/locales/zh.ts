@@ -808,6 +808,8 @@ export const zh = {
     pipelineRerun: '重新运行 Pipeline',
     pipelineRerunConfirm: '从第一步重新运行这个已完成的 Pipeline？worktree 会重置到任务基础 commit，之前的步骤结果会被清空。',
     pipelinePreviousRun: '上一轮结果',
+    pipelinePreviousLabel: '上一轮',
+    pipelineCurrentLabel: '当前',
     pipelineRunning: '运行中…',
     pipelineApprove: '通过该步',
     pipelineReject: '驳回该步',

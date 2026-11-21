@@ -857,17 +857,23 @@ export function TasksView() {
                                   const previous = previousPipelineStepResult(pipeline, step.id);
                                   const current = pipelineStepResult(pipeline, step.id);
                                   return (
-                                    <div className="pipeline-step-row pipeline-previous-row" key={step.id}>
+                                    <div className="pipeline-previous-row" key={step.id}>
                                       <strong>{step.name}</strong>
-                                      <span className={`state ${previous?.status ?? 'pending'}`}>
-                                        {t(`tasks.pipelineStepStatus.${previous?.status ?? 'pending'}` as KeyPath)}
-                                      </span>
-                                      <span className={`state ${current?.status ?? 'pending'}`}>
-                                        {t(`tasks.pipelineStepStatus.${current?.status ?? 'pending'}` as KeyPath)}
-                                      </span>
                                       <span className="pipeline-step-commit">
                                         {previous?.commitSha ? previous.commitSha.slice(0, 10) : '—'} → {current?.commitSha ? current.commitSha.slice(0, 10) : '—'}
                                       </span>
+                                      <div className="pipeline-previous-line">
+                                        <span className="pipeline-previous-label">{t('tasks.pipelinePreviousLabel')}</span>
+                                        <span className={`state ${previous?.status ?? 'pending'}`}>
+                                          {t(`tasks.pipelineStepStatus.${previous?.status ?? 'pending'}` as KeyPath)}
+                                        </span>
+                                      </div>
+                                      <div className="pipeline-previous-line">
+                                        <span className="pipeline-previous-label">{t('tasks.pipelineCurrentLabel')}</span>
+                                        <span className={`state ${current?.status ?? 'pending'}`}>
+                                          {t(`tasks.pipelineStepStatus.${current?.status ?? 'pending'}` as KeyPath)}
+                                        </span>
+                                      </div>
                                     </div>
                                   );
                                 })}
