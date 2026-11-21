@@ -21,6 +21,8 @@
 - [x] **重跑前 pin 旧 pipeline commit** — 已完成（2026-11-21）。completed pipeline 重跑前把每个旧 step commit pin 到 `refs/agent-ops/pipelines/<taskId>/<runId>`，再 reset worktree、清空旧 results；`pipeline.rerun` 审计记录 `pinnedCommits`。测试覆盖 `git gc --prune=now` 后旧 commit 仍可解析；全仓 68 文件 / 762 tests 绿。
 - [x] **修复任务 ref 命名空间冲突** — 已完成（2026-11-21）。默认 accept ref 从 `refs/agent-ops/tasks/<taskId>` 改为 `.../<taskId>/accepts/latest`；旧路径是文件，导致同一任务先串行接受再接受 lane 时 `update-ref` 报 “cannot lock ref”。新增默认 ref 与 lane ref 共存测试；全仓 68 文件 / 763 tests 绿。
 - [x] **Pipeline 模板语法校验** — 已完成（2026-11-21）。`validatePipelineTemplates` 在创建任务时拒绝未知 step id、坏字段、自引用和未闭合 token，server 返回 400；`{{ previous.output }}` 这类花括号内空白现在也能真正展开。纯函数新增 6 例、创建任务 1 例、HTTP 400 1 例；全仓 68 文件 / 771 tests 绿。
+- [x] **显式标记 step output 截断** — 已完成（2026-11-21）。step result 落 `outputTruncated`，DAG 结果同时保留 `changedFiles` / `output`；串行与 DAG 下游展开被截断的 output 时追加 `[The output above was truncated to 2000 characters.]`，Studio 步骤状态显示“输出已截断”。新增串行 1 例、DAG 1 例、模板 1 例；全仓 68 文件 / 773 tests 绿，Studio build 1661 modules 成功。
+- [x] **DAG 审批门** — 已完成（2026-11-21）。`executeDagPipeline` 支持 `requiresApproval`：gated step 单独执行，Run 到 `review` 时 DAG 存 `awaiting_approval`，pipeline 持久化 `executionMode: 'dag'` / `maxConcurrency` / 已完成结果；`approvePipelineStep` 接受该 lane Run 后从已完成 results 续跑，不重跑已完成步骤；`rejectPipelineStep` 将该步与所有尚未完成的 step 标 failed。暂停/恢复写 `pipeline.dag.paused` / `pipeline.dag.resumed` 审计。新增 4 个 DAG 用例（批准续跑、连续两道门、驳回下游、原有 DAG 回归）；全仓 68 文件 / 776 tests 绿，typecheck 0，Studio build 1661 modules 成功。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -211,7 +213,8 @@
 - [x] 2026-11-21 补齐校验：`validatePipelineTemplates` 在 `normalizePipeline` 阶段拒绝未知 step id、坏字段、自引用和未闭合 token，server 映射 400；普通 `{{...}}` 文本不受影响。纯函数新增 6 例 + 创建任务拒绝/接受 1 例 + HTTP 400 1 例；全仓 68 文件 / 771 tests 绿。
 - [x] 测试：模板纯函数 4 例（previous / 按 id / 未知与缺失保持原样 / 无占位符原样返回）；两步串行端到端断言第二步 prompt 与 Run instruction 含第一步 output 和 commit；DAG 端到端断言 join 步骤拿到 last dependency 的 output 与 commit；全仓 typecheck 0，63 文件 / 743 tests 绿。
 - [x] 本轮提交见 git log（`feat(storage-core): expand pipeline step templates`）。
-- [ ] 未做：模板只支持 output / commit 两种字段，没有加密或转义处理（上游 output 会按原文进入下游 prompt）；单次 output 仍受 2000 字符截断。模板校验只看 token 形状和 step id，不校验该 step 是否真的会在目标步骤前完成。
+- [x] 2026-11-21 补齐截断显式化：`capturePipelineStepOutput` 按 2000 字符截断并写 `outputTruncated`，存储文本不带 marker；串行与 DAG 下游展开被截断的 output 时追加 `[The output above was truncated to 2000 characters.]`。DAG 结果同时落 `changedFiles` / `output` / `outputTruncated`，Studio 步骤状态显示“输出已截断”。新增串行、DAG、模板各 1 例；全仓 68 文件 / 773 tests 绿，Studio build 1661 modules 成功。
+- [ ] 未做：模板只支持 output / commit 两种字段，没有加密或转义处理（上游 output 会按原文进入下游 prompt）；模板校验只看 token 形状和 step id，不校验该 step 是否真的会在目标步骤前完成。
 
 ## F6-05 completed pipeline 重跑 — 已完成（2026-11-21）
 
@@ -475,6 +478,19 @@
 - [x] 文档：README 并行 DAG 能力与运行入口段落改为“多依赖依次 merge、冲突整步 failed”，去掉旧“只从最后一个依赖检出 / 未自动合并 warning”描述。
 - [ ] 未做：没有把 merge commit SHA 单独写入 `DagStepResult` / 审计字段；需要回放时只能从 step commit 的父链定位。跨步骤 changedFiles 交集仍只报告，不回写任务主 worktree。
 
+## DAG 审批门 — 已完成（2026-11-21）
+
+- [x] 缺陷：`executeDagPipeline` 原先显式拒绝 `requiresApproval`，DAG 只能全自动跑完，无法在任何步骤前人工检查。
+- [x] `TaskPipeline` 新增持久化字段 `executionMode?: 'serial' | 'dag'` 与 `maxConcurrency?: number`；`parseTaskPipeline` 校验并恢复，避免审批恢复时把 DAG 误判成串行。串行执行、retry、rerun 显式写 `executionMode: 'serial'`。
+- [x] `executeDagPipeline` 拆成公共入口 + 私有 `runDagPipeline` 调度器。gated step 不与普通 ready step 同波并发；每轮最多执行一个 gated step，Run 到 `review` 后 step result 落 `awaiting_approval`，pipeline 落 `awaiting_approval`、`executionMode: 'dag'`、`maxConcurrency` 与已完成 results；后续 pending steps 不写结果。
+- [x] `approvePipelineStep` 按 `executionMode` 分支：DAG 先接受该 lane Run，把 awaiting result 改 completed 并写 commit / changedFiles，再以现有 results 为初始状态调用 `runDagPipeline` 续跑；已完成步骤不重跑，gated step 的 lane worktree 保留。
+- [x] `rejectPipelineStep` 的 DAG 分支拒绝该 Run，把 gated step 与所有尚未完成的 step 标 failed，pipeline / task 均 failed，已完成上游结果保留。
+- [x] 审计：暂停写 `pipeline.dag.paused`（stepId / runId / completed / pending / maxConcurrency），恢复写 `pipeline.dag.resumed`（stepId / runId / commitSha / pending），结束仍写 `pipeline.dag.executed`。`KernelAuditEventType` 与 Studio Audit 筛选同步。
+- [x] Studio 移除“含 requiresApproval 就隐藏 Run as DAG”的旧限制；`DagStepResult.status` 接受 `awaiting_approval`，fanout 状态文案中英文补齐。
+- [x] 测试：`dag.test.ts` 8 例，新增批准续跑（publish 只在 approve 后运行、prompt 拿到 review output、审计三类事件）、连续两道门（两次 pause / resume，最终一次 executed）、驳回（gated 与下游 failed、task failed）；原有 DAG 并发、多依赖 merge、冲突、失败跳过、模板、环校验回归通过。
+- [x] 门禁：全仓 typecheck 0；68 文件 / 776 tests 绿；Studio build 1661 modules 成功。
+- [ ] 未做：本轮未做真实浏览器端到端审批；Studio 只在类型与构建层验证，审批按钮复用既有 `pipeline.status === 'awaiting_approval'` 分支。
+
 ## Studio 任务看板 — 已完成（2026-11-21）
 
 - [x] 新增 `TaskBoard.tsx`：按 `TASK_BOARD_STATES`（`queued` / `running` / `review` / `done` / `failed` / `cancelled`）分列；每列显示状态标签、任务计数、空列 `No tasks`；卡片展示标题、`repo@baseRef`、Pipeline 状态徽标、Team 或 Role chip。
@@ -562,11 +578,11 @@
 - [x] 每步成功后 accept 并 pin 到 `refs/agent-ops/tasks/<taskId>/lanes/dag-<stepId>`；`pipeline.results` 落库（skipped 记为 failed + error）。
 - [x] 新增 `evidenceBase`：DAG step 的 diff 以它自己的 branch base 为准，避免把上游依赖的文件算成本步改动（否则 join 的 changedFiles 会重复上游文件并制造假冲突）。
 - [x] 多依赖时记录 warning（只从最后一个依赖检出，其它依赖 commit 不合并）— 已被 2026-11-21 “DAG 多依赖合并”取代；跨步骤 changedFiles 交集作为 conflicts 报告，不自动合并回任务。
-- [x] 暂不支持 DAG 中的 `requiresApproval`（显式拒绝并提示改用串行 Pipeline）。
+- [x] DAG 中的 `requiresApproval` 已于 2026-11-21 补齐：gated step 单独执行，Run 到 `review` 时暂停整张 DAG；approve 接受 lane Run 后从已完成 results 续跑，reject 将该步与所有未完成下游标 failed。pipeline 持久化 `executionMode: 'dag'` 与 `maxConcurrency`，暂停/恢复写 `pipeline.dag.paused` / `pipeline.dag.resumed`。
 - [x] server：`POST /api/tasks/:id/pipeline/dag`；MCP：`agent_ops_execute_dag`，`create_task` 的 step 接受 `dependsOn`。
-- [x] 测试：两个根并发（实测 maxActive=2）、join 从 right 检出（可见 RIGHT.md、不可见 LEFT.md）、冲突报告 `SHARED.md`、warning 说明 left 未合并；失败根导致 child skipped 而 other 完成；环 / 未知依赖在 createTask 被拒；requiresApproval 在 DAG 被拒；server 200/400。全仓 typecheck 0，62 文件 / 729 tests 绿。
+- [x] 测试：两个根并发（实测 maxActive=2）、join 从 right 检出（可见 RIGHT.md、不可见 LEFT.md）、冲突报告 `SHARED.md`、warning 说明 left 未合并；失败根导致 child skipped 而 other 完成；环 / 未知依赖在 createTask 被拒；DAG 审批门覆盖批准续跑、连续两道门、驳回并失败下游；全仓 68 文件 / 776 tests 绿，typecheck 0。
 - [x] 本轮提交：`30f09ff feat(storage-core): run pipelines as a DAG`、`8f4688a feat(server-core): expose DAG pipeline runs`、`3b307cd feat(cli): add the DAG run tool`。
-- [ ] 未做：DAG 不支持审批门。多依赖合并已由 2026-11-21 章节补齐，本节“只从最后一个依赖检出”的旧限制不再适用；Studio 的 DAG 运行入口与真实 CodeBuddy 验收已在后续章节完成。
+- [ ] 未做：多依赖合并已由 2026-11-21 章节补齐；Studio 的 DAG 运行入口与真实 CodeBuddy 验收已在后续章节完成。
 
 ## 真实模型 Run（CodeBuddy）— 已完成（API + UI，2026-11-20）
 

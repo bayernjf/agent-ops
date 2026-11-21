@@ -412,11 +412,13 @@ export type TaskPipelineStep = {
 export type DagStepResult = {
   stepId: string;
   name: string;
-  status: 'completed' | 'failed' | 'skipped' | 'cancelled';
+  status: 'completed' | 'failed' | 'skipped' | 'cancelled' | 'awaiting_approval';
   runId: string | null;
   commitSha: string | null;
   worktreePath: string | null;
   changedFiles: string[];
+  output?: string;
+  outputTruncated?: boolean;
   error: string | null;
 };
 
@@ -453,7 +455,9 @@ export type TaskPipelineStepResult = {
   status: 'pending' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
   runId?: string;
   commitSha?: string;
+  changedFiles?: string[];
   output?: string;
+  outputTruncated?: boolean;
   error?: string;
   startedAt?: string;
   completedAt?: string;
@@ -463,6 +467,8 @@ export type TaskPipeline = {
   steps: TaskPipelineStep[];
   results: TaskPipelineStepResult[];
   status: 'idle' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
+  executionMode?: 'serial' | 'dag';
+  maxConcurrency?: number;
   startedAt?: string;
   completedAt?: string;
 };

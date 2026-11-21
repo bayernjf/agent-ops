@@ -15,8 +15,12 @@
  * expand as written: unknown step ids, bad fields, self references, and unclosed tokens.
  */
 
+/** Pipeline step outputs are capped before they enter task results and downstream prompts. */
+export const PIPELINE_STEP_OUTPUT_LIMIT = 2000;
+
 export type PipelineTemplateSnapshot = {
   output?: string | null;
+  outputTruncated?: boolean;
   commitSha?: string | null;
 };
 
@@ -118,7 +122,11 @@ export function validatePipelineTemplates(steps: readonly PipelineTemplateStep[]
 function pick(snapshot: PipelineTemplateSnapshot | undefined, field: 'output' | 'commit'): string | undefined {
   if (!snapshot) return undefined;
   const value = field === 'output' ? snapshot.output : snapshot.commitSha;
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
+  if (typeof value !== 'string' || value.length === 0) return undefined;
+  if (field === 'output' && snapshot.outputTruncated) {
+    return `${value}\n[The output above was truncated to ${PIPELINE_STEP_OUTPUT_LIMIT} characters.]`;
+  }
+  return value;
 }
 
 export function expandPipelineTemplate(template: string, context: PipelineTemplateContext): string {

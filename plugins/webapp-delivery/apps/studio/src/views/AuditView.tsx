@@ -10,7 +10,7 @@ const EVENT_TYPES = [
   'task.created', 'task.deleted', 'task.final_lane.selected',
   'run.accepted', 'run.rejected', 'run.rerun',
   'pipeline.step.approved', 'pipeline.step.rejected', 'pipeline.retried', 'pipeline.rerun',
-  'pipeline.planned', 'pipeline.dag.executed', 'parallel.executed',
+  'pipeline.planned', 'pipeline.dag.executed', 'pipeline.dag.paused', 'pipeline.dag.resumed', 'parallel.executed',
   'budget.blocked', 'handoff.recorded',
 ] as const;
 

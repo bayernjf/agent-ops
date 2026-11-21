@@ -825,7 +825,7 @@ export function TasksView() {
                                 </button>
                               </>
                             )}
-                            {(task.status === 'queued' || task.status === 'review') && pipeline.status !== 'running' && pipeline.status !== 'awaiting_approval' && !pipeline.steps.some(step => step.requiresApproval) && (
+                            {(task.status === 'queued' || task.status === 'review') && pipeline.status !== 'running' && pipeline.status !== 'awaiting_approval' && (
                               <button className="secondary-button" type="button" onClick={() => void runDagPipeline(task)} disabled={fanoutBusy === `${task.id}:dag`}>
                                 <GitFork size={14} aria-hidden="true" /> {fanoutBusy === `${task.id}:dag` ? t('tasks.pipelineRunning') : t('tasks.dagRun')}
                               </button>
@@ -838,7 +838,7 @@ export function TasksView() {
                                 <div className="pipeline-step-row" key={step.id}>
                                   <strong>{step.name}</strong>
                                   <span className="pipeline-step-identity">{stepIdentity(step)}</span>
-                                  <span className={`state ${result?.status ?? 'pending'}`}>{t(`tasks.pipelineStepStatus.${result?.status ?? 'pending'}` as KeyPath)}</span>
+                                  <span className={`state ${result?.status ?? 'pending'}`}>{t(`tasks.pipelineStepStatus.${result?.status ?? 'pending'}` as KeyPath)}{result?.outputTruncated ? ` · ${t('tasks.outputTruncatedShort')}` : ''}</span>
                                   {result?.commitSha ? <span className="pipeline-step-commit">{result.commitSha.slice(0, 10)}</span> : null}
                                 </div>
                               );
@@ -866,7 +866,7 @@ export function TasksView() {
                             {result.steps.map(step => (
                               <div className="fanout-row" key={step.stepId}>
                                 <span>{step.name}</span>
-                                <span className={`state ${step.status}`}>{t(`tasks.fanoutStatus.${step.status}` as KeyPath)}</span>
+                                <span className={`state ${step.status}`}>{t(`tasks.fanoutStatus.${step.status}` as KeyPath)}{step.outputTruncated ? ` · ${t('tasks.outputTruncatedShort')}` : ''}</span>
                                 <span className="pipeline-step-commit">{step.commitSha ? step.commitSha.slice(0, 10) : '—'}</span>
                                 {step.error ? <small>{step.error}</small> : null}
                               </div>

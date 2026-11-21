@@ -35,7 +35,7 @@ import { RoleStore } from './roles-store.js';
 import { TeamStore } from './teams-store.js';
 import { addWorktree, linkNodeModules, mergeDependencyCommits, pinPipelineCommit, pinWorktreeCommit, removeWorktree } from './worktree.js';
 import { assertWorktreeClean, commitWorktreeChanges, resetWorktree } from './commit.js';
-import { expandPipelineTemplate, validatePipelineTemplates, type PipelineTemplateSnapshot } from './pipeline-template.js';
+import { expandPipelineTemplate, PIPELINE_STEP_OUTPUT_LIMIT, validatePipelineTemplates, type PipelineTemplateSnapshot } from './pipeline-template.js';
 
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
@@ -81,6 +81,8 @@ export type TaskPipelineStepResult = {
   /** Files this step's own commit changed (base of the step vs its commit), not the task-wide diff. */
   changedFiles?: string[];
   output?: string;
+  /** True when the model output exceeded the pipeline handoff limit and `output` is capped. */
+  outputTruncated?: boolean;
   error?: string;
   startedAt?: string;
   completedAt?: string;
@@ -90,6 +92,10 @@ export type TaskPipeline = {
   steps: TaskPipelineStep[];
   results: TaskPipelineStepResult[];
   status: 'idle' | 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled';
+  /** How this pipeline was dispatched. Missing means a legacy/serial pipeline. */
+  executionMode?: 'serial' | 'dag';
+  /** DAG concurrency persisted so an approval resume keeps the original fan-out width. */
+  maxConcurrency?: number;
   startedAt?: string;
   completedAt?: string;
 };
@@ -152,6 +158,8 @@ function parseTaskPipeline(raw: string): TaskPipeline | null {
       steps: parsed.steps,
       results: Array.isArray(parsed.results) ? parsed.results : [],
       status,
+      ...(parsed.executionMode === 'serial' || parsed.executionMode === 'dag' ? { executionMode: parsed.executionMode } : {}),
+      ...(typeof parsed.maxConcurrency === 'number' && Number.isFinite(parsed.maxConcurrency) ? { maxConcurrency: parsed.maxConcurrency } : {}),
       startedAt: parsed.startedAt,
       completedAt: parsed.completedAt,
     };
@@ -389,6 +397,8 @@ export type KernelAuditEventType =
   | 'pipeline.rerun'
   | 'pipeline.planned'
   | 'pipeline.dag.executed'
+  | 'pipeline.dag.paused'
+  | 'pipeline.dag.resumed'
   | 'parallel.executed'
   | 'budget.blocked'
   | 'run.rerun'
@@ -440,11 +450,13 @@ export type CoordinatorSummary = {
 export type DagStepResult = {
   stepId: string;
   name: string;
-  status: 'completed' | 'failed' | 'skipped' | 'cancelled';
+  status: 'completed' | 'failed' | 'skipped' | 'cancelled' | 'awaiting_approval';
   runId: string | null;
   commitSha: string | null;
   worktreePath: string | null;
   changedFiles: string[];
+  output?: string;
+  outputTruncated?: boolean;
   error: string | null;
 };
 
@@ -668,6 +680,18 @@ function boundedText(value: string, limit: number): { text: string; truncated: b
   return {
     text: `${value.slice(0, limit)}\n\n[truncated: ${value.length} characters total]`,
     truncated: true,
+  };
+}
+
+/**
+ * Cap a step's model output for pipeline handoff. The stored text stays clean; the flag lets
+ * task results and prompt templates tell the reader that later content was dropped.
+ */
+function capturePipelineStepOutput(output: string, sourceTruncated = false): { output: string; outputTruncated?: boolean } {
+  const outputTruncated = sourceTruncated || output.length > PIPELINE_STEP_OUTPUT_LIMIT;
+  return {
+    output: output.slice(0, PIPELINE_STEP_OUTPUT_LIMIT),
+    ...(outputTruncated ? { outputTruncated: true } : {}),
   };
 }
 
@@ -1463,6 +1487,7 @@ export class KernelStore {
         steps: task.pipeline.steps,
         results: [],
         status: 'running',
+        executionMode: 'serial',
         startedAt: new Date().toISOString(),
       };
       await this.saveTaskPipeline(id, pipeline);
@@ -1491,7 +1516,7 @@ export class KernelStore {
   private pipelineStepInstruction(pipeline: TaskPipeline, index: number, step: TaskPipelineStep): string {
     const snapshots = new Map<string, PipelineTemplateSnapshot>();
     for (const result of pipeline.results) {
-      if (result.status === 'completed') snapshots.set(result.stepId, { output: result.output, commitSha: result.commitSha });
+      if (result.status === 'completed') snapshots.set(result.stepId, { output: result.output, outputTruncated: result.outputTruncated, commitSha: result.commitSha });
     }
     const previousId = index > 0 ? pipeline.steps[index - 1]?.id : undefined;
     const prompt = step.prompt ? expandPipelineTemplate(step.prompt, { previous: previousId ? snapshots.get(previousId) : undefined, steps: snapshots }) : '';
@@ -1531,6 +1556,7 @@ export class KernelStore {
         ...pipeline,
         results: completed,
         status: 'running',
+        executionMode: 'serial',
         completedAt: undefined,
       };
       await this.saveTaskPipeline(id, retried);
@@ -1581,6 +1607,7 @@ export class KernelStore {
         steps: pipeline.steps,
         results: [],
         status: 'running',
+        executionMode: 'serial',
         startedAt: new Date().toISOString(),
       };
       await this.saveTaskPipeline(id, restarted);
@@ -1697,12 +1724,13 @@ export class KernelStore {
           return pipeline;
         }
 
+        const captured = capturePipelineStepOutput(executed.artifacts.output, executed.artifacts.outputTruncated);
         if (step.requiresApproval) {
           updateResult({
             stepId: step.id,
             status: 'awaiting_approval',
             runId,
-            output: executed.artifacts.output.slice(0, 2000),
+            ...captured,
             startedAt,
             completedAt: new Date().toISOString(),
           });
@@ -1723,7 +1751,7 @@ export class KernelStore {
           runId,
           commitSha: accepted.commitSha,
           changedFiles,
-          output: executed.artifacts.output.slice(0, 2000),
+          ...captured,
           startedAt,
           completedAt: new Date().toISOString(),
         });
@@ -1769,6 +1797,49 @@ export class KernelStore {
     this.activePipelines.add(id);
     try {
       const { task, pipeline, index, runId, stepId } = await this.awaitingPipelineStep(id);
+      if (pipeline.executionMode === 'dag') {
+        const accepted = await this.acceptRun(runId);
+        const initialResults = this.dagResultsFromPipeline(pipeline);
+        const awaiting = initialResults.get(stepId);
+        if (!awaiting) throw new Error(`Task ${id} DAG step ${stepId} has no persisted result.`);
+        initialResults.set(stepId, {
+          ...awaiting,
+          status: 'completed',
+          commitSha: accepted.commitSha,
+          worktreePath: accepted.worktreePath ?? awaiting.worktreePath,
+          changedFiles: accepted.artifacts.changedFiles,
+          error: null,
+        });
+        const resumed: TaskPipeline = {
+          ...pipeline,
+          results: pipeline.results.map(result => (
+            result.stepId === stepId
+              ? { ...result, status: 'completed' as const, commitSha: accepted.commitSha, changedFiles: accepted.artifacts.changedFiles }
+              : result
+          )),
+          status: 'running',
+          completedAt: undefined,
+        };
+        await this.saveTaskPipeline(id, resumed);
+        await this.updateTaskStatus(id, 'running');
+        await this.recordAudit({
+          type: 'pipeline.step.approved',
+          taskId: id,
+          teamId: task.teamId,
+          data: { stepId, runId, commitSha: accepted.commitSha, executionMode: 'dag' },
+        });
+        await this.recordAudit({
+          type: 'pipeline.dag.resumed',
+          taskId: id,
+          teamId: task.teamId,
+          data: { stepId, runId, commitSha: accepted.commitSha, pending: resumed.steps.filter(step => !initialResults.has(step.id)).length },
+        });
+        const run = await this.runDagPipeline(task, resumed, initialResults, {
+          runner,
+          maxConcurrency: pipeline.maxConcurrency ?? 2,
+        });
+        return run.pipeline;
+      }
       const baseCommit = this.pipelineStepBaseCommit(task, pipeline, index);
       const accepted = await this.acceptRun(runId);
       const changedFiles = task.worktreePath
@@ -1799,6 +1870,44 @@ export class KernelStore {
     this.activePipelines.add(id);
     try {
       const { task, pipeline, index, runId, stepId } = await this.awaitingPipelineStep(id);
+      if (pipeline.executionMode === 'dag') {
+        await this.rejectRun(runId);
+        await this.recordAudit({
+          type: 'pipeline.step.rejected',
+          taskId: id,
+          teamId: task.teamId,
+          data: { stepId, runId, executionMode: 'dag' },
+        });
+        const completedAt = new Date().toISOString();
+        const failed: TaskPipeline = {
+          ...pipeline,
+          results: pipeline.steps.map(step => {
+            const existing = pipeline.results.find(result => result.stepId === step.id);
+            if (step.id === stepId) {
+              return {
+                ...(existing ?? { stepId: step.id }),
+                status: 'failed' as const,
+                error: 'Rejected by operator.',
+                startedAt: existing?.startedAt ?? pipeline.startedAt ?? completedAt,
+                completedAt,
+              };
+            }
+            if (existing?.status === 'completed') return existing;
+            return {
+              ...(existing ?? { stepId: step.id }),
+              status: 'failed' as const,
+              error: `DAG stopped after step ${stepId} was rejected.`,
+              startedAt: existing?.startedAt ?? pipeline.startedAt ?? completedAt,
+              completedAt,
+            };
+          }),
+          status: 'failed',
+          completedAt,
+        };
+        await this.saveTaskPipeline(id, failed);
+        await this.updateTaskStatus(id, 'failed');
+        return failed;
+      }
       const baseCommit = this.pipelineStepBaseCommit(task, pipeline, index);
       await this.rejectRun(runId, baseCommit);
       await this.recordAudit({
@@ -2559,6 +2668,8 @@ export class KernelStore {
    * Run a pipeline as a DAG: every ready step gets its own worktree merged from its
    * dependencies' commits, up to `maxConcurrency` run at once. Steps whose dependencies
    * failed are skipped, and file-level overlaps are reported, never merged into the task.
+   * A step with `requiresApproval` pauses the DAG after its Run reaches review; approving
+   * that Run resumes the remaining schedule without re-running completed steps.
    */
   async executeDagPipeline(
     taskId: string,
@@ -2572,185 +2683,297 @@ export class KernelStore {
       if (task.status === 'cancelled' || this.cancelRequestedTasks.has(taskId)) throw new Error(`Task ${taskId} is cancelled and cannot run a DAG.`);
       const pipeline = task.pipeline;
       if (!pipeline || pipeline.steps.length === 0) throw new Error(`Task ${taskId} has no pipeline configured.`);
-      if (pipeline.steps.some(step => step.requiresApproval)) {
-        throw new Error('DAG execution does not support per-step approval yet; remove requiresApproval or use the serial pipeline.');
-      }
+      if (pipeline.status === 'awaiting_approval') throw new Error(`Task ${taskId} has a DAG step awaiting approval; approve or reject it before another DAG run.`);
       if (!task.worktreePath) throw new Error(`Task ${taskId} has no worktree. Provision it before a DAG run.`);
       if (task.status !== 'queued' && task.status !== 'review') {
         throw new Error(`Task ${taskId} is ${task.status}; a DAG run starts from queued or review only.`);
       }
 
       const maxConcurrency = Math.min(Math.max(options.maxConcurrency ?? 2, 1), 8);
-      const base = task.baseCommit || task.baseRef;
-      const startedAt = new Date().toISOString();
-      const positions = new Map(pipeline.steps.map((step, position) => [step.id, position]));
-      const dependencyIds = (step: TaskPipelineStep): string[] => {
-        // An explicit dependsOn wins, including `[]` for a root; only steps that never named
-        // dependencies fall back to the serial "previous step" default.
-        if (step.dependsOn) return step.dependsOn;
-        const position = positions.get(step.id) ?? 0;
-        return position > 0 ? [pipeline.steps[position - 1]!.id] : [];
-      };
+      const run = await this.runDagPipeline(task, pipeline, new Map(), { runner: options.runner, maxConcurrency });
+      return run.result;
+    } finally {
+      this.activePipelines.delete(taskId);
+    }
+  }
 
-      const results = new Map<string, DagStepResult>();
-      // Completed steps' outputs, kept aside so later prompts can template them in.
-      const outputs = new Map<string, string>();
-      const warnings: string[] = [];
-      await this.updateTaskStatus(taskId, 'running');
-      const taskCancelled = () => this.cancelRequestedTasks.has(taskId) || this.getTask(taskId)?.status === 'cancelled';
+  /** Restore DAG step results persisted on the task's pipeline. */
+  private dagResultsFromPipeline(pipeline: TaskPipeline): Map<string, DagStepResult> {
+    const results = new Map<string, DagStepResult>();
+    for (const step of pipeline.steps) {
+      const stored = pipeline.results.find(result => result.stepId === step.id);
+      if (!stored) continue;
+      results.set(step.id, {
+        stepId: step.id,
+        name: step.name,
+        status: stored.status === 'completed'
+          ? 'completed'
+          : stored.status === 'cancelled'
+            ? 'cancelled'
+            : stored.status === 'awaiting_approval'
+              ? 'awaiting_approval'
+              : 'failed',
+        runId: stored.runId ?? null,
+        commitSha: stored.commitSha ?? null,
+        worktreePath: null,
+        changedFiles: stored.changedFiles ?? [],
+        ...(stored.output !== undefined ? { output: stored.output } : {}),
+        ...(stored.outputTruncated ? { outputTruncated: true } : {}),
+        error: stored.error ?? null,
+      });
+    }
+    return results;
+  }
 
-      const runStep = async (step: TaskPipelineStep): Promise<void> => {
-        if (taskCancelled()) {
-          results.set(step.id, { stepId: step.id, name: step.name, status: 'cancelled', runId: null, commitSha: null, worktreePath: null, changedFiles: [], error: 'Task was cancelled.' });
+  /**
+   * Schedule a DAG from an optional set of already completed results. The caller holds
+   * `activePipelines`; this method persists the intermediate awaiting state and the final
+   * pipeline, so an approval pause survives a daemon restart.
+   */
+  private async runDagPipeline(
+    task: TaskRecord,
+    pipeline: TaskPipeline,
+    initialResults: Map<string, DagStepResult>,
+    options: { runner?: CodexProcessRunner; maxConcurrency: number },
+  ): Promise<{ pipeline: TaskPipeline; result: DagPipelineResult }> {
+    const taskId = task.id;
+    const maxConcurrency = Math.min(Math.max(options.maxConcurrency, 1), 8);
+    const base = task.baseCommit || task.baseRef;
+    const startedAt = pipeline.startedAt ?? new Date().toISOString();
+    const positions = new Map(pipeline.steps.map((step, position) => [step.id, position]));
+    const dependencyIds = (step: TaskPipelineStep): string[] => {
+      // An explicit dependsOn wins, including `[]` for a root; only steps that never named
+      // dependencies fall back to the serial "previous step" default.
+      if (step.dependsOn) return step.dependsOn;
+      const position = positions.get(step.id) ?? 0;
+      return position > 0 ? [pipeline.steps[position - 1]!.id] : [];
+    };
+
+    const results = new Map(initialResults);
+    const warnings: string[] = [];
+    await this.updateTaskStatus(taskId, 'running');
+    const taskCancelled = () => this.cancelRequestedTasks.has(taskId) || this.getTask(taskId)?.status === 'cancelled';
+
+    const runStep = async (step: TaskPipelineStep): Promise<void> => {
+      if (taskCancelled()) {
+        results.set(step.id, { stepId: step.id, name: step.name, status: 'cancelled', runId: null, commitSha: null, worktreePath: null, changedFiles: [], error: 'Task was cancelled.' });
+        return;
+      }
+      const dependencies = dependencyIds(step);
+      const dependencyCommits = dependencies.map(id => results.get(id)?.commitSha ?? null);
+      const branchFrom = dependencies.length === 0
+        ? base
+        : dependencyCommits[dependencyCommits.length - 1] ?? null;
+      if (dependencies.length > 0 && dependencyCommits.some(commit => !commit)) {
+        results.set(step.id, { stepId: step.id, name: step.name, status: 'skipped', runId: null, commitSha: null, worktreePath: null, changedFiles: [], error: 'A dependency produced no commit.' });
+        return;
+      }
+
+      const lanePath = join(this.dataDirectory, 'tasks', taskId, 'dag', step.id);
+      let runId: string | null = null;
+      try {
+        if (existsSync(lanePath)) await removeWorktree(task.repo, lanePath).catch(() => undefined);
+        await addWorktree(task.repo, branchFrom ?? base, lanePath);
+        // A join starts at the last dependency, then merges every earlier dependency commit.
+        // The resulting merge commit is the run's evidence base, so its diff excludes all
+        // inherited dependency changes.
+        const mergeBase = dependencyCommits.length > 1
+          ? await mergeDependencyCommits(lanePath, dependencyCommits.slice(0, -1) as string[])
+          : branchFrom ?? base;
+        await linkNodeModules(task.repo, lanePath);
+        const agentId = await this.resolvePipelineStepAgent(step);
+        const snapshots = new Map<string, PipelineTemplateSnapshot>();
+        for (const [id, result] of results) {
+          if (result.status === 'completed') {
+            snapshots.set(id, { output: result.output, outputTruncated: result.outputTruncated, commitSha: result.commitSha });
+          }
+        }
+        const previousId = dependencies[dependencies.length - 1];
+        const prompt = step.prompt
+          ? expandPipelineTemplate(step.prompt, { previous: previousId ? snapshots.get(previousId) : undefined, steps: snapshots })
+          : '';
+        const instruction = `DAG step: ${step.name}${prompt ? `\n\n${prompt}` : ''}`;
+        const run = await this.createRun(taskId, agentId, step.roleId, instruction);
+        runId = run.id;
+        const executed = await this.executeRun(run.id, options.runner, { worktreePath: lanePath, laneId: `dag-${step.id}`, taskStatus: 'none', evidenceBase: mergeBase });
+        if (executed.status === 'cancelled' || taskCancelled()) {
+          results.set(step.id, { stepId: step.id, name: step.name, status: 'cancelled', runId, commitSha: null, worktreePath: lanePath, changedFiles: executed.artifacts.changedFiles, error: 'Task was cancelled.' });
           return;
         }
-        const dependencies = dependencyIds(step);
-        const dependencyCommits = dependencies.map(id => results.get(id)?.commitSha ?? null);
-        const branchFrom = dependencies.length === 0
-          ? base
-          : dependencyCommits[dependencyCommits.length - 1] ?? null;
-        if (dependencies.length > 0 && dependencyCommits.some(commit => !commit)) {
-          results.set(step.id, { stepId: step.id, name: step.name, status: 'skipped', runId: null, commitSha: null, worktreePath: null, changedFiles: [], error: 'A dependency produced no commit.' });
+        if (executed.status !== 'review') {
+          results.set(step.id, { stepId: step.id, name: step.name, status: 'failed', runId, commitSha: null, worktreePath: lanePath, changedFiles: executed.artifacts.changedFiles, error: `Run ended in ${executed.status}.` });
           return;
         }
-
-        const lanePath = join(this.dataDirectory, 'tasks', taskId, 'dag', step.id);
-        let runId: string | null = null;
-        try {
-          if (existsSync(lanePath)) await removeWorktree(task.repo, lanePath).catch(() => undefined);
-          await addWorktree(task.repo, branchFrom ?? base, lanePath);
-          // A join starts at the last dependency, then merges every earlier dependency commit.
-          // The resulting merge commit is the run's evidence base, so its diff excludes all
-          // inherited dependency changes.
-          const mergeBase = dependencyCommits.length > 1
-            ? await mergeDependencyCommits(lanePath, dependencyCommits.slice(0, -1) as string[])
-            : branchFrom ?? base;
-          await linkNodeModules(task.repo, lanePath);
-          const agentId = await this.resolvePipelineStepAgent(step);
-          const snapshots = new Map<string, PipelineTemplateSnapshot>();
-          for (const [id, result] of results) {
-            if (result.status === 'completed') snapshots.set(id, { output: outputs.get(id), commitSha: result.commitSha });
-          }
-          const previousId = dependencies[dependencies.length - 1];
-          const prompt = step.prompt
-            ? expandPipelineTemplate(step.prompt, { previous: previousId ? snapshots.get(previousId) : undefined, steps: snapshots })
-            : '';
-          const instruction = `DAG step: ${step.name}${prompt ? `\n\n${prompt}` : ''}`;
-          const run = await this.createRun(taskId, agentId, step.roleId, instruction);
-          runId = run.id;
-          const executed = await this.executeRun(run.id, options.runner, { worktreePath: lanePath, laneId: `dag-${step.id}`, taskStatus: 'none', evidenceBase: mergeBase });
-          if (executed.status === 'cancelled' || taskCancelled()) {
-            results.set(step.id, { stepId: step.id, name: step.name, status: 'cancelled', runId, commitSha: null, worktreePath: lanePath, changedFiles: executed.artifacts.changedFiles, error: 'Task was cancelled.' });
-            return;
-          }
-          if (executed.status !== 'review') {
-            results.set(step.id, { stepId: step.id, name: step.name, status: 'failed', runId, commitSha: null, worktreePath: lanePath, changedFiles: executed.artifacts.changedFiles, error: `Run ended in ${executed.status}.` });
-            return;
-          }
-          const accepted = await this.acceptRun(run.id);
-          outputs.set(step.id, executed.artifacts.output.slice(0, 2000));
-          results.set(step.id, { stepId: step.id, name: step.name, status: 'completed', runId, commitSha: accepted.commitSha, worktreePath: lanePath, changedFiles: accepted.artifacts.changedFiles, error: null });
-        } catch (error) {
+        const captured = capturePipelineStepOutput(executed.artifacts.output, executed.artifacts.outputTruncated);
+        if (step.requiresApproval) {
           results.set(step.id, {
             stepId: step.id,
             name: step.name,
-            status: taskCancelled() ? 'cancelled' : 'failed',
+            status: 'awaiting_approval',
             runId,
             commitSha: null,
-            worktreePath: existsSync(lanePath) ? lanePath : null,
-            changedFiles: [],
-            error: taskCancelled() ? 'Task was cancelled.' : error instanceof Error ? error.message : String(error),
+            worktreePath: lanePath,
+            changedFiles: executed.artifacts.changedFiles,
+            ...captured,
+            error: null,
           });
+          return;
         }
-      };
+        const accepted = await this.acceptRun(run.id);
+        results.set(step.id, {
+          stepId: step.id,
+          name: step.name,
+          status: 'completed',
+          runId,
+          commitSha: accepted.commitSha,
+          worktreePath: lanePath,
+          changedFiles: accepted.artifacts.changedFiles,
+          ...captured,
+          error: null,
+        });
+      } catch (error) {
+        results.set(step.id, {
+          stepId: step.id,
+          name: step.name,
+          status: taskCancelled() ? 'cancelled' : 'failed',
+          runId,
+          commitSha: null,
+          worktreePath: existsSync(lanePath) ? lanePath : null,
+          changedFiles: [],
+          error: taskCancelled() ? 'Task was cancelled.' : error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
 
-      const pending = new Set(pipeline.steps.map(step => step.id));
-      while (pending.size > 0) {
-        if (taskCancelled()) {
-          for (const step of pipeline.steps) {
-            if (!pending.has(step.id)) continue;
-            results.set(step.id, { stepId: step.id, name: step.name, status: 'cancelled', runId: null, commitSha: null, worktreePath: null, changedFiles: [], error: 'Task was cancelled.' });
-          }
-          break;
-        }
-        // Drop dependents of failed or skipped steps before scheduling anything.
+    const pending = new Set(pipeline.steps.filter(step => !results.has(step.id)).map(step => step.id));
+    while (pending.size > 0) {
+      if (taskCancelled()) {
         for (const step of pipeline.steps) {
           if (!pending.has(step.id)) continue;
-          const blocked = dependencyIds(step)
-            .map(id => results.get(id))
-            .find(entry => entry && entry.status !== 'completed');
-          if (blocked) {
-            results.set(step.id, { stepId: step.id, name: step.name, status: 'skipped', runId: null, commitSha: null, worktreePath: null, changedFiles: [], error: `Dependency ${blocked.stepId} did not complete.` });
-            pending.delete(step.id);
-          }
+          results.set(step.id, { stepId: step.id, name: step.name, status: 'cancelled', runId: null, commitSha: null, worktreePath: null, changedFiles: [], error: 'Task was cancelled.' });
         }
-
-        const ready = pipeline.steps.filter(step => (
-          pending.has(step.id) && dependencyIds(step).every(id => results.get(id)?.status === 'completed')
-        ));
-        if (ready.length === 0) {
-          for (const step of pipeline.steps) {
-            if (!pending.has(step.id)) continue;
-            results.set(step.id, { stepId: step.id, name: step.name, status: 'skipped', runId: null, commitSha: null, worktreePath: null, changedFiles: [], error: 'Dependencies were not met.' });
-            pending.delete(step.id);
-          }
-          break;
+        break;
+      }
+      // Drop dependents of failed or skipped steps before scheduling anything.
+      for (const step of pipeline.steps) {
+        if (!pending.has(step.id)) continue;
+        const blocked = dependencyIds(step)
+          .map(id => results.get(id))
+          .find(entry => entry && entry.status !== 'completed');
+        if (blocked) {
+          results.set(step.id, { stepId: step.id, name: step.name, status: 'skipped', runId: null, commitSha: null, worktreePath: null, changedFiles: [], error: `Dependency ${blocked.stepId} did not complete.` });
+          pending.delete(step.id);
         }
-
-        for (let start = 0; start < ready.length; start += maxConcurrency) {
-          await Promise.all(ready.slice(start, start + maxConcurrency).map(step => runStep(step)));
-        }
-        for (const step of ready) pending.delete(step.id);
       }
 
-      const fileOwners = new Map<string, Set<string>>();
-      for (const result of results.values()) {
-        for (const file of result.changedFiles) {
-          const owners = fileOwners.get(file) ?? new Set<string>();
-          owners.add(result.stepId);
-          fileOwners.set(file, owners);
+      const ready = pipeline.steps.filter(step => (
+        pending.has(step.id) && dependencyIds(step).every(id => results.get(id)?.status === 'completed')
+      ));
+      if (ready.length === 0) {
+        for (const step of pipeline.steps) {
+          if (!pending.has(step.id)) continue;
+          results.set(step.id, { stepId: step.id, name: step.name, status: 'skipped', runId: null, commitSha: null, worktreePath: null, changedFiles: [], error: 'Dependencies were not met.' });
+          pending.delete(step.id);
         }
+        break;
       }
-      const conflicts: DagConflict[] = [...fileOwners.entries()]
-        .filter(([, owners]) => owners.size > 1)
-        .map(([file, owners]) => ({ file, stepIds: [...owners] }));
 
-      const steps = pipeline.steps.map(step => results.get(step.id)).filter((result): result is DagStepResult => Boolean(result));
-      const completed = steps.filter(step => step.status === 'completed').length;
-      const failed = steps.filter(step => step.status === 'failed').length;
-      const skipped = steps.filter(step => step.status === 'skipped').length;
-      const cancelled = taskCancelled();
-      const taskStatus: TaskRunState = cancelled ? 'cancelled' : completed > 0 ? 'review' : 'failed';
-      const completedAt = new Date().toISOString();
+      const approval = ready.find(step => step.requiresApproval);
+      const parallel = ready.filter(step => !step.requiresApproval);
+      const executed: TaskPipelineStep[] = [];
+      for (let start = 0; start < parallel.length; start += maxConcurrency) {
+        const batch = parallel.slice(start, start + maxConcurrency);
+        await Promise.all(batch.map(step => runStep(step)));
+        executed.push(...batch);
+      }
+      // Run at most one gated step per wave, alone. If it pauses, the other ready approvals remain
+      // pending for the next resume instead of producing several concurrent awaiting results.
+      if (approval) {
+        await runStep(approval);
+        executed.push(approval);
+      }
+      for (const step of executed) pending.delete(step.id);
+      if ([...results.values()].some(result => result.status === 'awaiting_approval')) break;
+    }
 
-      const saved: TaskPipeline = {
-        steps: pipeline.steps,
-        results: steps.map(step => ({
-          stepId: step.stepId,
-          status: step.status === 'completed' ? 'completed' as const : step.status === 'cancelled' ? 'cancelled' as const : 'failed' as const,
-          ...(step.runId ? { runId: step.runId } : {}),
-          ...(step.commitSha ? { commitSha: step.commitSha } : {}),
-          ...(step.error ? { error: step.error } : {}),
-          startedAt,
-          completedAt,
-        })),
-        status: cancelled ? 'cancelled' : completed > 0 ? 'completed' : 'failed',
+    const fileOwners = new Map<string, Set<string>>();
+    for (const result of results.values()) {
+      for (const file of result.changedFiles) {
+        const owners = fileOwners.get(file) ?? new Set<string>();
+        owners.add(result.stepId);
+        fileOwners.set(file, owners);
+      }
+    }
+    const conflicts: DagConflict[] = [...fileOwners.entries()]
+      .filter(([, owners]) => owners.size > 1)
+      .map(([file, owners]) => ({ file, stepIds: [...owners] }));
+
+    const steps = pipeline.steps.map(step => results.get(step.id)).filter((result): result is DagStepResult => Boolean(result));
+    const completed = steps.filter(step => step.status === 'completed').length;
+    const failed = steps.filter(step => step.status === 'failed').length;
+    const skipped = steps.filter(step => step.status === 'skipped').length;
+    const cancelled = taskCancelled();
+    const paused = steps.some(step => step.status === 'awaiting_approval');
+    const taskStatus: TaskRunState = paused ? 'running' : cancelled ? 'cancelled' : completed > 0 ? 'review' : 'failed';
+    const pipelineStatus: TaskPipeline['status'] = paused ? 'awaiting_approval' : cancelled ? 'cancelled' : completed > 0 ? 'completed' : 'failed';
+    const completedAt = paused ? undefined : new Date().toISOString();
+
+    const saved: TaskPipeline = {
+      steps: pipeline.steps,
+      results: steps.map(step => ({
+        stepId: step.stepId,
+        status: step.status === 'completed'
+          ? 'completed' as const
+          : step.status === 'cancelled'
+            ? 'cancelled' as const
+            : step.status === 'awaiting_approval'
+              ? 'awaiting_approval' as const
+              : 'failed' as const,
+        ...(step.runId ? { runId: step.runId } : {}),
+        ...(step.commitSha ? { commitSha: step.commitSha } : {}),
+        ...(step.changedFiles.length > 0 ? { changedFiles: step.changedFiles } : {}),
+        ...(step.output ? { output: step.output } : {}),
+        ...(step.outputTruncated ? { outputTruncated: true } : {}),
+        ...(step.error ? { error: step.error } : {}),
         startedAt,
-        completedAt,
-      };
-      await this.saveTaskPipeline(taskId, saved);
-      await this.updateTaskStatus(taskId, taskStatus);
+        ...(completedAt ? { completedAt } : {}),
+      })),
+      status: pipelineStatus,
+      executionMode: 'dag',
+      maxConcurrency,
+      startedAt,
+      ...(completedAt ? { completedAt } : {}),
+    };
+    await this.saveTaskPipeline(taskId, saved);
+    await this.updateTaskStatus(taskId, taskStatus);
+
+    if (paused) {
+      const awaiting = steps.find(step => step.status === 'awaiting_approval');
+      await this.recordAudit({
+        type: 'pipeline.dag.paused',
+        taskId,
+        teamId: task.teamId,
+        data: {
+          stepId: awaiting?.stepId ?? null,
+          runId: awaiting?.runId ?? null,
+          completed,
+          pending: pipeline.steps.filter(step => !results.has(step.id)).length,
+          maxConcurrency,
+        },
+      });
+    } else {
       await this.recordAudit({
         type: 'pipeline.dag.executed',
         taskId,
         teamId: task.teamId,
         data: { maxConcurrency, steps: pipeline.steps.length, completed, failed, skipped, cancelled: steps.filter(step => step.status === 'cancelled').length, conflicts: conflicts.length },
       });
-
-      return { taskId, maxConcurrency, steps, conflicts, warnings, taskStatus };
-    } finally {
-      this.activePipelines.delete(taskId);
     }
+
+    return {
+      pipeline: saved,
+      result: { taskId, maxConcurrency, steps, conflicts, warnings, taskStatus },
+    };
   }
 
   /** Build the Role's dry-run execution plan. Returns null when the Role does not exist. */
