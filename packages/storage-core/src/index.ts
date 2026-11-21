@@ -33,9 +33,9 @@ import { kernelMigrations, type Migration } from './migrations.js';
 import { ProfileStore } from './profiles-store.js';
 import { RoleStore } from './roles-store.js';
 import { TeamStore } from './teams-store.js';
-import { addWorktree, linkNodeModules, mergeDependencyCommits, pinWorktreeCommit, removeWorktree } from './worktree.js';
+import { addWorktree, linkNodeModules, mergeDependencyCommits, pinPipelineCommit, pinWorktreeCommit, removeWorktree } from './worktree.js';
 import { assertWorktreeClean, commitWorktreeChanges, resetWorktree } from './commit.js';
-import { expandPipelineTemplate, type PipelineTemplateSnapshot } from './pipeline-template.js';
+import { expandPipelineTemplate, validatePipelineTemplates, type PipelineTemplateSnapshot } from './pipeline-template.js';
 
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
@@ -835,6 +835,10 @@ export class KernelStore {
       visited.add(id);
     };
     for (const step of steps) visit(step.id);
+    const templateIssues = validatePipelineTemplates(steps);
+    if (templateIssues.length > 0) {
+      throw new Error(templateIssues.map(issue => issue.message).join(' '));
+    }
     return { steps, results: [], status: 'idle' };
   }
 
@@ -1562,6 +1566,15 @@ export class KernelStore {
       if (pipeline.status !== 'completed') {
         throw new Error(`Task ${id} pipeline is ${pipeline.status} and cannot be rerun; only a completed pipeline can be rerun.`);
       }
+      // Pin every previous step commit before resetting the worktree. A completed rerun clears
+      // the old results, so without refs the old commits would only be loose objects and could
+      // be pruned by git gc even though the audit still names them.
+      const previousCommits = pipeline.results.flatMap(result => (
+        result.commitSha ? [{ runId: result.runId ?? result.stepId, commitSha: result.commitSha }] : []
+      ));
+      for (const previous of previousCommits) {
+        await pinPipelineCommit(task.repo, task.id, previous.commitSha, previous.runId);
+      }
       await resetWorktree(task.worktreePath, task.baseCommit || task.baseRef);
       await linkNodeModules(task.repo, task.worktreePath);
       const restarted: TaskPipeline = {
@@ -1576,7 +1589,7 @@ export class KernelStore {
         type: 'pipeline.rerun',
         taskId: id,
         teamId: task.teamId,
-        data: { steps: pipeline.steps.length, previousResults: pipeline.results.length },
+        data: { steps: pipeline.steps.length, previousResults: pipeline.results.length, pinnedCommits: previousCommits },
       });
       return await this.runPipelineSteps(id, restarted, 0, runner);
     } finally {

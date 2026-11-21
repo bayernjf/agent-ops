@@ -118,6 +118,23 @@ export async function mergeDependencyCommits(worktreePath: string, commits: stri
  * under its own ref so accepting a second lane cannot overwrite the first.
  */
 export async function pinWorktreeCommit(repo: string, taskId: string, sha: string, laneId?: string): Promise<void> {
-  const ref = laneId ? `refs/agent-ops/tasks/${taskId}/lanes/${laneId}` : `refs/agent-ops/tasks/${taskId}`;
+  // Both refs must be nested: git cannot store refs/agent-ops/tasks/<id> as a loose ref file
+  // and refs/agent-ops/tasks/<id>/lanes/<lane> as a directory at the same time. A serial accept
+  // followed by a lane accept used to fail with "cannot lock ref" for that reason.
+  const ref = laneId
+    ? `refs/agent-ops/tasks/${taskId}/lanes/${laneId}`
+    : `refs/agent-ops/tasks/${taskId}/accepts/latest`;
+  await execFileAsync('git', ['update-ref', ref, sha], { cwd: repo });
+}
+
+/**
+ * Keep an accepted pipeline step commit reachable after a completed pipeline is rerun and its
+ * worktree is reset back to the task base. The ref is keyed by the old run id, so repeated
+ * reruns add history instead of overwriting a single main-task ref.
+ */
+export async function pinPipelineCommit(repo: string, taskId: string, sha: string, runId: string): Promise<void> {
+  // Keep this out of refs/agent-ops/tasks/<id>: the default accept ref is a file at that path,
+  // so nested refs under it would collide with the existing loose ref on disk.
+  const ref = `refs/agent-ops/pipelines/${taskId}/${runId}`;
   await execFileAsync('git', ['update-ref', ref, sha], { cwd: repo });
 }

@@ -139,6 +139,28 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('returns 400 for a pipeline prompt with a bad template token', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store);
+      const response = await app.request('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repo: '/tmp/repo',
+          baseRef: 'main',
+          title: 'Bad template',
+          pipeline: { steps: [{ name: 'Implement', agentId: 'codex', prompt: 'Use {{step:missing.output}}.' }] },
+        }),
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: expect.stringContaining('unknown step missing') });
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('serves and executes a task pipeline through the API', async () => {
     const { store, directory } = await openStore();
     try {

@@ -31,11 +31,11 @@
 
 ### Pipeline 提示词模板
 
-后续 step 的 prompt 可以引用已完成上游 step 的结果：`{{previous.output}}` / `{{previous.commit}}`（串行上一步；DAG 步骤取最后一个依赖），以及 `{{step:<id>.output}}` / `{{step:<id>.commit}}`（任意已完成 step，按 step id）。只在目标 step 已完成且字段有值时替换；未知 id、未完成 step、或没有记录 output/commit 时保留原 token，不静默清空。output 用的是内核记录值（当前每条 step result 上限 2000 字符）。实现与测试见 `packages/storage-core/src/pipeline-template.ts`、`test/pipeline-template.test.ts`。
+后续 step 的 prompt 可以引用已完成上游 step 的结果：`{{previous.output}}` / `{{previous.commit}}`（串行上一步；DAG 步骤取最后一个依赖），以及 `{{step:<id>.output}}` / `{{step:<id>.commit}}`（任意已完成 step，按 step id）；花括号内允许空白（如 `{{ previous.output }}`）。创建任务时会校验 token：未知 step id、字段拼错、引用自己的 output/commit 或未闭合 `{{` 会返回 400。运行期只在目标 step 已完成且字段有值时替换；未完成 step、或没有记录 output/commit 时保留原 token，不静默清空。output 用的是内核记录值（当前每条 step result 上限 2000 字符）。实现与测试见 `packages/storage-core/src/pipeline-template.ts`、`test/pipeline-template.test.ts`。
 
 ### Pipeline 重跑
 
-completed pipeline 通过 `POST /api/tasks/:id/pipeline/rerun` 从第一步重跑：worktree 重置到任务 base commit、旧 step results 清空，旧 commit 退到 git 历史；failed pipeline 仍走 retry，保留已完成的 step 前缀。Studio 的 Rerun pipeline 按钮执行前会二次确认。
+completed pipeline 通过 `POST /api/tasks/:id/pipeline/rerun` 从第一步重跑：先把旧 step commit 逐个 pin 到 `refs/agent-ops/pipelines/<taskId>/<runId>`，再把 worktree 重置到任务 base commit、清空旧 step results；旧 commit 不会因 `git gc` 变成不可达对象。failed pipeline 仍走 retry，保留已完成的 step 前缀。Studio 的 Rerun pipeline 按钮执行前会二次确认。
 
 ### DAG 与并行 lanes 的运行入口
 

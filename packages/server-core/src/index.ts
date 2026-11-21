@@ -125,7 +125,7 @@ export type KernelAppOptions = {
 function errorResponse(context: Context, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes('was not found')) return context.json({ error: message }, 404);
-  if (message.includes('not part of run') || message.includes('Select at least one changed file') || message.includes('invalid worktree path')) {
+  if (message.includes('not part of run') || message.includes('Select at least one changed file') || message.includes('invalid worktree path') || message.includes('template token')) {
     return context.json({ error: message }, 400);
   }
   if (message.includes('is disabled')) return context.json({ error: message }, 400);
