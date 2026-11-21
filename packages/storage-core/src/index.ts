@@ -33,7 +33,7 @@ import { kernelMigrations, type Migration } from './migrations.js';
 import { ProfileStore } from './profiles-store.js';
 import { RoleStore } from './roles-store.js';
 import { TeamStore } from './teams-store.js';
-import { addWorktree, pinWorktreeCommit, removeWorktree } from './worktree.js';
+import { addWorktree, linkNodeModules, pinWorktreeCommit, removeWorktree } from './worktree.js';
 import { assertWorktreeClean, commitWorktreeChanges, resetWorktree } from './commit.js';
 
 const require = createRequire(import.meta.url);
@@ -906,6 +906,7 @@ export class KernelStore {
     if (existing.worktreePath) return existing;
     const path = join(this.dataDirectory, 'tasks', id, 'work');
     const { headCommit } = await addWorktree(existing.repo, existing.baseRef, path);
+    await linkNodeModules(existing.repo, path);
     const now = new Date().toISOString();
     this.kernelOrm.update(tasks).set({
       worktreePath: path,
@@ -1211,6 +1212,7 @@ export class KernelStore {
       if (hygiene === 'fresh') {
         await removeWorktree(task.repo, targetPath).catch(() => undefined);
         await addWorktree(task.repo, base, targetPath);
+        await linkNodeModules(task.repo, targetPath);
       } else {
         await resetWorktree(targetPath, base || undefined);
       }
@@ -2184,6 +2186,7 @@ export class KernelStore {
       try {
         if (existsSync(lanePath)) await removeWorktree(task.repo, lanePath).catch(() => undefined);
         await addWorktree(task.repo, base, lanePath);
+        await linkNodeModules(task.repo, lanePath);
         const run = await this.createRun(taskId, agentId, role.id, `Parallel lane: ${role.name}`);
         const lane: LaneState = {
           roleId,
@@ -2334,6 +2337,7 @@ export class KernelStore {
         try {
           if (existsSync(lanePath)) await removeWorktree(task.repo, lanePath).catch(() => undefined);
           await addWorktree(task.repo, branchFrom ?? base, lanePath);
+          await linkNodeModules(task.repo, lanePath);
           const agentId = await this.resolvePipelineStepAgent(step);
           const instruction = `DAG step: ${step.name}${step.prompt ? `\n\n${step.prompt}` : ''}`;
           const run = await this.createRun(taskId, agentId, step.roleId, instruction);
