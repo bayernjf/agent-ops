@@ -891,6 +891,11 @@ export class KernelStore {
     return rows.map(toTaskRecord);
   }
 
+  listTasksByTeam(teamId: string): TaskRecord[] {
+    const rows = this.kernelOrm.select().from(tasks).where(eq(tasks.teamId, teamId)).all() as TaskRow[];
+    return rows.map(toTaskRecord);
+  }
+
   async updateTaskStatus(id: string, status: TaskRunState): Promise<TaskRecord> {
     const existing = this.getTask(id);
     if (!existing) throw new Error(`Task ${id} was not found.`);
