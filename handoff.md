@@ -19,6 +19,7 @@
 - [x] **Task 级取消** — 已完成（2026-11-21）。新增 `cancelTask` / `POST /api/tasks/:id/cancel` / `agent_ops_cancel_task` / Studio“取消任务”：`queued` / `running` / `review` 可取消，abort 活动 Run，串行 Pipeline、DAG 与并行 lane 都停止后续步骤，Pipeline 与步骤变 `cancelled`，终态拒绝；真实浏览器已验证排队任务取消、状态与 Pipeline 步骤变“已取消”、审计 `task.cancelled`；全仓 68 文件 / 760 tests 绿，Studio build 1661 modules 成功。
 - [x] **DAG 多依赖合并** — 已完成（2026-11-21）。`executeDagPipeline` 不再只取最后一个依赖 commit：join step 先 checkout 最后一个依赖，再把其余依赖逐个 `--no-ff` merge 成真实 merge commit 作为 `evidenceBase`；合并冲突则 abort 该次 merge、step 标 failed 并列出冲突文件。新增依赖合并冲突与已包含依赖不重复 merge 用例；全仓 68 文件 / 762 tests 绿，typecheck 0。
 - [x] **重跑前 pin 旧 pipeline commit** — 已完成（2026-11-21）。completed pipeline 重跑前把每个旧 step commit pin 到 `refs/agent-ops/pipelines/<taskId>/<runId>`，再 reset worktree、清空旧 results；`pipeline.rerun` 审计记录 `pinnedCommits`。测试覆盖 `git gc --prune=now` 后旧 commit 仍可解析；全仓 68 文件 / 762 tests 绿。
+- [x] **修复任务 ref 命名空间冲突** — 已完成（2026-11-21）。默认 accept ref 从 `refs/agent-ops/tasks/<taskId>` 改为 `.../<taskId>/accepts/latest`；旧路径是文件，导致同一任务先串行接受再接受 lane 时 `update-ref` 报 “cannot lock ref”。新增默认 ref 与 lane ref 共存测试；全仓 68 文件 / 763 tests 绿。
 - [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
@@ -77,13 +78,14 @@
 
 ## M0 基础闭环 — 已完成（2026-11-20）
 
-- [x] `acceptRun` 真正落 commit：新增内核共享 `packages/storage-core/src/commit.ts`，accept 时 `git add -A`，拒绝 `.env` / 外部软链，提交后回写 `runs.commit_sha`；无改动时回写当前 HEAD，不伪造新提交。验收提交同时 pin 到 `refs/agent-ops/tasks/<taskId>`，worktree 释放后仍可读取。
+- [x] `acceptRun` 真正落 commit：新增内核共享 `packages/storage-core/src/commit.ts`，accept 时 `git add -A`，拒绝 `.env` / 外部软链，提交后回写 `runs.commit_sha`；无改动时回写当前 HEAD，不伪造新提交。验收提交同时 pin 到 `refs/agent-ops/tasks/<taskId>/accepts/latest`，worktree 释放后仍可读取。2026-11-21 从旧的 `refs/agent-ops/tasks/<taskId>` 迁到嵌套路径，旧 ref 保留但不再写入，避免和 `lanes/*` 的 ref 目录冲突。
 - [x] `releaseTask` 脏 worktree 拒绝：删除前先 `git status --porcelain`，有未提交改动即报错，不再让 `worktree remove --force` 吞掉未验收工作。
 - [x] `rejectRun` 重置 worktree：按 provision 时记录的 `base_commit` 执行 `reset --hard + clean -fdx`，上一轮 agent 提交、未跟踪文件和被忽略文件都不会进入下一轮。
 - [x] Task 增加 `acceptanceCriteria` / `priority` / `baseCommit`：migration `0010_task_closure`、storage schema、server `createTaskSchema` 三处同步；`executeRun` 把标准和优先级写入 agent prompt，不再写死空数组。
 - [x] 测试覆盖：accept 提交未提交改动、`.env` 拒提交、reject 回到 base 并可重跑、release 脏 worktree 拒绝、criteria/priority API 往返、prompt 含 priority；全仓 typecheck 0，44 文件 / 614 tests 绿。
 - [x] 本轮提交：`73026db feat(storage-core): close the task acceptance and commit loop`、`60ec8dd fix(storage-core): keep accepted commits reachable`。
 - [ ] M0 的**真实模型**验收仍受登录阻塞，见上方“真实模型 UI E2E”；本轮闭环使用确定性 runner 与真实 git 临时仓验证，不把它冒充真实模型已验收。
+- [x] 2026-11-21 修复 ref 命名空间：`pinWorktreeCommit` 默认 accept ref 改为 `refs/agent-ops/tasks/<taskId>/accepts/latest`，lane ref 仍为 `.../lanes/<laneId>`。旧默认 ref 是 refs 文件，无法再创建同级的 `lanes/` 子 ref；回归测试同时 pin 两种 ref 并都能 `rev-parse`。
 
 ## M1-A Role + Runtime Registry — 已完成（2026-11-20）
 
