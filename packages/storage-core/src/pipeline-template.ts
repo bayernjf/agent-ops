@@ -3,7 +3,7 @@
  *
  * Supported tokens:
  * - `{{previous.output}}` / `{{previous.commit}}`: the adjacent upstream step of a serial
- *   pipeline (for a DAG step, the last dependency it branched from).
+ *   pipeline (for a DAG step, the last dependency).
  * - `{{step:<id>.output}}` / `{{step:<id>.commit}}`: any earlier completed step by id.
  *
  * Substitution only happens when the referenced step completed and the field has a value;

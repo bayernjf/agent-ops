@@ -22,7 +22,7 @@
 | 策略预览 | 角色表单保存前调用 `POST /api/policy/evaluate`，逐 Runtime 展示只读、执行精度、人工门、allow/deny 判定与不支持原因；策略一改，旧结果立即清空 |
 | Teams + Handoff | 团队 = 花名册 + 交接边 + 可选 owner（落盘角色，必须最后一步且不再交接）；Pipeline 每跨一条边写一条交接收据（上游 commit + changedFiles）；Studio 任务队列按选中团队调用 `GET /api/teams/:teamId/tasks`，不拉全量任务 |
 | 串行 Pipeline | 每步独立 Run，成功后自动提交并交接；支持每步审批门、失败重跑、从失败 step 重试、completed 后从第一步重跑；后续 step 的 prompt 可模板引用上游 output / commit |
-| 并行 DAG | 步骤可写 `dependsOn`（`[]` 为根）；ready steps 在各自 worktree 内有界并发，失败依赖跳过下游，文件冲突只报告、不合并；Studio 任务面板可触发并展示每步结果 |
+| 并行 DAG | 步骤可写 `dependsOn`（`[]` 为根）；ready steps 在各自 worktree 内有界并发，失败依赖跳过下游；join 步骤把多个依赖 commit 依次 `--no-ff` merge 成新 base，冲突则整步 failed 并列出冲突文件；跨步骤文件改动重叠只报告、不回写任务 worktree；Studio 任务面板可触发并展示每步结果 |
 | Coordinator | 按团队花名册与交接边推导 Pipeline（确定性拓扑序），预览后由人点击应用；owner 置末并标记 `ownsDeliverable`，完成后若没改动任何文件会在 summary 里告警 |
 | 并行 lanes | 每角色独立 worktree，有界并发；lane 结束后统一任务状态；文件级冲突只报告、不自动合并；接受 / 驳回按 lane 独立提交与 pin；Studio 结果面板可直接决策每条 lane，并把已接受的一条标记为最终交付（指针，不合并） |
 | 证据与审计 | Run 证据（含实际工具调用与被拒原因，拿不到标 unknown）；append-only 审计可回放，Studio 可按任务 / 团队 / 类型筛选并导出 JSON；单任务 JSON 证据导出；成功率 / 返工 / 用量 / 耗时指标 |
@@ -41,11 +41,11 @@ completed pipeline 通过 `POST /api/tasks/:id/pipeline/rerun` 从第一步重�
 
 Studio 任务展开面板在任务处于 `queued` / `review` 时提供两个分支动作：
 
-- **Run as DAG**：调用 `POST /api/tasks/:id/pipeline/dag`，按步骤的 `dependsOn` 在独立 worktree 内有界并发；DAG 不支持 `requiresApproval`。结果面板展示每步状态、commit 与未自动合并的依赖 warning。
+- **Run as DAG**：调用 `POST /api/tasks/:id/pipeline/dag`，按步骤的 `dependsOn` 在独立 worktree 内有界并发；DAG 不支持 `requiresApproval`。多个依赖会先 checkout 最后一个依赖 commit，再把其余依赖依次 `--no-ff` merge 成真实 merge commit，作为该 step 的 `evidenceBase`；任一依赖合并冲突则该 step `failed`，错误信息列出冲突文件。结果面板展示每步状态、commit 与冲突。
 - **Run parallel team**：仅对绑定了 Team 的任务显示，调用 `POST /api/tasks/:id/parallel/execute`，按团队花名册每角色一条 lane；结果面板展示 lane 状态、变更文件数和文件冲突。
 - **Lane 决策**：并行结果面板在 lane 处于 `review` 时直接提供 Accept lane / Reject lane；已接受的 lane 可点 Set as final，调用 `POST /api/tasks/:id/final-lane` 持久化 `finalRunId` / `finalCommitSha`。最终选择只是指向已 pin 的 lane commit，不把改动 merge 到任务 worktree；重新选择会替换指针，并写 `task.final_lane.selected` 审计。
 
-两个动作都不会自动合并产物；lane/step 的 commit 仍要人工接受。任务没有运行记录且状态为 `queued` 时，面板还提供删除入口（`DELETE /api/tasks/:id`）：删除任务及其 worktree；任何已有 Run 的任务会被拒绝，因为 Run 与审计是证据。
+两个动作都不会把结果自动合并回任务主 worktree；DAG 只在自己的 step lane 内合并依赖 commit，lane/step 的产物仍要人工接受。任务没有运行记录且状态为 `queued` 时，面板还提供删除入口（`DELETE /api/tasks/:id`）：删除任务及其 worktree；任何已有 Run 的任务会被拒绝，因为 Run 与审计是证据。
 
 ### Studio 任务看板
 

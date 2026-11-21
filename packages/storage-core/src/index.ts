@@ -33,7 +33,7 @@ import { kernelMigrations, type Migration } from './migrations.js';
 import { ProfileStore } from './profiles-store.js';
 import { RoleStore } from './roles-store.js';
 import { TeamStore } from './teams-store.js';
-import { addWorktree, linkNodeModules, pinWorktreeCommit, removeWorktree } from './worktree.js';
+import { addWorktree, linkNodeModules, mergeDependencyCommits, pinWorktreeCommit, removeWorktree } from './worktree.js';
 import { assertWorktreeClean, commitWorktreeChanges, resetWorktree } from './commit.js';
 import { expandPipelineTemplate, type PipelineTemplateSnapshot } from './pipeline-template.js';
 
@@ -436,7 +436,7 @@ export type CoordinatorSummary = {
   warnings: string[];
 };
 
-/** One step of a DAG run: it executed in its own worktree branched from its dependencies. */
+/** One step of a DAG run: it executed in its own worktree starting from its merged dependencies. */
 export type DagStepResult = {
   stepId: string;
   name: string;
@@ -2543,9 +2543,9 @@ export class KernelStore {
   }
 
   /**
-   * Run a pipeline as a DAG: every ready step gets its own worktree branched from its
+   * Run a pipeline as a DAG: every ready step gets its own worktree merged from its
    * dependencies' commits, up to `maxConcurrency` run at once. Steps whose dependencies
-   * failed are skipped, and file-level overlaps are reported, never merged.
+   * failed are skipped, and file-level overlaps are reported, never merged into the task.
    */
   async executeDagPipeline(
     taskId: string,
@@ -2592,13 +2592,11 @@ export class KernelStore {
           return;
         }
         const dependencies = dependencyIds(step);
+        const dependencyCommits = dependencies.map(id => results.get(id)?.commitSha ?? null);
         const branchFrom = dependencies.length === 0
           ? base
-          : results.get(dependencies[dependencies.length - 1] ?? '')?.commitSha ?? null;
-        if (dependencies.length > 1) {
-          warnings.push(`Step ${step.id} branched from ${dependencies[dependencies.length - 1]}; commits from ${dependencies.slice(0, -1).join(', ')} are not merged.`);
-        }
-        if (dependencies.length > 0 && !branchFrom) {
+          : dependencyCommits[dependencyCommits.length - 1] ?? null;
+        if (dependencies.length > 0 && dependencyCommits.some(commit => !commit)) {
           results.set(step.id, { stepId: step.id, name: step.name, status: 'skipped', runId: null, commitSha: null, worktreePath: null, changedFiles: [], error: 'A dependency produced no commit.' });
           return;
         }
@@ -2608,6 +2606,12 @@ export class KernelStore {
         try {
           if (existsSync(lanePath)) await removeWorktree(task.repo, lanePath).catch(() => undefined);
           await addWorktree(task.repo, branchFrom ?? base, lanePath);
+          // A join starts at the last dependency, then merges every earlier dependency commit.
+          // The resulting merge commit is the run's evidence base, so its diff excludes all
+          // inherited dependency changes.
+          const mergeBase = dependencyCommits.length > 1
+            ? await mergeDependencyCommits(lanePath, dependencyCommits.slice(0, -1) as string[])
+            : branchFrom ?? base;
           await linkNodeModules(task.repo, lanePath);
           const agentId = await this.resolvePipelineStepAgent(step);
           const snapshots = new Map<string, PipelineTemplateSnapshot>();
@@ -2621,7 +2625,7 @@ export class KernelStore {
           const instruction = `DAG step: ${step.name}${prompt ? `\n\n${prompt}` : ''}`;
           const run = await this.createRun(taskId, agentId, step.roleId, instruction);
           runId = run.id;
-          const executed = await this.executeRun(run.id, options.runner, { worktreePath: lanePath, laneId: `dag-${step.id}`, taskStatus: 'none', evidenceBase: branchFrom ?? base });
+          const executed = await this.executeRun(run.id, options.runner, { worktreePath: lanePath, laneId: `dag-${step.id}`, taskStatus: 'none', evidenceBase: mergeBase });
           if (executed.status === 'cancelled' || taskCancelled()) {
             results.set(step.id, { stepId: step.id, name: step.name, status: 'cancelled', runId, commitSha: null, worktreePath: lanePath, changedFiles: executed.artifacts.changedFiles, error: 'Task was cancelled.' });
             return;

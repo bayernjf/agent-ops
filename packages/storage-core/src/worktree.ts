@@ -84,6 +84,35 @@ export async function linkNodeModules(repo: string, worktreePath: string): Promi
 }
 
 /**
+ * Build the join base for a DAG step with multiple dependencies. The worktree starts at the last
+ * dependency's commit; every other dependency commit is merged with a real merge commit so none
+ * of their changes are silently dropped. A conflicting merge is aborted and reported with the
+ * unmerged paths, leaving the step failed rather than running on a partial tree.
+ */
+export async function mergeDependencyCommits(worktreePath: string, commits: string[]): Promise<string> {
+  for (const commit of commits) {
+    const ancestor = await execFileAsync('git', ['merge-base', '--is-ancestor', commit, 'HEAD'], { cwd: worktreePath })
+      .then(() => true)
+      .catch(() => false);
+    if (ancestor) continue;
+    try {
+      await execFileAsync(
+        'git',
+        ['-c', 'user.name=Agent Ops', '-c', 'user.email=agent-ops@localhost', 'merge', '--no-ff', '--no-edit', commit],
+        { cwd: worktreePath, maxBuffer: 4 * 1024 * 1024 },
+      );
+    } catch {
+      const conflicts = await execFileAsync('git', ['diff', '--name-only', '--diff-filter=U'], { cwd: worktreePath })
+        .then(result => result.stdout.trim().split(/\r?\n/).filter(Boolean))
+        .catch(() => []);
+      await execFileAsync('git', ['merge', '--abort'], { cwd: worktreePath }).catch(() => undefined);
+      throw new Error(`DAG dependency merge conflict in ${conflicts.length > 0 ? conflicts.join(', ') : commit}.`);
+    }
+  }
+  return (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: worktreePath })).stdout.trim();
+}
+
+/**
  * Keep an accepted detached-HEAD commit reachable after its worktree is removed. Without a
  * ref, the commit is only a loose object and can be pruned by `git gc`. A parallel lane pins
  * under its own ref so accepting a second lane cannot overwrite the first.
