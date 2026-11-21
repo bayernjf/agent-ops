@@ -380,6 +380,7 @@ export type KernelAuditEventType =
   | 'pipeline.step.approved'
   | 'pipeline.step.rejected'
   | 'pipeline.retried'
+  | 'pipeline.rerun'
   | 'pipeline.planned'
   | 'pipeline.dag.executed'
   | 'parallel.executed'
@@ -1428,6 +1429,46 @@ export class KernelStore {
         data: { stepId: pipeline.steps[index]?.id ?? null },
       });
       return await this.runPipelineSteps(id, retried, index, runner);
+    } finally {
+      this.activePipelines.delete(id);
+    }
+  }
+
+  /**
+   * Start a completed pipeline over from its first step. The worktree is reset to the task's
+   * base commit and prior step results are cleared, so the previous run's commits stay in git
+   * history but no longer hold the checkout. Only a completed pipeline can be rerun; a failed
+   * one goes through `retryTaskPipeline` so its completed prefix is preserved.
+   */
+  async rerunTaskPipeline(id: string, runner?: CodexProcessRunner): Promise<TaskPipeline> {
+    if (this.activePipelines.has(id)) throw new Error(`Task ${id} already has a running pipeline.`);
+    this.activePipelines.add(id);
+    try {
+      const task = this.getTask(id);
+      if (!task) throw new Error(`Task ${id} was not found.`);
+      const pipeline = task.pipeline;
+      if (!pipeline || pipeline.steps.length === 0) throw new Error(`Task ${id} has no pipeline configured.`);
+      if (!task.worktreePath) throw new Error(`Task ${id} has no worktree. Provision it before rerunning its pipeline.`);
+      if (pipeline.status !== 'completed') {
+        throw new Error(`Task ${id} pipeline is ${pipeline.status} and cannot be rerun; only a completed pipeline can be rerun.`);
+      }
+      await resetWorktree(task.worktreePath, task.baseCommit || task.baseRef);
+      await linkNodeModules(task.repo, task.worktreePath);
+      const restarted: TaskPipeline = {
+        steps: pipeline.steps,
+        results: [],
+        status: 'running',
+        startedAt: new Date().toISOString(),
+      };
+      await this.saveTaskPipeline(id, restarted);
+      await this.updateTaskStatus(id, 'running');
+      await this.recordAudit({
+        type: 'pipeline.rerun',
+        taskId: id,
+        teamId: task.teamId,
+        data: { steps: pipeline.steps.length, previousResults: pipeline.results.length },
+      });
+      return await this.runPipelineSteps(id, restarted, 0, runner);
     } finally {
       this.activePipelines.delete(id);
     }
