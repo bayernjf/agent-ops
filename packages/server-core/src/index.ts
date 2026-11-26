@@ -26,6 +26,7 @@ import {
 } from '@agent-ops/agent-runtime';
 import { createTokenAuthMiddleware } from './auth.js';
 import { loadCustomAgents, saveCustomAgents } from './agent-catalog.js';
+import { PROMETHEUS_CONTENT_TYPE, renderAgentOpsMetrics } from './prometheus.js';
 
 export { daemonTokenPath, loadOrCreateDaemonToken, createTokenAuthMiddleware } from './auth.js';
 
@@ -182,6 +183,16 @@ export function createKernelApp(store: KernelStore, options: KernelAppOptions = 
   const app = new Hono();
 
   if (options.authToken) app.use('/api/*', createTokenAuthMiddleware(options.authToken));
+
+  // Prometheus scrapes /metrics from the local collector. This route is
+  // deliberately outside /api/* (hence outside the bearer guard) and renders
+  // the same aggregate snapshot as /api/metrics, as bounded counts only.
+  app.get('/metrics', (c) => {
+    return c.text(renderAgentOpsMetrics(store.getMetrics()), 200, {
+      'Content-Type': PROMETHEUS_CONTENT_TYPE,
+      'Cache-Control': 'no-store',
+    });
+  });
 
   // Diagnostics double as the kernel's standalone surface. A webapp-enabled
   // daemon already owns health/doctor/runtime, so it mounts task/run only.

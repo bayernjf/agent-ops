@@ -55,8 +55,12 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
   const store = await KernelStore.open(databasePath);
   const authToken = loadOrCreateDaemonToken();
   const app = createKernelApp(store, { authToken, dataDirectory: dirname(databasePath) });
-  // Loopback only, on purpose: the API is unauthenticated beyond the bearer token.
-  const server = serve({ fetch: app.fetch, port, hostname: '127.0.0.1' });
+  // Loopback by default, on purpose: the API is unauthenticated beyond the
+  // bearer token. Self-hosters who want the local Tier0 collector to scrape
+  // /metrics can opt into a wider bind with AGENT_OPS_HOST=0.0.0.0; /metrics
+  // still exposes aggregate counts only.
+  const hostname = process.env.AGENT_OPS_HOST ?? '127.0.0.1';
+  const server = serve({ fetch: app.fetch, port, hostname });
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
       server.off('listening', onListening);
