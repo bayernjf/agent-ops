@@ -7,6 +7,14 @@
 >
 > 产品规划（非活跃待办，不计入上方待办）：多 Agent 角色与团队 v0.2/v0.3，PRD 见 `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md`，实施拆解见 `docs/prd/Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md`；PD-1～PD-9 已于 2026-11-19 拍板；后续方向备忘（Tier 0 能力包 / 现有 Harness / Personal Agent）见 PRD §12.1–12.2。
 
+<!-- tier0:todos v1 -->
+| id | title | status | priority | owner | next | evidence | updated |
+|---|---|---|---|---|---|---|---|
+| AO-01 | 三 Agent adapter 扩张 | blocked | p1 | owner | 按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode；D7 登录后跑端到端 | `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md` | 2026-11-22 |
+<!-- /tier0:todos -->
+
+### 已完成（历史）
+
 - [x] **真实模型 UI E2E** — 已完成（2026-11-20）。UI 里新建 CodeBuddy 角色与一步 Pipeline 任务，点 `Run pipeline` 由真实 CodeBuddy 2.185.0 执行，任务 done、Run 可见（commit `ea4553f7d2`）。Claude Code / Codex 仍受 CC Switch `base_url` 阻塞，但不影响 CodeBuddy 路径；真实模型 API 路径与 UI 路径均已有证据。
 - [x] **3–5 个本仓 dogfood** — 已完成 3 条真实任务 + 4 次团队运行（2026-11-21）：单任务接受率 3/3、检查通过率 3/3、返工 1 次人工小修；五角色串行 5 步完成（首轮暴露落盘 owner 缺口）；owner 机制补齐并实测落盘；带 owner 的五角色交付重跑成功；依赖链接后五角色完成**真实代码交付**（`listTasksByTeam` + 单测，含 reviewer→owner 修正）。详见下方 “F10-01/F10-02 Dogfood” 章节。
 - [x] **Studio 浏览器复查** — 2026-11-21：Role/Team 表单预算输入（创建 / 编辑回填与探针清理）、completed pipeline 的 Rerun 按钮、Metrics 页（23 runs / 11 tasks 聚合）与 Teams 详情（花名册 / 交接边 / 队列 / 用量）均在真实浏览器查看；Teams 计划预览当时因缺少带团队的 queued 任务未点击，已由下方“Studio 分支入口浏览器验收”补验。
@@ -30,10 +38,10 @@
 - [x] **CLI export --summary 自动化测试** — 已完成（2026-11-22）。把 `export` 逻辑抽到 `apps/cli/src/export-command.ts`：`formatSummary` / `formatDuration` / `runExportCommand`，fetch、文件写入和输出流可注入；测试覆盖上报/缺失 totals、`--summary` 输出、`--out` 文件与字节数、缺 taskId、daemon 错误。新增 5 例；全仓 69 文件 / 789 tests 绿，typecheck 0。
 - [x] **Pipeline 重跑对比视图** — 已完成（2026-11-22）。completed pipeline 重跑时把旧 results / 状态 / 起止时间存入 `pipeline.previousRun`（只保留最近一次，`rerunAt` 记本次重跑时间），`parseTaskPipeline` 白名单保留该快照，daemon 重启后仍可读；Studio 任务 Pipeline 面板新增可折叠“上一轮结果”，逐步骤对比上一轮与当前状态、commit 短 SHA。storage 测试补快照字段、旧 results 全等、关闭重开后的持久化；全仓 69 文件 / 789 tests 绿，typecheck 0，Studio build 1661 modules 成功。真实 CodeBuddy 2.142.0 在隔离 DB + 临时 git 仓完成首次执行（commit `51d06339fe`，12.9 s）与 completed 重跑（commit `99ca2105a5`，15.5 s），`previousRun.results` 与首轮全等，旧 commit pin ref 可解析；Studio 中英文均实测显示“上一轮结果 · 已完成 / Previous run · Completed”、`51d06339fe → 99ca2105a5` 与上一轮 / 当前状态。浏览器验收发现 1011 宽视口下 4 列行右侧被裁且两个状态缺少标签，已改为纵向布局复验通过。
 - [x] **DAG 审批门真实浏览器 E2E** — 已完成（2026-11-22）。隔离 DB + 临时 git 仓建两步 DAG（`gate` 需审批、`tail` 依赖 `gate`），真实 CodeBuddy 2.142.0 先写 `APPROVAL_A.md` 后停在 `awaiting_approval`（persisted results 只有 gate）；Studio 点“通过该步”后自动续跑 `tail`，写 `APPROVAL_B.md` 并完成。最终 pipeline `completed`、`task` 保持 `review` 等待最终接受，提交 `cd79acb307` → `fb5c1e051e`，两步 Run 均 `done`；审计含 `pipeline.dag.paused` / `resumed` / `executed`。证据截图 `/tmp/agent-ops-dag-approval-verify/dag-approval-evidence.png`。
-- [ ] **三 Agent adapter 扩张** — 状态：blocked by D7；下一步：按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode。
 
 > 本仓库从 agent-dev 迁移而来（move + 功能裁剪 + 收尾已闭环）。当前：M1/M2 的功能面（角色 / 团队 / 交接 / 串行与并行协调 / 审计 / 导出 / 指标 / 预算 / 重跑 hygiene / 策略层）已完成并有测试；真实模型验收已由 CodeBuddy 跑通（API + UI + 3 条 dogfood + 五角色串行），Claude Code / Codex 仍受 CC Switch `base_url` 阻塞。
 > 迁移方案与执行记录见 `bayjf/docs/tier0/Tier0-agent-dev并入AgentOps-迁移方案-2026-11-18.md`。
+
 
 ## 迁移（move 阶段）— 已完成
 
