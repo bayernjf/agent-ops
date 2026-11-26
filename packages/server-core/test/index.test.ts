@@ -790,6 +790,23 @@ describe('createKernelApp', () => {
     }
   });
 
+  it('serves /metrics as Prometheus text outside the bearer guard', async () => {
+    const { store, directory } = await openStore();
+    try {
+      const app = createKernelApp(store, { authToken: 'secret-token' });
+      const response = await app.request('/metrics');
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/plain');
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      const text = await response.text();
+      expect(text).toContain('agent_ops_up 1');
+      expect(text).toContain('agent_ops_tasks_total 0');
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('plans, applies and summarizes a team pipeline over the API', async () => {
     const { store, directory } = await openStore();
     try {
