@@ -15,7 +15,7 @@
 
 ### 已完成（历史）
 
-- [x] **`/metrics` Prometheus 端点（Tier0 collector，OB-01）** — 已完成（2026-11-27）。`packages/server-core` 新增 `src/prometheus.ts`（把 `KernelStore.getMetrics()` 快照渲染为 Prometheus 文本）+ `createKernelApp` 挂载 `GET /metrics`（在 `/api/*` 与 bearer guard 之外，只输出聚合计数：任务/运行按 status、返工、usage tokens/cost、按 runtime/role 分组；不导出 repo 路径/prompt/内容）；`apps/daemon` 新增可选 `AGENT_OPS_HOST`（默认仍 `127.0.0.1`，接入 collector 时显式设 `0.0.0.0`）。测试 3 例（渲染 + null 不伪装 0 + 端点免鉴权）；全仓 70 文件 / 792 tests 绿、typecheck 0（本仓无 lint script）。`GET /api/metrics` 业务 JSON 端点保持不变。
+- [x] **`/metrics` Prometheus 端点（Tier0 collector，OB-01）** — 已完成（2026-11-27）。`packages/server-core` 新增 `src/prometheus.ts`（把 `KernelStore.getMetrics()` 快照渲染为 Prometheus 文本）+ `createKernelApp` 挂载 `GET /metrics`（在 `/api/*` 与 bearer guard 之外，只输出聚合计数：任务/运行按 status、返工、usage tokens/cost、按 runtime/role 分组；不导出 repo 路径/prompt/内容）；`apps/daemon` 新增可选 `AGENT_OPS_HOST`（默认仍 `127.0.0.1`，接入 collector 时显式设 `0.0.0.0`）。测试 3 例（渲染 + null 不伪装 0 + 端点免鉴权）；全仓 70 文件 / 792 tests 绿、typecheck 0（本仓无 lint script）。`GET /api/metrics` 业务 JSON 端点保持不变。端到端现测：daemon 以 `AGENT_OPS_HOST=0.0.0.0` 起后 `agent_ops_up{exported_job="agent-ops"}=1`，Prometheus 经 `host.docker.internal:3737` 抓到样本（验证后已停 daemon）。
 
 - [x] **真实模型 UI E2E** — 已完成（2026-11-20）。UI 里新建 CodeBuddy 角色与一步 Pipeline 任务，点 `Run pipeline` 由真实 CodeBuddy 2.185.0 执行，任务 done、Run 可见（commit `ea4553f7d2`）。Claude Code / Codex 仍受 CC Switch `base_url` 阻塞，但不影响 CodeBuddy 路径；真实模型 API 路径与 UI 路径均已有证据。
 - [x] **3–5 个本仓 dogfood** — 已完成 3 条真实任务 + 4 次团队运行（2026-11-21）：单任务接受率 3/3、检查通过率 3/3、返工 1 次人工小修；五角色串行 5 步完成（首轮暴露落盘 owner 缺口）；owner 机制补齐并实测落盘；带 owner 的五角色交付重跑成功；依赖链接后五角色完成**真实代码交付**（`listTasksByTeam` + 单测，含 reviewer→owner 修正）。详见下方 “F10-01/F10-02 Dogfood” 章节。
