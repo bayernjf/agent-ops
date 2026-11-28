@@ -60,7 +60,7 @@
 
 | # | 问题 | 状态 |
 |---|---|---|
-| Q1 | `Run` 是否已能表达「同一 agent 并发多 session」的完整语义，是否有约束（需逐文件核实 storage-core 的 run 创建/并发约束） | open |
+| Q1 | `Run` 是否已能表达「同一 agent 并发多 session」的完整语义，是否有约束（2026-11-29 已核实，见实施拆解 §0） | decided |
 | Q2 | 默认视图：Board，还是记住用户上次选择 | open |
 | Q3 | 无 active run 但有历史 run 时，`Lanes` 是空态还是进入回放模式 | open |
 | Q4 | 双入口（分段控件 + live pill）是否都做 | open |

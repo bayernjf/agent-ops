@@ -11,7 +11,7 @@
 | id | title | status | priority | owner | next | evidence | updated |
 |---|---|---|---|---|---|---|---|
 | AO-01 | 三 Agent adapter 扩张 | blocked | p1 | owner | 按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode；D7 登录后跑端到端 | `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md` | 2026-11-22 |
-| AO-02 | Lanes 泳道视图（实时执行现场） | open | p2 | owner | 立项前先核实 Q1（`Run` 并发多 session 语义），再启动 M2 只读直播 | `docs/prd/Agent-Ops-Lanes泳道视图-PRD-2026-11-28.md` | 2026-11-28 |
+| AO-02 | Lanes 泳道视图（实时执行现场） | in_progress | p1 | owner | Q1 已核实（无 agent 级约束）；T0 调研 SSE/active run 端点后开搞 FE-1/FE-2 | `docs/prd/Agent-Ops-Lanes泳道视图-PRD-2026-11-28.md` | 2026-11-29 |
 <!-- /tier0:todos -->
 
 ### 已完成（历史）
