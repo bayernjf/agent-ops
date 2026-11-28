@@ -88,6 +88,8 @@ describe('Lane card', () => {
     const html = await renderLane(run('run-4', 'running'));
 
     expect(html).toContain('Waiting for output');
+    // No usage reported means no token gauge: an empty track would be misleading.
+    expect(html).not.toContain('lane-token-track');
   });
 
   it('accumulates live output into the stream pane', async () => {
