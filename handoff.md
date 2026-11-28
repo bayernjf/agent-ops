@@ -11,7 +11,7 @@
 | id | title | status | priority | owner | next | evidence | updated |
 |---|---|---|---|---|---|---|---|
 | AO-01 | 三 Agent adapter 扩张 | blocked | p1 | owner | 按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode；D7 登录后跑端到端 | `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md` | 2026-11-22 |
-| AO-02 | Lanes 泳道视图（实时执行现场） | in_progress | p1 | owner | FE-1~FE-7 完成（LanesView+三态切换+i18n+样式+Kanban↔Lanes 双向跳转+LaneCard/LanesView 组件测试，typecheck 0/800 tests/build 1662 modules 全绿）；剩浏览器验收：真实多 lane 直播、token 条阈值（暂 8000）定稿、间距细节 | `docs/prd/Agent-Ops-Lanes泳道视图-PRD-2026-11-28.md` | 2026-11-29 |
+| AO-02 | Lanes 泳道视图（实时执行现场） | in_progress | p1 | owner | FE-1~FE-7 完成 + 浏览器视觉验收（3 泳道并排/token 条/动作按钮/双向跳转）；token 条阈值定稿为常量 `LANE_TOKEN_FULL_CAP=8000`、无 usage 时隐藏、加高 6px，泳道自适应收缩消除 28px 溢出；关键发现：running run 运行中 token 恒 null（SSE 无 usage 事件，token 仅 completeRun 写入），token 条仅 review 泳道有意义；剩：真实 run 的 SSE 实时直播验证（需真实 CodeBuddy 并行任务） | `docs/prd/Agent-Ops-Lanes泳道视图-PRD-2026-11-28.md` | 2026-11-29 |
 <!-- /tier0:todos -->
 
 ### 已完成（历史）

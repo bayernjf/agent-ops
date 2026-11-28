@@ -1953,8 +1953,8 @@ select option {
 }
 
 .lane {
-  flex: 0 0 320px;
-  min-width: 320px;
+  flex: 0 1 320px;
+  min-width: 300px;
   max-width: 420px;
   min-height: 320px;
   max-height: 480px;
@@ -2017,7 +2017,7 @@ select option {
 }
 
 .lane-token-track {
-  height: 4px;
+  height: 6px;
   margin: 0 12px;
   background: var(--line);
   border-radius: 999px;

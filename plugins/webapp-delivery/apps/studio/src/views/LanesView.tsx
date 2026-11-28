@@ -22,6 +22,15 @@ type ActiveLane = {
 /** A lane is a live session, not a status column: only runs that are actually moving show here. */
 const ACTIVE_STATES: ReadonlySet<KernelTask['status']> = new Set(['running', 'review']);
 
+/**
+ * Token gauge full-scale reference. This is a fixed cap, not a budget: runs report usage only on
+ * completion (the SSE stream carries stdout/stderr, no usage event), so a `running` lane almost
+ * never has a token total to plot. The bar therefore mostly lights up on `review` lanes, where the
+ * run already reported usage. Kept as a named constant so the reference point is easy to revisit
+ * once the runtime starts reporting in-flight usage.
+ */
+const LANE_TOKEN_FULL_CAP = 8000;
+
 function formatElapsed(startedAt: string | undefined, now: number): string {
   const start = startedAt ? Date.parse(startedAt) : NaN;
   if (Number.isNaN(start)) return '—';
@@ -121,12 +130,14 @@ export function LaneCard({ run, task, live, now, busy, focused, onOpenBoard, onR
         {run.laneId && <span className="lane-chip">lane: {run.laneId}</span>}
       </div>
 
-      <div className="lane-token-track" aria-hidden="true">
-        <div
-          className="lane-token-fill"
-          style={{ width: `${Math.min(100, Math.round((tokens / 8000) * 100))}%` }}
-        />
-      </div>
+      {tokens > 0 && (
+        <div className="lane-token-track" aria-hidden="true">
+          <div
+            className="lane-token-fill"
+            style={{ width: `${Math.min(100, Math.round((tokens / LANE_TOKEN_FULL_CAP) * 100))}%` }}
+          />
+        </div>
+      )}
 
       <pre className="lane-stream" aria-live="polite">
         {live || t('lanes.waiting')}
