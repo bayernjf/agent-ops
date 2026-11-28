@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, Columns3, GitFork, List as ListIcon, ListTodo, Play, Plus, RefreshCw, RotateCcw, Square, Trash2, Users, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Columns3, GitFork, Layers, List as ListIcon, ListTodo, Play, Plus, RefreshCw, RotateCcw, Square, Trash2, Users, X } from 'lucide-react';
 import { useI18n, type KeyPath } from '../i18n/i18n';
 import type { AgentRole, BudgetStatus, DagPipelineResult, KernelRun, KernelTask, KernelTaskState, ParallelTeamResult, TaskBudgetStatus, TaskPipeline, TaskPipelineStep, TaskPipelineStepResult } from '../types';
 import { apiFetch, apiStreamFetch } from '../lib/api';
 import { TaskBoard } from './TaskBoard';
+import { LanesView } from './LanesView';
 
 type RunAction = 'execute' | 'accept' | 'reject';
 type WorktreePolicy = 'keep' | 'fresh';
@@ -79,7 +80,7 @@ export function TasksView() {
   const [tasks, setTasks] = useState<KernelTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [viewMode, setViewMode] = useState<'list' | 'board'>('list');
+  const [viewMode, setViewMode] = useState<'list' | 'board' | 'lanes'>('list');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [runsByTask, setRunsByTask] = useState<Record<string, KernelRun[]>>({});
   const [budgetByTask, setBudgetByTask] = useState<Record<string, TaskBudgetStatus>>({});
@@ -673,6 +674,9 @@ export function TasksView() {
               <button className={`task-view-button${viewMode === 'board' ? ' active' : ''}`} type="button" onClick={() => setViewMode('board')} aria-pressed={viewMode === 'board'}>
                 <Columns3 size={14} aria-hidden="true" /> {t('tasks.viewBoard')}
               </button>
+              <button className={`task-view-button${viewMode === 'lanes' ? ' active' : ''}`} type="button" onClick={() => setViewMode('lanes')} aria-pressed={viewMode === 'lanes'}>
+                <Layers size={14} aria-hidden="true" /> {t('tasks.viewLanes')}
+              </button>
             </div>
             <button className="icon-button" type="button" onClick={() => void refreshTasks()} aria-label={t('common.refresh')} title={t('common.refresh')}>
               <RefreshCw size={18} />
@@ -751,6 +755,10 @@ export function TasksView() {
 
         {viewMode === 'board' && (
           <TaskBoard tasks={tasks} loading={loading} onOpenTask={openTaskInList} />
+        )}
+
+        {viewMode === 'lanes' && (
+          <LanesView tasks={tasks} onOpenTask={openTaskInList} />
         )}
 
         {viewMode === 'list' && (
