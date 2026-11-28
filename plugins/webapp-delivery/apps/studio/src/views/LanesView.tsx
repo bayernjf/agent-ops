@@ -6,7 +6,10 @@ import { apiFetch, apiStreamFetch } from '../lib/api';
 
 type LanesViewProps = {
   tasks: KernelTask[];
-  onOpenTask: (task: KernelTask) => void;
+  /** Jump back to the Board and locate the task card this lane belongs to. */
+  onOpenBoard: (task: KernelTask) => void;
+  /** Task id to scroll into view and highlight once lanes have loaded. */
+  focusTaskId?: string | null;
 };
 
 type ActiveLane = {
@@ -26,6 +29,10 @@ function formatElapsed(startedAt: string | undefined, now: number): string {
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   return `${minutes}m ${seconds % 60}s`;
+}
+
+function tokenTotal(run: KernelRun): number {
+  return (run.inputTokens ?? 0) + (run.outputTokens ?? 0);
 }
 
 async function subscribeRun(runId: string, signal: AbortSignal, onChunk: (chunk: string) => void): Promise<void> {
@@ -64,13 +71,108 @@ async function subscribeRun(runId: string, signal: AbortSignal, onChunk: (chunk:
   }
 }
 
+type LaneCardProps = {
+  run: KernelRun;
+  task: KernelTask;
+  live: string;
+  now: number;
+  busy: boolean;
+  focused: boolean;
+  onOpenBoard: (task: KernelTask) => void;
+  onRunAction: (run: KernelRun, action: 'cancel' | 'accept' | 'reject') => void;
+};
+
+/**
+ * One swimlane. Read-only plus the human gates that already exist on the run lifecycle — cancel a
+ * running run, accept or reject a review run. It never types into the agent. The lane header jumps
+ * back to the Board and locates the owning task card (PRD D6).
+ */
+export function LaneCard({ run, task, live, now, busy, focused, onOpenBoard, onRunAction }: LaneCardProps) {
+  const { t } = useI18n();
+  const running = run.status === 'running';
+  const review = run.status === 'review';
+  const tokens = tokenTotal(run);
+
+  return (
+    <section
+      className={`lane ${run.status}${focused ? ' lane-focused' : ''}`}
+      id={`lane-${run.id}`}
+      aria-label={`${run.agentId} — ${task.title}`}
+    >
+      <header className="lane-head">
+        <button
+          className="lane-title"
+          type="button"
+          onClick={() => onOpenBoard(task)}
+          title={t('lanes.openBoard')}
+        >
+          <strong>{run.agentId}</strong>
+          {run.roleId && <span className="lane-chip">{t('tasks.role')}: {run.roleId}</span>}
+          <span className="lane-repo">{task.repo}<small>@{task.baseRef}</small></span>
+        </button>
+        <span className={`lane-state state task-state ${run.status}`}>
+          {t(`tasks.state.${run.status}` as KeyPath)}
+        </span>
+      </header>
+
+      <div className="lane-meta">
+        <span>{t('lanes.duration')}: {formatElapsed(run.artifacts?.startedAt ?? run.createdAt, now)}</span>
+        {tokens > 0 && <span>{t('lanes.tokens')}: {tokens}</span>}
+        {run.laneId && <span className="lane-chip">lane: {run.laneId}</span>}
+      </div>
+
+      <div className="lane-token-track" aria-hidden="true">
+        <div
+          className="lane-token-fill"
+          style={{ width: `${Math.min(100, Math.round((tokens / 8000) * 100))}%` }}
+        />
+      </div>
+
+      <pre className="lane-stream" aria-live="polite">
+        {live || t('lanes.waiting')}
+      </pre>
+
+      <footer className="lane-actions">
+        {running && (
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => onRunAction(run, 'cancel')}
+            disabled={busy}
+          >
+            <Square size={14} aria-hidden="true" /> {t('lanes.cancel')}
+          </button>
+        )}
+        {review && (
+          <>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => onRunAction(run, 'accept')}
+              disabled={busy}
+            >
+              <Check size={14} aria-hidden="true" /> {t('lanes.accept')}
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => onRunAction(run, 'reject')}
+              disabled={busy}
+            >
+              <X size={14} aria-hidden="true" /> {t('lanes.reject')}
+            </button>
+          </>
+        )}
+      </footer>
+    </section>
+  );
+}
+
 /**
  * The Lanes view renders each active agent session as a vertical swimlane. A lane is one run,
- * not one agent: the same agent can own several parallel lanes. It is read-only plus the human
- * gates that already exist on the run lifecycle — cancel a running run, accept or reject a
- * review run. It never types into the agent.
+ * not one agent: the same agent can own several parallel lanes.
  */
-export function LanesView({ tasks, onOpenTask }: LanesViewProps) {
+export function LanesView({ tasks, onOpenBoard, focusTaskId }: LanesViewProps) {
   const { t } = useI18n();
   const [lanes, setLanes] = useState<ActiveLane[]>([]);
   const [loading, setLoading] = useState(true);
@@ -150,6 +252,16 @@ export function LanesView({ tasks, onOpenTask }: LanesViewProps) {
     streamControllers.current.clear();
   }, []);
 
+  // A Board card told us which task to spotlight; once that task's lane is on screen, bring it
+  // into view. `nearest` avoids yanking the page when the lane is already visible.
+  useEffect(() => {
+    if (!focusTaskId || loading) return;
+    const target = lanes.find(lane => lane.task.id === focusTaskId);
+    if (target) {
+      document.getElementById(`lane-${target.run.id}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [focusTaskId, loading, lanes]);
+
   const runAction = useCallback(async (run: KernelRun, action: 'cancel' | 'accept' | 'reject') => {
     setBusyRunId(run.id);
     setError('');
@@ -168,8 +280,6 @@ export function LanesView({ tasks, onOpenTask }: LanesViewProps) {
     }
   }, [loadLanes, t]);
 
-  const tokenTotal = (run: KernelRun) => (run.inputTokens ?? 0) + (run.outputTokens ?? 0);
-
   return (
     <div className="lanes-view" role="region" aria-label={t('lanes.title')}>
       <div className="lanes-toolbar">
@@ -187,84 +297,19 @@ export function LanesView({ tasks, onOpenTask }: LanesViewProps) {
         <p className="empty-state">{t('lanes.empty')}</p>
       ) : (
         <div className="lanes-scroll">
-          {lanes.map(lane => {
-            const { run, task } = lane;
-            const running = run.status === 'running';
-            const review = run.status === 'review';
-            return (
-              <section
-                className={`lane ${run.status}`}
-                key={run.id}
-                aria-label={`${run.agentId} — ${task.title}`}
-              >
-                <header className="lane-head">
-                  <button
-                    className="lane-title"
-                    type="button"
-                    onClick={() => onOpenTask(task)}
-                    title={t('tasks.openDetails')}
-                  >
-                    <strong>{run.agentId}</strong>
-                    {run.roleId && <span className="lane-chip">{t('tasks.role')}: {run.roleId}</span>}
-                    <span className="lane-repo">{task.repo}<small>@{task.baseRef}</small></span>
-                  </button>
-                  <span className={`lane-state state task-state ${run.status}`}>
-                    {t(`tasks.state.${run.status}` as KeyPath)}
-                  </span>
-                </header>
-
-                <div className="lane-meta">
-                  <span>{t('lanes.duration')}: {formatElapsed(run.artifacts?.startedAt ?? run.createdAt, now)}</span>
-                  {tokenTotal(run) > 0 && <span>{t('lanes.tokens')}: {tokenTotal(run)}</span>}
-                  {run.laneId && <span className="lane-chip">lane: {run.laneId}</span>}
-                </div>
-
-                <div className="lane-token-track" aria-hidden="true">
-                  <div
-                    className="lane-token-fill"
-                    style={{ width: `${Math.min(100, Math.round((tokenTotal(run) / 8000) * 100))}%` }}
-                  />
-                </div>
-
-                <pre className="lane-stream" aria-live="polite">
-                  {lane.live || t('lanes.waiting')}
-                </pre>
-
-                <footer className="lane-actions">
-                  {running && (
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      onClick={() => void runAction(run, 'cancel')}
-                      disabled={busyRunId === run.id}
-                    >
-                      <Square size={14} aria-hidden="true" /> {t('lanes.cancel')}
-                    </button>
-                  )}
-                  {review && (
-                    <>
-                      <button
-                        className="primary-button"
-                        type="button"
-                        onClick={() => void runAction(run, 'accept')}
-                        disabled={busyRunId === run.id}
-                      >
-                        <Check size={14} aria-hidden="true" /> {t('lanes.accept')}
-                      </button>
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={() => void runAction(run, 'reject')}
-                        disabled={busyRunId === run.id}
-                      >
-                        <X size={14} aria-hidden="true" /> {t('lanes.reject')}
-                      </button>
-                    </>
-                  )}
-                </footer>
-              </section>
-            );
-          })}
+          {lanes.map(lane => (
+            <LaneCard
+              key={lane.run.id}
+              run={lane.run}
+              task={lane.task}
+              live={lane.live}
+              now={now}
+              busy={busyRunId === lane.run.id}
+              focused={lane.task.id === focusTaskId}
+              onOpenBoard={onOpenBoard}
+              onRunAction={runAction}
+            />
+          ))}
         </div>
       )}
     </div>

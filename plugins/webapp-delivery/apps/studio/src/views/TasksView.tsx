@@ -81,6 +81,7 @@ export function TasksView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [viewMode, setViewMode] = useState<'list' | 'board' | 'lanes'>('list');
+  const [focusTaskId, setFocusTaskId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [runsByTask, setRunsByTask] = useState<Record<string, KernelRun[]>>({});
   const [budgetByTask, setBudgetByTask] = useState<Record<string, TaskBudgetStatus>>({});
@@ -647,6 +648,24 @@ export function TasksView() {
     }, 0);
   };
 
+  // PRD D6: a running Board card opens the live Lanes and spotlights its lane; a lane header
+  // returns to the Board and locates the owning card. The focus id drives both directions.
+  const openTaskInLanes = (task: KernelTask) => {
+    setFocusTaskId(task.id);
+    setViewMode('lanes');
+  };
+
+  const openTaskInBoard = (task: KernelTask) => {
+    setFocusTaskId(task.id);
+    setViewMode('board');
+  };
+
+  // Manual view switching clears any stale focus so a card/lane is not highlighted forever.
+  const switchView = (mode: 'list' | 'board' | 'lanes') => {
+    setFocusTaskId(null);
+    setViewMode(mode);
+  };
+
   const formatBudgetCost = (value: number | null | undefined, limit = false) =>
     value == null ? '—' : (limit ? `$${value}` : `$${value.toFixed(4)}`);
   const formatBudgetTokens = (value: number | null | undefined) =>
@@ -668,13 +687,13 @@ export function TasksView() {
           </div>
           <div className="tasks-actions">
             <div className="task-view-toggle" role="group" aria-label={t('tasks.viewMode')}>
-              <button className={`task-view-button${viewMode === 'list' ? ' active' : ''}`} type="button" onClick={() => setViewMode('list')} aria-pressed={viewMode === 'list'}>
+              <button className={`task-view-button${viewMode === 'list' ? ' active' : ''}`} type="button" onClick={() => switchView('list')} aria-pressed={viewMode === 'list'}>
                 <ListIcon size={14} aria-hidden="true" /> {t('tasks.viewList')}
               </button>
-              <button className={`task-view-button${viewMode === 'board' ? ' active' : ''}`} type="button" onClick={() => setViewMode('board')} aria-pressed={viewMode === 'board'}>
+              <button className={`task-view-button${viewMode === 'board' ? ' active' : ''}`} type="button" onClick={() => switchView('board')} aria-pressed={viewMode === 'board'}>
                 <Columns3 size={14} aria-hidden="true" /> {t('tasks.viewBoard')}
               </button>
-              <button className={`task-view-button${viewMode === 'lanes' ? ' active' : ''}`} type="button" onClick={() => setViewMode('lanes')} aria-pressed={viewMode === 'lanes'}>
+              <button className={`task-view-button${viewMode === 'lanes' ? ' active' : ''}`} type="button" onClick={() => switchView('lanes')} aria-pressed={viewMode === 'lanes'}>
                 <Layers size={14} aria-hidden="true" /> {t('tasks.viewLanes')}
               </button>
             </div>
@@ -754,11 +773,11 @@ export function TasksView() {
         )}
 
         {viewMode === 'board' && (
-          <TaskBoard tasks={tasks} loading={loading} onOpenTask={openTaskInList} />
+          <TaskBoard tasks={tasks} loading={loading} onOpenTask={openTaskInList} onOpenLanes={openTaskInLanes} focusTaskId={focusTaskId} />
         )}
 
         {viewMode === 'lanes' && (
-          <LanesView tasks={tasks} onOpenTask={openTaskInList} />
+          <LanesView tasks={tasks} onOpenBoard={openTaskInBoard} focusTaskId={focusTaskId} />
         )}
 
         {viewMode === 'list' && (

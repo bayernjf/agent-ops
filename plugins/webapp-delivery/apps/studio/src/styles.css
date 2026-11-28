@@ -1911,6 +1911,7 @@ select option {
 }
 
 .task-card:hover { border-color: var(--accent-3); background: var(--surface-strong, var(--surface)); }
+.task-card-focused { border-color: var(--accent-3); box-shadow: 0 0 0 2px var(--accent-3); }
 .task-card strong { font-size: 13px; line-height: 1.35; }
 .task-card-repo { color: var(--text-3); font-size: 11px; overflow-wrap: anywhere; }
 .task-card-repo small { margin-left: 3px; }
@@ -1967,6 +1968,8 @@ select option {
 }
 
 .lane.review { border-top-color: var(--accent-3); }
+
+.lane-focused { border-color: var(--accent-3); box-shadow: 0 0 0 2px var(--accent-3); }
 
 .lane-head {
   display: flex;

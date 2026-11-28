@@ -37,7 +37,7 @@ describe('Task board', () => {
 
     const html = await renderAsync(
       <I18nProvider>
-        <TaskBoard tasks={tasks} loading={false} onOpenTask={() => undefined} />
+        <TaskBoard tasks={tasks} loading={false} onOpenTask={() => undefined} onOpenLanes={() => undefined} />
       </I18nProvider>,
     );
 
@@ -56,11 +56,28 @@ describe('Task board', () => {
   it('shows the loading state before task data arrives', async () => {
     const html = await renderAsync(
       <I18nProvider>
-        <TaskBoard tasks={[]} loading onOpenTask={() => undefined} />
+        <TaskBoard tasks={[]} loading onOpenTask={() => undefined} onOpenLanes={() => undefined} />
       </I18nProvider>,
     );
 
     expect(html).toContain('Loading tasks');
     expect(html).not.toContain('task-board-column');
+  });
+
+  it('routes a running card to the live lanes and every other card to the list', async () => {
+    const tasks = [
+      task('running task', 'running'),
+      task('queued task', 'queued'),
+    ];
+
+    const html = await renderAsync(
+      <I18nProvider>
+        <TaskBoard tasks={tasks} loading={false} onOpenTask={() => undefined} onOpenLanes={() => undefined} />
+      </I18nProvider>,
+    );
+
+    // The running card is the only one labelled for the live-lane jump (PRD D6).
+    expect(html).toContain('running task — Open live lanes');
+    expect(html).toContain('queued task — Open in list');
   });
 });
