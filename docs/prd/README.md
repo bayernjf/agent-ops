@@ -4,6 +4,7 @@
 |---|---|---|
 | `Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md` | Draft（PD-1～PD-9 已拍板 2026-11-19） | 产品目标、Role/Team 模型、范围、非目标、里程碑、产品级验收；§12.1–12.2 为 Tier 0 能力包 / 现有 Harness / Personal Agent 方向备忘 |
 | `Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md` | Draft | Epic / 功能点 / 依赖 / 里程碑任务 / 测试策略 / 开放问题 |
+| `Agent-Ops-Lanes泳道视图-PRD-2026-11-28.md` | Draft（讨论定稿，未立项） | Lanes 泳道视图（实时执行现场）：session 粒度、只读第一版、与 Kanban 双向跳转；开放问题 Q1～Q5 |
 
 维护规则：
 

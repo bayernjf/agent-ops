@@ -3,14 +3,15 @@
 ## 待办登记（标准）
 
 > 本段是本产品唯一活跃待办入口；详细背景见下方原有章节。完成一项改 `[x]`，并在“最近变更 / Recently shipped”留证据。
-> 最近同步：2026-11-22
+> 最近同步：2026-11-28
 >
-> 产品规划（非活跃待办，不计入上方待办）：多 Agent 角色与团队 v0.2/v0.3，PRD 见 `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md`，实施拆解见 `docs/prd/Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md`；PD-1～PD-9 已于 2026-11-19 拍板；后续方向备忘（Tier 0 能力包 / 现有 Harness / Personal Agent）见 PRD §12.1–12.2。
+> 产品规划（非活跃待办，不计入上方待办）：多 Agent 角色与团队 v0.2/v0.3，PRD 见 `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md`，实施拆解见 `docs/prd/Agent-Ops-多Agent角色与团队-实施拆解-2026-11-19.md`；PD-1～PD-9 已于 2026-11-19 拍板；后续方向备忘（Tier 0 能力包 / 现有 Harness / Personal Agent）见 PRD §12.1–12.2；Lanes 泳道视图（讨论定稿，未立项）见 `docs/prd/Agent-Ops-Lanes泳道视图-PRD-2026-11-28.md`。
 
 <!-- tier0:todos v1 -->
 | id | title | status | priority | owner | next | evidence | updated |
 |---|---|---|---|---|---|---|---|
 | AO-01 | 三 Agent adapter 扩张 | blocked | p1 | owner | 按 W1 探测三、W2 Claude Code、W3 Codex/OpenCode；D7 登录后跑端到端 | `docs/prd/Agent-Ops-多Agent角色与团队-PRD-2026-11-19.md` | 2026-11-22 |
+| AO-02 | Lanes 泳道视图（实时执行现场） | open | p2 | owner | 立项前先核实 Q1（`Run` 并发多 session 语义），再启动 M2 只读直播 | `docs/prd/Agent-Ops-Lanes泳道视图-PRD-2026-11-28.md` | 2026-11-28 |
 <!-- /tier0:todos -->
 
 ### 已完成（历史）
